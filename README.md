@@ -1,5 +1,5 @@
 # ShEPhERD Scoring Functions
-3D interaction profiles and their differentiable functions for similarity scoring used in ShEPhERD (**S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion).
+3D interaction profiles and their differentiable similarity scoring functions used in ShEPhERD (**S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion).
 
 ## Table of Contents
 1. [Requirements](##requirements)
@@ -20,14 +20,14 @@ rdkit>=2023.03
 xtb>=6.6 (Use conda)
 ```
 
-Note that there is a [bug](https://github.com/pytorch/pytorch/issues/123097) associated with mkl==2024.1 which prevents importing torch.
+<sub><sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup></sub>
 
-#### Optional packages necessary for docking evaluation
+#### Optional software necessary for docking evaluation
 ```
 meeko
 vina==1.2.5
 ```
-You can pip install the above package for the python interface. However, this also requires an installation of the actual software of Autodock Vina: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/). To download v1.2.5
+You can pip install the python bindings for Autodock Vina for the python interface. However, this also requires an installation of the executable of Autodock Vina v1.2.5: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/).
 
 #### Other optional packages
 ```
@@ -80,14 +80,13 @@ py3dmol==2.1.0
 ```
 
 ## Usage
-The package has some base functions and some convenience wrappers. Scoring can be done by either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for gaussian overlap and ESP similarity for scoring and alignment, but currently *not* for pharmacophores.
+The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap and ESP similarity, but currently *not* for pharmacophores.
 
 ### Base functions
 #### Conformer generation
 Useful conformer generation functions are found in the `shepherd_score.conformer_generation` module.
 
 #### Interaction profile extraction
-Extraction of interaction profiles are found in different locations
 | Interaction profile | Function |
 | :------- | :------- |
 | shape | `shepherd_score.extract_profiles.get_molecular_surface()` |
@@ -158,9 +157,6 @@ ref_mol, _, ref_charges = optimize_conformer_with_xtb(ref_mol_rdkit)
 fit_mol, _, fit_charges = optimize_conformer_with_xtb(fit_mol_rdkit)
 
 # Extract interaction profiles
-# Generates a surface with 200 sampled points
-#  attributed with ESP using the xTB partial charges
-#  and extracts pharmacophores with averaged vectors
 ref_molec = Molecule(ref_mol,
                      num_surf_points=200,
                      partial_charges=ref_charges,
@@ -173,8 +169,7 @@ fit_molec = Molecule(fit_mol,
 # Centers the two molecules' COM's to the origin
 mp = MoleculePair(ref_molec, fit_molec, num_surf_points=200, do_center=True)
 
-# Score with your preferred objective function
-# By default we use numpy
+# Compute the similarity score for each interaction profile
 shape_score = mp.score_with_surf(ALPHA(mp.num_surf_points))
 esp_score = mp.score_with_esp(ALPHA(mp.num_surf_points), lam=0.3)
 pharm_score = mp.score_with_pharm()
@@ -195,7 +190,7 @@ surf_points_esp_aligned = mp.align_with_esp(ALPHA(mp.num_surf_points),
                                             num_repeats=50)
 pharm_pos_aligned, pharm_vec_aligned = mp.align_with_pharm(num_repeats=50)
 
-# Optimal scores and SE(3) transformation matrix as attributes
+# Optimal scores and SE(3) transformation matrices are stored as attributes
 mp.sim_aligned_{surf/esp/pharm}
 mp.transform_{surf/esp/pharm}
 
@@ -205,7 +200,7 @@ transformed_fit_molec = mp.get_transformed_molecule(
 )
 ```
 
-Evaluations can be done on an individual basis or in a pipeline. Here we show the most basic use case of the unconditional setting.
+Evaluations can be done on an individual basis or in a pipeline. Here we show the most basic use case in the unconditional setting.
 
 ```python
 from shepherd_score.evaluations.evalutate import ConfEval
@@ -213,15 +208,13 @@ from shepherd_score.evaluations.evalutate import UnconditionalEvalPipeline
 
 # ConfEval evaluates the validity of a given molecule, optimizes it with xTB,
 #   and also computes various 2D graph properties
-# `atom_array` is an array (N,) containing the atom numbers of a molecule
-#   (with explicit H)
-# `position_array` is an array (N,3) containing the coordinates for the 
-#   atoms of a molecule
+# `atom_array` np.ndarray (N,) atomic numbers of the molecule (with explicit H)
+# `position_array` np.ndarray (N,3) atom coordinates for the molecule
 conf_eval = ConfEval(atoms=atom_array, positions=position_array)
 
 # Alternatively, if you have a list of molecules you want to test:
 uncond_pipe = UnconditionalEvalPipeline(
-    generated_mols = [a, p for a, p in zip(atom_arrays, position_arrays)]
+    generated_mols = [(a, p) for a, p in zip(atom_arrays, position_arrays)]
 )
 uncond_pipe.evaluate()
 
