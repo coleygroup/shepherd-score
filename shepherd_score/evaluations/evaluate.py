@@ -89,6 +89,12 @@ class ConfEval:
         self.fsp3 = None
         self.morgan_fp = None
 
+        self.SA_score_post_opt = None
+        self.QED_post_opt = None
+        self.logP_post_opt = None
+        self.fsp3_post_opt = None
+        self.morgan_fp_post_opt = None
+
         # Consistency in 3D
         self.strain_energy = None
         self.rmsd = None
@@ -159,6 +165,14 @@ class ConfEval:
             self.logP = Crippen.MolLogP(self.mol)
             self.fsp3 = Lipinski.FractionCSP3(self.mol)
             self.morgan_fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(self.mol))
+        
+        # 10. 2D graph properties post optimization
+        if self.is_valid_post_opt:
+            self.SA_score_post_opt = sascorer.calculateScore(Chem.RemoveHs(self.mol_post_opt))
+            self.QED_post_opt = QED.qed(self.mol_post_opt)
+            self.logP_post_opt = Crippen.MolLogP(self.mol_post_opt)
+            self.fsp3_post_opt = Lipinski.FractionCSP3(self.mol_post_opt)
+            self.morgan_fp_post_opt = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(self.mol_post_opt))
 
 
     def to_pandas(self):
@@ -504,7 +518,6 @@ class ConditionalEval(ConfEval):
         self.sim_pharm_target_relax_optimal = None
 
         self.sim_surf_target_relax_esp_aligned = None
-        self.sim_esp_target_relax_esp_aligned = None
         self.sim_pharm_target_relax_esp_aligned = None
         
         # Scoring parameters
@@ -721,6 +734,14 @@ class UnconditionalEvalPipeline:
         self.fsp3s = np.empty(self.num_generated_mols)
         self.morgan_fps = []
 
+        self.strain_energies_post_opt = np.empty(self.num_generated_mols)
+        self.rmsds_post_opt = np.empty(self.num_generated_mols)
+        self.SA_scores_post_opt = np.empty(self.num_generated_mols)
+        self.logPs_post_opt = np.empty(self.num_generated_mols)
+        self.QEDs_post_opt = np.empty(self.num_generated_mols)
+        self.fsp3s_post_opt = np.empty(self.num_generated_mols)
+        self.morgan_fps_post_opt = []
+
         # Overall metrics
         self.frac_valid = None
         self.frac_valid_post_opt = None
@@ -770,7 +791,12 @@ class UnconditionalEvalPipeline:
             self.SA_scores[i] = self.get_attr(conf_eval, 'SA_score')
             self.QEDs[i] = self.get_attr(conf_eval, 'QED')
             self.logPs[i] = self.get_attr(conf_eval, 'logP')
-            self.fsp3s[i] = self.get_attr(conf_eval, 'fsp3')            
+            self.fsp3s[i] = self.get_attr(conf_eval, 'fsp3')
+
+            self.SA_scores_post_opt[i] = self.get_attr(conf_eval, 'SA_score_post_opt')
+            self.QEDs_post_opt[i] = self.get_attr(conf_eval, 'QED_post_opt')
+            self.logPs_post_opt[i] = self.get_attr(conf_eval, 'logP_post_opt')
+            self.fsp3s_post_opt[i] = self.get_attr(conf_eval, 'fsp3_post_opt')
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
@@ -864,9 +890,9 @@ class UnconditionalEvalPipeline:
         global_attrs = {} # Global attributes
 
         for key, value in self.__dict__.items():
-            if key in ('smiles', 'smiles_post_opt', 'morgan_fps'):
+            if key in ('smiles', 'smiles_post_opt', 'morgan_fps', 'morgan_fps_post_opt'):
                 continue
-            elif key == 'graph_similarity_matrix':
+            elif key == 'graph_similarity_matrix' or key == 'graph_similarity_matrix_post_opt':
                 global_attrs[key] = value
 
             elif isinstance(value, (list, tuple, np.ndarray)) and not (isinstance(value, np.ndarray) and value.ndim == 0):
@@ -877,7 +903,7 @@ class UnconditionalEvalPipeline:
         df_rowwise = pd.DataFrame(rowwise_attrs)
         series_global = pd.Series(global_attrs)
 
-        return df_rowwise, series_global
+        return series_global, df_rowwise
 
 
 class ConditionalEvalPipeline:
@@ -954,6 +980,12 @@ class ConditionalEvalPipeline:
         self.fsp3s = np.empty(self.num_generated_mols)
         self.morgan_fps = []
 
+        self.SA_scores_post_opt = np.empty(self.num_generated_mols)
+        self.logPs_post_opt = np.empty(self.num_generated_mols)
+        self.QEDs_post_opt = np.empty(self.num_generated_mols)
+        self.fsp3s_post_opt = np.empty(self.num_generated_mols)
+        self.morgan_fps_post_opt = []
+
         # Overall metrics
         self.frac_valid = None
         self.frac_valid_post_opt = None
@@ -976,11 +1008,11 @@ class ConditionalEvalPipeline:
         self.sims_pharm_target_relax_optimal = np.empty(self.num_generated_mols)
 
         self.sims_surf_target_relax_esp_aligned = np.empty(self.num_generated_mols)
-        self.sims_esp_target_relax_esp_aligned = np.empty(self.num_generated_mols)
         self.sims_pharm_target_relax_esp_aligned = np.empty(self.num_generated_mols)
         
         # 2D similarities
         self.graph_similarities = np.empty(self.num_generated_mols)
+        self.graph_similarities_post_opt = np.empty(self.num_generated_mols)
 
 
     def evaluate(self,
@@ -1044,6 +1076,15 @@ class ConditionalEvalPipeline:
                 self.graph_similarities[i] = TanimotoSimilarity(cond_eval.morgan_fp, self.ref_mol_morgan_fp)
             else:
                 self.graph_similarities[i] = np.nan
+            if cond_eval.morgan_fp_post_opt is not None:
+                self.graph_similarities_post_opt[i] = TanimotoSimilarity(cond_eval.morgan_fp_post_opt, self.ref_mol_morgan_fp)
+            else:
+                self.graph_similarities_post_opt[i] = np.nan
+            
+            self.SA_scores_post_opt[i] = self.get_attr(cond_eval, 'SA_score_post_opt')
+            self.QEDs_post_opt[i] = self.get_attr(cond_eval, 'QED_post_opt')
+            self.logPs_post_opt[i] = self.get_attr(cond_eval, 'logP_post_opt')
+            self.fsp3s_post_opt[i] = self.get_attr(cond_eval, 'fsp3_post_opt')
 
             # Conditional attributes
             self.sims_surf_target[i] = self.get_attr(cond_eval, 'sim_surf_target')
@@ -1059,7 +1100,6 @@ class ConditionalEvalPipeline:
             self.sims_pharm_target_relax_optimal[i] = self.get_attr(cond_eval, 'sim_pharm_target_relax_optimal')
 
             self.sims_surf_target_relax_esp_aligned[i] = self.get_attr(cond_eval, 'sim_surf_target_relax_esp_aligned')
-            self.sims_esp_target_relax_esp_aligned[i] = self.get_attr(cond_eval, 'sim_esp_target_relax_esp_aligned')
             self.sims_pharm_target_relax_esp_aligned[i] = self.get_attr(cond_eval, 'sim_pharm_target_relax_esp_aligned')
 
         self.frac_valid = self.get_frac_valid()
@@ -1173,7 +1213,7 @@ class ConditionalEvalPipeline:
         global_attrs = {} # Global attributes
 
         for key, value in self.__dict__.items():
-            if key in ('smiles', 'smiles_post_opt', 'morgan_fps'):
+            if key in ('smiles', 'smiles_post_opt', 'morgan_fps', 'morgan_fps_post_opt', 'ref_molec'):
                 continue
             elif key in ('ref_surf_resampling_scores', 'ref_surf_esp_resampling_scores'):
                 global_attrs[key] = value
@@ -1186,7 +1226,7 @@ class ConditionalEvalPipeline:
         df_rowwise = pd.DataFrame(rowwise_attrs)
         series_global = pd.Series(global_attrs)
 
-        return df_rowwise, series_global
+        return series_global, df_rowwise
 
 
 def resample_surf_scores(ref_molec: Molecule,
@@ -1306,6 +1346,12 @@ class ConsistencyEvalPipeline:
         self.fsp3s = np.empty(self.num_generated_mols)
         self.morgan_fps = []
 
+        self.SA_scores_post_opt = np.empty(self.num_generated_mols)
+        self.logPs_post_opt = np.empty(self.num_generated_mols)
+        self.QEDs_post_opt = np.empty(self.num_generated_mols)
+        self.fsp3s_post_opt = np.empty(self.num_generated_mols)
+        self.morgan_fps_post_opt = []
+
         # Overall metrics
         self.frac_valid = None
         self.frac_valid_post_opt = None
@@ -1314,6 +1360,8 @@ class ConsistencyEvalPipeline:
         self.frac_unique_post_opt = None
         self.avg_graph_diversity = None
         self.graph_similarity_matrix = None
+        self.avg_graph_diversity_post_opt = None
+        self.graph_similarity_matrix_post_opt = None
         
         # 3D similarity scores
         self.sims_surf_consistent = np.empty(self.num_generated_mols)
@@ -1462,6 +1510,11 @@ class ConsistencyEvalPipeline:
             self.logPs[i] = self.get_attr(consis_eval, 'logP')
             self.fsp3s[i] = self.get_attr(consis_eval, 'fsp3')
 
+            self.SA_scores_post_opt[i] = self.get_attr(consis_eval, 'SA_score_post_opt')
+            self.QEDs_post_opt[i] = self.get_attr(consis_eval, 'QED_post_opt')
+            self.logPs_post_opt[i] = self.get_attr(consis_eval, 'logP_post_opt')
+            self.fsp3s_post_opt[i] = self.get_attr(consis_eval, 'fsp3_post_opt')
+
             # Conditional attributes
             self.sims_surf_consistent[i] = self.get_attr(consis_eval, 'sim_surf_consistent')
             self.sims_esp_consistent[i] = self.get_attr(consis_eval, 'sim_esp_consistent')
@@ -1480,7 +1533,8 @@ class ConsistencyEvalPipeline:
         self.frac_consistent = self.get_frac_consistent_graph()
         self.frac_unique = self.get_frac_unique()
         self.frac_unique_post_opt = self.get_frac_unique_post_opt()
-        self.avg_graph_diversity, self.graph_similarity_matrix = self.get_diversity()
+        self.avg_graph_diversity, self.graph_similarity_matrix = self.get_diversity(post_opt=False)
+        self.avg_graph_diversity_post_opt, self.graph_similarity_matrix_post_opt = self.get_diversity(post_opt=True)
 
 
     def resampling_surf_scores(self,
@@ -1633,7 +1687,7 @@ class ConsistencyEvalPipeline:
         return frac
 
 
-    def get_diversity(self) -> Tuple[float, np.ndarray]:
+    def get_diversity(self, post_opt=False) -> Tuple[float, np.ndarray]:
         """
         Get average molecular graph diversity (average dissimilarity) as defined by GenBench3D (arXiv:2407.04424)
         and the tanimioto similarity matrix of fingerprints.
@@ -1646,10 +1700,14 @@ class ConsistencyEvalPipeline:
         """
         if self.num_consistent_graph == 0:
             return None, None
+        if post_opt:
+            fps = self.morgan_fps
+        else:
+            fps = self.morgan_fps_post_opt
         similarity_matrix = np.zeros((self.num_consistent_graph, self.num_consistent_graph))
         running_avg_diversity_sum = 0
-        for i, fp1 in enumerate(self.morgan_fps):
-            for j, fp2 in enumerate(self.morgan_fps):
+        for i, fp1 in enumerate(fps):
+            for j, fp2 in enumerate(fps):
                 if i == j:
                     similarity_matrix[i,j] = 1
                 if i > j: # symmetric
@@ -1682,9 +1740,9 @@ class ConsistencyEvalPipeline:
 
         for key, value in self.__dict__.items():
             if key in ('random_molblock_charges', 'num_random_molblock_charges', 'smiles',
-                       'smiles_post_opt', 'morgan_fps'):
+                       'smiles_post_opt', 'morgan_fps', 'morgain_fps_post_opt'):
                 continue
-            elif key == 'graph_similarity_matrix':
+            elif key == 'graph_similarity_matrix' or key == 'graph_similarity_matrix_post_opt':
                 global_attrs[key] = value
 
             elif isinstance(value, (list, tuple, np.ndarray)) and not (isinstance(value, np.ndarray) and value.ndim == 0):
@@ -1695,4 +1753,4 @@ class ConsistencyEvalPipeline:
         df_rowwise = pd.DataFrame(rowwise_attrs)
         series_global = pd.Series(global_attrs)
 
-        return df_rowwise, series_global
+        return series_global, df_rowwise

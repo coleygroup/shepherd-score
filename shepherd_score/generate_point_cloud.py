@@ -575,6 +575,37 @@ def get_electrostatics(mol: Chem.Mol, points: np.ndarray) -> np.ndarray:
     return E_pot
 
 
+def get_electrostatics_given_point_charges(charges: np.ndarray,
+                                           positions: np.ndarray,
+                                           points: np.ndarray)-> np.ndarray:
+    """
+    Compute the Coulomb potential values at each point for a given set of charges at defined positions.
+
+    Parameters
+    ----------
+    charges : np.ndarray (N,)
+        Charges, with units [V]
+    
+    positions : np.ndarray (N, 3)
+        Coordinates of point charges, with units of A.
+        
+    points : np.ndarray (M, 3)
+        Coordinates of point cloud at which to compute electrostatic potential, with units of A.
+
+    Returns
+    -------
+    np.ndarray (M,)
+        Electrostatic potential values corresponding to each point.
+    """
+    
+    distances = np.linalg.norm(points[:, np.newaxis] - positions, axis=2)
+    # Calculate the potentials
+    E_pot = np.dot(charges, 1. / distances.T) * COULOMB_SCALING # [eV/e] = [V]
+    # Ensure that invalid distances (where distance is 0) are handled
+    E_pot[np.isinf(E_pot)] = 0    
+    return E_pot
+
+
 def color_pcd_with_electrostatics(pcd: o3d.geometry.PointCloud, E_pot: np.ndarray) -> None:
     """
     Color the point cloud based on elecrostatic potential. Colors are only scaled to the molecule

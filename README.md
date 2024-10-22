@@ -1,6 +1,10 @@
 # ShEPhERD Scoring Functions
 3D interaction profiles and their differentiable similarity scoring functions used in ShEPhERD (**S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion).
 
+<div style="text-align: center;">
+  <img src="./logo.svg" alt="Shepherd Score Logo" style="width: 200px; height: auto;">
+</div>
+
 ## Table of Contents
 1. [Requirements](##requirements)
 2. [Installation](##installation)
@@ -9,6 +13,7 @@
 5. [Scoring and Alignment Examples](##scoring-and-alignment-examples)
 
 ## Requirements
+### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there.
 #### Minimum requirements for interaction profile extraction, scoring/alignment, and evaluations
 ```
 python>=3.8
@@ -17,10 +22,10 @@ pytorch>=1.12
 mkl==2024.0 (use conda)
 open3d>=0.18
 rdkit>=2023.03
-xtb>=6.6 (Use conda)
+xtb>=6.6 (use conda)
 ```
 
-<sub><sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup></sub>
+<sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
 
 #### Optional software necessary for docking evaluation
 ```
@@ -111,8 +116,9 @@ Useful conformer generation functions are found in the `shepherd_score.conformer
 
 ## Scoring and Alignment Examples
 
-Jupyter notebook tutorials/examples for extraction, scoring, and alignments are found in the `examples` folder. Some minimal exmamples are below.
+Jupyter notebook tutorials/examples for extraction, scoring, and alignments are found in the [`examples`](./examples/) folder. Some minimal exmamples are below.
 
+### Extraction
 Extraction of interaction profiles.
 
 ```python
@@ -141,6 +147,7 @@ esp = get_electrostatic_potential(ref_mol, partial_charges, surface)
 pharm_types, pharm_pos, pharm_vecs = get_pharmacophores(ref_mol, multi_vector=False)
 ```
 
+### 3D similarity scoring
 An example of scoring the similarity of two different molecules using 3D surface, ESP, and pharmacophore similarity metrics.
 
 ```python
@@ -175,6 +182,7 @@ esp_score = mp.score_with_esp(ALPHA(mp.num_surf_points), lam=0.3)
 pharm_score = mp.score_with_pharm()
 ```
 
+### Alignment
 Next we show alignment using the same MoleculePair class.
 
 ```python
@@ -200,6 +208,8 @@ transformed_fit_molec = mp.get_transformed_molecule(
 )
 ```
 
+### Evaluations
+#### Evaluations can be run from a molecule's atomic numbers and positions (i.e., straight from an xyz file)
 Evaluations can be done on an individual basis or in a pipeline. Here we show the most basic use case in the unconditional setting.
 
 ```python
@@ -222,6 +232,8 @@ uncond_pipe.evaluate()
 sample_df, global_series = uncond_pipe.to_pandas()
 ```
 
-## Copyright
+## License
 
-Copyright (c) 2024, Kento Abeywardane; Coley Research Lab
+This project is licensed under the MIT License -- see [LICENSE](./LICENSE) file for details.
+
+## Citation
