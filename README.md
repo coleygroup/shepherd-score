@@ -101,9 +101,8 @@ scikit-learn>=1.3
 ## Installation
 1. Clone this repo
 2. Navigate to this repo's top-level directory
-3. Create or use a generic conda environment and activate it
-4. Install xtb with `conda install -c conda-forge xtb`
-5. Run `pip install -e .` for developer install (this will automatically install numpy, pytorch, open3d, and rdkit)
+3. Set up the environment following the instructions above
+4. Run `pip install -e .` for developer install
 
 ## Usage
 The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap and ESP similarity, but currently *not* for pharmacophores.
@@ -137,7 +136,7 @@ Useful conformer generation functions are found in the `shepherd_score.conformer
 
 ## Scoring and Alignment Examples
 
-Jupyter notebook tutorials/examples for extraction, scoring, and alignments are found in the [`examples`](./examples/) folder. Some minimal exmamples are below.
+Full jupyter notebook tutorials/examples for extraction, scoring, and alignments are found in the [`examples`](./examples/) folder. Some minimal examples are below.
 
 ### Extraction
 Extraction of interaction profiles.
@@ -238,13 +237,16 @@ We implement three evaluations of generated 3D conformers. Evaluations can be do
     - Checks validity, pre-/post-xTB relaxation
     - Calculates 2D graph properties
 - `ConsistencyEval`
-    - Inherits from `ConfEval` and evaluates if the jointly generated molecule and its interaction profiles are consistent with the true interaction profile with 3D similarity scoring functions
+    - Inherits from `ConfEval` and evaluates the consistency of the molecule's jointly generated interaction profiles with the true interaction profiles using 3D similarity scoring functions
 - `ConditionalEval`
     - Inherits from `ConfEval` and evaluates the 3D similarity between generated molecules and the target molecule
 
 **Note**: Evaluations can be run from any molecule's atomic numbers and positions with explicit hydrogens (i.e., straight from an xyz file).
 
 ### Examples
+
+Full jupyter notebook tutorials/examples for evaluations are found in the [`examples`](./examples/) folder. Some minimal examples are below.
+
 ```python
 from shepherd_score.evaluations.evalutate import ConfEval
 from shepherd_score.evaluations.evalutate import UnconditionalEvalPipeline
