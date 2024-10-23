@@ -1,53 +1,24 @@
-# ShEPhERD Scoring Functions
-3D interaction profiles and their differentiable similarity scoring functions used in ShEPhERD (**S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion).
+# *ShEPhERD* Scoring Functions
+This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with ShEPhERD<sup>1</sup> and other generative models.
 
-<div style="text-align: center;">
-  <img src="./logo.svg" alt="Shepherd Score Logo" style="width: 200px; height: auto;">
-</div>
+The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [ShEPhERD: Diffusion shape, electrostatics, and pharmacophores for bioisosteric drug design](https://arxiv.org). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd). 
+
+
+<p align="center">
+  <img width="200" src="./logo.svg">
+</p>
+
+<sub><sup>1</sup> **S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion</sub>
 
 ## Table of Contents
-1. [Requirements](##requirements)
-2. [Installation](##installation)
-3. [File Structure](##file-structure)
-4. [Usage](##how-to-use)
-5. [Scoring and Alignment Examples](##scoring-and-alignment-examples)
+1. [File Structure](#file-structure)
+2. [Requirements](#requirements)
+3. [Installation](#installation)
+4. [Usage](#how-to-use)
+5. [Scoring and Alignment Examples](#scoring-and-alignment-examples)
+6. [Evaluation Examples and Scripts](#evaluation-examples-and-scripts)
+7. [Data](#data)
 
-## Requirements
-### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there.
-#### Minimum requirements for interaction profile extraction, scoring/alignment, and evaluations
-```
-python>=3.8
-numpy>1.2,<2.0
-pytorch>=1.12
-mkl==2024.0 (use conda)
-open3d>=0.18
-rdkit>=2023.03
-xtb>=6.6 (use conda)
-```
-
-<sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
-
-#### Optional software necessary for docking evaluation
-```
-meeko
-vina==1.2.5
-```
-You can pip install the python bindings for Autodock Vina for the python interface. However, this also requires an installation of the executable of Autodock Vina v1.2.5: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/).
-
-#### Other optional packages
-```
-jax==0.4.26
-jaxlib==0.4.26+cuda12.cudnn89
-optax==0.2.2
-py3dmol==2.1.0
-```
-
-## Installation
-1. Clone this repo
-2. Navigate to this repo's top-level directory
-3. Create or use a generic conda environment and activate it
-4. Install xtb with `conda install -c conda-forge xtb`
-5. Run `pip install -e .` for developer install (this will automatically install numpy, pytorch, open3d, and rdkit)
 
 ## File Structure
 ```
@@ -79,10 +50,60 @@ py3dmol==2.1.0
 │   ├── generate_point_cloud.py
 │   ├── objective.py                        # Objective function used for REINVENT
 │   └── visualize.py                        # Visualization tools
-├── examples                                # Jupyter notebook tutorials/examples 
-├── tests
+├── scripts/                                # Scripts for running evaluations
+├── examples/                               # Jupyter notebook tutorials/examples 
+├── tests/
+├── environment.yml                         # Environment
 └── README.md
 ```
+
+
+## Requirements
+An example environment can be found at `environment.yml`, however, this package should generally work where PyTorch, Open3D, RDKit, and xTB can be installed in an environment with Python >=3.8.
+
+#### Minimum requirements for interaction profile extraction, scoring/alignment, and evaluations
+```
+python>=3.8
+numpy>1.2,<2.0
+pytorch>=1.12
+mkl==2024.0 (use conda)
+open3d>=0.18
+rdkit>=2023.03 (newest available is recommended)
+xtb>=6.6 (use conda)
+scipy>=1.10
+pandas>=2.0
+```
+
+<sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
+
+#### If you are coming from the ShEPhERD repository, you can use the same environment as described there and add the optional packages listed below, if needed.
+
+
+#### Optional software necessary for docking evaluation
+```
+meeko
+vina==1.2.5
+```
+You can pip install the python bindings for Autodock Vina for the python interface. However, this also requires an installation of the executable of Autodock Vina v1.2.5: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/).
+
+#### Other optional packages
+```
+jax==0.4.26
+jaxlib==0.4.26+cuda12.cudnn89
+optax==0.2.2
+py3dmol>=2.1.0
+biopython>=1.84
+prolif>=2.0.3
+mdanalysis>=2.2.0
+scikit-learn>=1.3
+```
+
+## Installation
+1. Clone this repo
+2. Navigate to this repo's top-level directory
+3. Create or use a generic conda environment and activate it
+4. Install xtb with `conda install -c conda-forge xtb`
+5. Run `pip install -e .` for developer install (this will automatically install numpy, pytorch, open3d, and rdkit)
 
 ## Usage
 The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap and ESP similarity, but currently *not* for pharmacophores.
@@ -208,10 +229,22 @@ transformed_fit_molec = mp.get_transformed_molecule(
 )
 ```
 
-### Evaluations
-#### Evaluations can be run from a molecule's atomic numbers and positions (i.e., straight from an xyz file)
-Evaluations can be done on an individual basis or in a pipeline. Here we show the most basic use case in the unconditional setting.
+## Evaluation Examples and Scripts
 
+We implement three evaluations of generated 3D conformers. Evaluations can be done on an individual basis or in a pipeline. Here we show the most basic use case in the unconditional setting.
+
+
+- `ConfEval`
+    - Checks validity, pre-/post-xTB relaxation
+    - Calculates 2D graph properties
+- `ConsistencyEval`
+    - Inherits from `ConfEval` and evaluates if the jointly generated molecule and its interaction profiles are consistent with the true interaction profile with 3D similarity scoring functions
+- `ConditionalEval`
+    - Inherits from `ConfEval` and evaluates the 3D similarity between generated molecules and the target molecule
+
+**Note**: Evaluations can be run from any molecule's atomic numbers and positions with explicit hydrogens (i.e., straight from an xyz file).
+
+### Examples
 ```python
 from shepherd_score.evaluations.evalutate import ConfEval
 from shepherd_score.evaluations.evalutate import UnconditionalEvalPipeline
@@ -231,6 +264,12 @@ uncond_pipe.evaluate()
 # Properties are stored as attributes and can be converted into pandas df's
 sample_df, global_series = uncond_pipe.to_pandas()
 ```
+
+### Scripts
+Scripts to evaluate ShEPhERD-generated samples can be found in the `scripts` directory.
+
+## Data
+We provide the data used for model training, benchmarking, and all ShEPhERD-generated samples reported in the paper at this [Dropbox link](https://www.dropbox.com/scl/fo/rgn33g9kwthnjt27bsc3m/ADGt-CplyEXSU7u5MKc0aTo?rlkey=fhi74vkktpoj1irl84ehnw95h&e=1&st=wn46d6o2&dl=0).
 
 ## License
 

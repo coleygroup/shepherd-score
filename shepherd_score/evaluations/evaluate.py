@@ -1740,7 +1740,7 @@ class ConsistencyEvalPipeline:
 
         for key, value in self.__dict__.items():
             if key in ('random_molblock_charges', 'num_random_molblock_charges', 'smiles',
-                       'smiles_post_opt', 'morgan_fps', 'morgain_fps_post_opt'):
+                       'smiles_post_opt', 'morgan_fps', 'morgan_fps_post_opt'):
                 continue
             elif key == 'graph_similarity_matrix' or key == 'graph_similarity_matrix_post_opt':
                 global_attrs[key] = value

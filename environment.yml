@@ -1,0 +1,19 @@
+name: shepherd_score
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8.13
+  - numpy>=1.2,<2.0
+  - torchaudio==0.12.1
+  - pytorch==1.12.1
+  - cudatoolkit==11.3.1
+  - torchvision==0.13.1
+  - xtb
+  - mkl==2024.0
+  - pip:
+    - open3d>=0.18
+    - meeko
+    - vina==1.2.5
+    - py3dmol>=2.1.0
+    - scipy>=1.10
+    - pandas>=2.0
