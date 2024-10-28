@@ -1388,7 +1388,7 @@ class ConsistencyEvalPipeline:
                  num_processes: int = 1,
                  verbose: bool=False):
         """ 
-        Run conditional evaluation on every generated molecule and store collective values.
+        Run consistency evaluation on every generated molecule and store collective values.
 
         Arguments
         ---------
@@ -1485,6 +1485,8 @@ class ConsistencyEvalPipeline:
                 self.num_valid_post_opt += 1
                 self.smiles_post_opt.append(consis_eval.smiles_post_opt)
 
+            # only compute upper bound if consistent
+            if consis_eval.is_valid and consis_eval.is_valid_post_opt:
                 # Upper bound
                 surf_scores, esp_scores = self.resampling_upper_bounds(
                     consis_eval=consis_eval,
