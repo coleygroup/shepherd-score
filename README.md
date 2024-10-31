@@ -1,14 +1,14 @@
 # *ShEPhERD* Scoring Functions
-This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with ShEPhERD<sup>1</sup> and other generative models.
+This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup> and other generative models.
 
-The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [ShEPhERD: Diffusion shape, electrostatics, and pharmacophores for bioisosteric drug design](https://arxiv.org). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd). 
+The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [*ShEPhERD*: Diffusion shape, electrostatics, and pharmacophores for bioisosteric drug design](https://coley.mit.edu/publications/2024/ShEPhERD.pdf). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd). 
 
 
 <p align="center">
   <img width="200" src="./logo.svg">
 </p>
 
-<sub><sup>1</sup> **S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion</sub>
+<sub><sup>1</sup> *ShEPhERD*: **S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion</sub>
 
 ## Table of Contents
 1. [File Structure](#file-structure)
@@ -76,7 +76,7 @@ pandas>=2.0
 
 <sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
 
-#### If you are coming from the ShEPhERD repository, you can use the same environment as described there and add the optional packages listed below, if needed.
+#### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there and add the optional packages listed below, if needed.
 
 
 #### Optional software necessary for docking evaluation
@@ -268,13 +268,16 @@ sample_df, global_series = uncond_pipe.to_pandas()
 ```
 
 ### Scripts
-Scripts to evaluate ShEPhERD-generated samples can be found in the `scripts` directory.
+Scripts to evaluate *ShEPhERD*-generated samples can be found in the `scripts` directory.
 
 ## Data
-We provide the data used for model training, benchmarking, and all ShEPhERD-generated samples reported in the paper at this [Dropbox link](https://www.dropbox.com/scl/fo/rgn33g9kwthnjt27bsc3m/ADGt-CplyEXSU7u5MKc0aTo?rlkey=fhi74vkktpoj1irl84ehnw95h&e=1&st=wn46d6o2&dl=0).
+We provide the data used for model training, benchmarking, and all *ShEPhERD*-generated samples reported in the paper at this [Dropbox link](https://www.dropbox.com/scl/fo/rgn33g9kwthnjt27bsc3m/ADGt-CplyEXSU7u5MKc0aTo?rlkey=fhi74vkktpoj1irl84ehnw95h&e=1&st=wn46d6o2&dl=0). There are comprehensive READMEs in the Dropbox describing the different folders.
 
 ## License
 
 This project is licensed under the MIT License -- see [LICENSE](./LICENSE) file for details.
 
 ## Citation
+If you use or adapt `shepherd_score` or [*ShEPhERD*](https://github.com/coleygroup/shepherd) in your work, please cite us:
+
+(arxiv citation coming soon)
