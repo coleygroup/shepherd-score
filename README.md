@@ -1,7 +1,7 @@
 # *ShEPhERD* Scoring Functions
 This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup> and other generative models.
 
-The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [*ShEPhERD*: Diffusion shape, electrostatics, and pharmacophores for bioisosteric drug design](https://coley.mit.edu/publications/2024/ShEPhERD.pdf). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd). 
+The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [*ShEPhERD*: Diffusion shape, electrostatics, and pharmacophores for bioisosteric drug design](https://arxiv.org/abs/2411.04130). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd).
 
 
 <p align="center">
@@ -280,4 +280,15 @@ This project is licensed under the MIT License -- see [LICENSE](./LICENSE) file 
 ## Citation
 If you use or adapt `shepherd_score` or [*ShEPhERD*](https://github.com/coleygroup/shepherd) in your work, please cite us:
 
-(arxiv citation coming soon)
+```bibtex
+@misc{adamsShEPhERD2024,
+  title = {{{ShEPhERD}}: {{Diffusing}} Shape, Electrostatics, and Pharmacophores for Bioisosteric Drug Design},
+  author = {Adams, Keir and Abeywardane, Kento and Fromer, Jenna and Coley, Connor W.},
+  year = {2024},
+  number = {arXiv:2411.04130},
+  eprint = {2411.04130},
+  publisher = {arXiv},
+  doi = {10.48550/arXiv.2411.04130},
+  archiveprefix = {arXiv}
+}
+```
