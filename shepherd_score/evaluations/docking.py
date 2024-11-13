@@ -21,7 +21,7 @@ import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from utils.convert_data import get_smiles_from_atom_pos
+from shepherd_score.evaluations.utils.convert_data import get_smiles_from_atom_pos
 
 try:
     from vina import Vina
