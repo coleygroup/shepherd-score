@@ -1,7 +1,7 @@
 # *ShEPhERD* Scoring Functions
 This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup> and other generative models.
 
-The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [*ShEPhERD*: Diffusion shape, electrostatics, and pharmacophores for bioisosteric drug design](https://arxiv.org/abs/2411.04130). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd).
+The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [*ShEPhERD*: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design](https://arxiv.org/abs/2411.04130). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd).
 
 
 <p align="center">
