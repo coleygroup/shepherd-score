@@ -52,8 +52,16 @@ def VAB_2nd_order_cosine_np(centers_1: np.ndarray,
     NumPy implementation with single instance functionality.
     """
     if len(centers_1.shape) == 2:
+        # Normalize vectors for cosine similarity
+        norm_v1 = np.linalg.norm(vectors_1, axis=1, keepdims=True)
+        norm_v2 = np.linalg.norm(vectors_2, axis=1, keepdims=True)
+
+        # Avoid division by zero if a vector is all zeros
+        vec1_norm = np.divide(vectors_1, norm_v1, out=np.zeros_like(vectors_1), where=norm_v1!=0)
+        vec2_norm = np.divide(vectors_2, norm_v2, out=np.zeros_like(vectors_2), where=norm_v2!=0)
+
         # cosine similarity
-        V2 = np.matmul(vectors_1, vectors_2.T).T
+        V2 = np.matmul(vec1_norm, vec2_norm.T).T # Now uses normalized vectors
         if allow_antiparallel:
             V2 = np.abs(V2)
         else:

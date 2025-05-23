@@ -19,23 +19,45 @@ def VAB_2nd_order(centers_1: torch.Tensor,
                   ) -> torch.Tensor:
     """
     2nd order volume overlap of AB.
-    Torch implemenation with batched and single instance functionality.
+    Torch implementation supporting single instances, matched batches, and
+    broadcasting scenarios.
+    The function relies on torch.cdist for calculating squared distances,
+    which handles necessary broadcasting for batch dimensions efficiently.
+
+    R2_cdist will have a shape like (Batch, N_c1, N_c2) or (N_c1, N_c2)
+    depending on the input shapes. torch.cdist handles the broadcasting
+    of batch dimensions. For example:
+    - c1=(N,3), c2=(M,3)       -> cdist_out=(N,M)
+    - c1=(B,N,3), c2=(B,M,3)   -> cdist_out=(B,N,M)
+    - c1=(N,3), c2=(B,M,3)     -> cdist_out=(B,N,M) (c1 broadcasted)
+    - c1=(1,N,3), c2=(B,M,3)   -> cdist_out=(B,N,M) (c1 broadcasted)
     """
-    # Single instance
-    if len(centers_1.shape) == 2:
-        R2 = (torch.cdist(centers_1, centers_2, compute_mode='use_mm_for_euclid_dist')**2.0).T
-
-        VAB_second_order = torch.sum(np.pi**(1.5) * torch.exp(-(alpha / 2) * R2) / ((2*alpha)**(1.5)))
-
-    # Batched
-    elif len(centers_1.shape) == 3:
-        R2 = (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
     
-        VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
-                                            torch.exp(-(alpha / 2) * R2) /
-                                            ((2*alpha)**(1.5)),
-                                            dim = 2),
-                                    dim = 1)
+    R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # p=2 is default for cdist
+
+    # Common term in the VAB calculation
+    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
+
+    # Batched case
+    if len(R2_cdist.shape) == 3:
+        R2 = R2_cdist.permute(0, 2, 1)  # (B, N_c2, N_c1)
+        
+        VAB_second_order = torch.sum(torch.sum(term_common *
+                                               torch.exp(-(alpha / 2) * R2),
+                                               dim=2),
+                                     dim=1)  # Resulting shape: (B,)
+    
+    # Single instance
+    elif len(R2_cdist.shape) == 2:
+        # Sum directly over the (N_c1, N_c2) matrix, no transpose needed.
+        VAB_second_order = torch.sum(term_common *
+                                     torch.exp(-(alpha / 2) * R2_cdist))
+    else:
+        raise ValueError(
+            f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
+            f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
+        )
+        
     return VAB_second_order
 
 
@@ -55,21 +77,28 @@ def get_overlap(centers_1: Union[torch.Tensor, np.ndarray],
                 alpha:float = 0.81
                 ) -> torch.Tensor:
     """
-    Volumentric shape similarity with tunable "alpha" Gaussian width parameter.
-    Handles both batched and single instances. PyTorch implementation.
+    Volumetric shape similarity with tunable "alpha" Gaussian width parameter.
+    Handles single instances, matched batches, and broadcasting scenarios
+    (e.g., centers_1=(N,3) or (1,N,3) and centers_2=(B,M,3)). PyTorch implementation.
 
     Parameters
     ----------
     centers_1 : Union[torch.Tensor, np.ndarray] (batch, N, 3) or (N, 3)
         Coordinates of each point of the first point cloud.
-    centers_2 : Union[torch.Tensor, np.ndarray] (batch, N, 3) or (N, 3)
+        Can be (N,3) for a single instance, (B,N,3) for a batch, or (1,N,3)
+        for a single instance to be broadcast against a batch in centers_2.
+    centers_2 : Union[torch.Tensor, np.ndarray] (batch, M, 3) or (M, 3)
         Coordinates of each point of the second point cloud.
+        Can be (M,3) for a single instance, (B,M,3) for a batch, or (1,M,3)
+        for a single instance to be broadcast against a batch in centers_1.
     alpha : float (default=0.81)
         Gaussian width parameter. Lower value corresponds to wider Gaussian (longer tail).
     
     Returns
     -------
-    torch.Tensor : (batch, 1) or (1,)
+    torch.Tensor : (batch,) or scalar
+        The Tanimoto similarity score. Returns a scalar if both inputs are single instances,
+        or a 1D tensor of shape (batch,) if at least one input is batched.
     """
     if isinstance(centers_1, np.ndarray):
         centers_1 = torch.Tensor(centers_1)
@@ -87,34 +116,75 @@ def VAB_2nd_order_mask(centers_1: torch.Tensor,
                        mask_2: torch.Tensor
                        ) -> torch.Tensor:
     """
-    2nd order volume overlap of AB.
-    Torch implemenation with batched and single instance functionality using masking.
+    2nd order volume overlap of AB with masking.
+    Torch implementation supporting single instances, matched batches, and broadcasting.
+    Masks are applied to the interaction terms.
 
-    centers_1 : torch.Tensor (N,3) or (B,N,3)
-    centers_2 : torch.Tensor (M,3) or (B,M,3)
-    mask_1 : torch.Tensor (N,) or (B,N)
-    mask_2 : torch.Tensor (M,) or (B,M)
+    Parameters
+    ----------
+    centers_1 : torch.Tensor (N,3) or (B,N,3) or (1,N,3)
+        Coordinates for the first set of points.
+    centers_2 : torch.Tensor (M,3) or (B,M,3) or (1,M,3)
+        Coordinates for the second set of points.
+    alpha : float
+        Gaussian width parameter.
+    mask_1 : torch.Tensor (N,) or (B,N) or (1,N)
+        Mask for centers_1. Boolean or float (0/1).
+    mask_2 : torch.Tensor (M,) or (B,M) or (1,M)
+        Mask for centers_2. Boolean or float (0/1).
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar or (B,) tensor of overlap scores.
     """
+    R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # Shape: (B, N1, N2) or (N1, N2)
+
+    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
+
+    # Prepare masks for broadcasting
+    # m1_final will be (B, N1) or (1, N1) or (N1,)
+    # m2_final will be (B, N2) or (1, N2) or (N2,)
+    m1_final = mask_1.float()
+    m2_final = mask_2.float()
+
+    # Batched case
+    if R2_cdist.dim() == 3:
+        R2 = R2_cdist.permute(0, 2, 1) # Shape: (B, N2, N1)
+
+        # Ensure masks are at least 2D for broadcasting with batch dimension
+        if m1_final.dim() == 1:
+            m1_final = m1_final.unsqueeze(0) # (1, N1)
+        if m2_final.dim() == 1:
+            m2_final = m2_final.unsqueeze(0) # (1, N2)
+        
+        # m1_final_unsqueezed: (B or 1, N1, 1), m2_final_unsqueezed: (B or 1, 1, N2)
+        m1_final_unsqueezed = m1_final.unsqueeze(2)
+        m2_final_unsqueezed = m2_final.unsqueeze(1)
+        
+        # mask_mat will broadcast to (B, N1, N2) then permuted to (B, N2, N1)
+        mask_mat = (m1_final_unsqueezed * m2_final_unsqueezed).permute(0, 2, 1)
+
+        VAB_second_order = torch.sum(torch.sum(term_common *
+                                               mask_mat *
+                                               torch.exp(-(alpha / 2) * R2),
+                                               dim=2),
+                                     dim=1)
     # Single instance
-    if len(centers_1.shape) == 2:
-        masked_c1 = centers_1[mask_1.bool()]
-        masked_c2 = centers_2[mask_2.bool()]
-        R2 = (torch.cdist(masked_c1, masked_c2, compute_mode='use_mm_for_euclid_dist')**2.0).T
-
-        VAB_second_order = torch.sum(np.pi**(1.5) * torch.exp(-(alpha / 2) * R2) / ((2*alpha)**(1.5)))
-
-    # Batched
-    elif len(centers_1.shape) == 3:
-        # Fast assuming low number of centers and high number of instances
-        R2 = (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
-        mask_mat = (mask_1[:, :,None] * mask_2[:, None,:]).permute(0,2,1)
-
-        VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
-                                               mask_mat * 
-                                               torch.exp(-(alpha / 2) * R2) /
-                                               ((2*alpha)**(1.5)),
-                                               dim = 2),
-                                    dim = 1)
+    elif R2_cdist.dim() == 2: # R2_cdist is (N1, N2)
+        # m1_final should be (N1,), m2_final should be (N2,)
+        # mask_mat should be (N1, N2) for direct multiplication with R2_cdist
+        mask_mat = m1_final.unsqueeze(1) * m2_final.unsqueeze(0) # (N1,1) * (1,N2) -> (N1,N2)
+        
+        VAB_second_order = torch.sum(term_common *
+                                     mask_mat *
+                                     torch.exp(-(alpha / 2) *
+                                     R2_cdist)) # Use R2_cdist directly
+    else:
+        raise ValueError(
+            f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
+            f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
+        )
     return VAB_second_order
 
 
@@ -124,22 +194,37 @@ def VAB_2nd_order_mask_batch(cdist_21: torch.Tensor,
                              mask_2: torch.Tensor
                              ) -> torch.Tensor:
     """
-    2nd order volume overlap of AB.
-    Torch implemenation with only batched functionality using masking and precomputed cdist
+    2nd order volume overlap of AB (batched) with masking, using precomputed cdist.
+    Assumes inputs `cdist_21`, `mask_1`, `mask_2` are already batched and broadcast-compatible.
 
+    Parameters
+    ----------
     cdist_21 : torch.Tensor (B,M,N)
-        Precomputed (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
+        Precomputed squared Euclidean distances: (torch.cdist(centers_2, centers_1)**2.0).
+        Note the order: cdist(c2, c1) gives (B, M, N) which is R_21^2.
+        If cdist(c1,c2).permute(0,2,1) was used, it's also (B,M,N).
     alpha : float
-    mask_1 : torch.Tensor (B,N)
-    mask_2 : torch.Tensor (B,M)
+        Gaussian width parameter.
+    mask_1 : torch.Tensor (B,N) or (1,N)
+        Mask for the first set of points (corresponding to N in cdist_21).
+    mask_2 : torch.Tensor (B,M) or (1,M)
+        Mask for the second set of points (corresponding to M in cdist_21).
+    
+    Returns
+    -------
+    torch.Tensor : (B,)
+        Batched Tanimoto similarity scores.
     """
-    # Fast assuming low number of centers and high number of instances
-    mask_mat = (mask_1[:, :,None] * mask_2[:, None,:]).permute(0,2,1)
+    # mask_1: (B,N) -> (B,1,N) after unsqueeze
+    # mask_2: (B,M) -> (B,M,1) after unsqueeze
+    # mask_mat: (B,M,1) * (B,1,N) -> (B,M,N) due to broadcasting rules
+    mask_mat = (mask_2.unsqueeze(2) * mask_1.unsqueeze(1))
 
-    VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
+    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
+
+    VAB_second_order = torch.sum(torch.sum(term_common *
                                             mask_mat * 
-                                            torch.exp(-(alpha / 2) * cdist_21) /
-                                            ((2*alpha)**(1.5)),
+                                            torch.exp(-(alpha / 2) * cdist_21),
                                             dim = 2),
                                 dim = 1)
     return VAB_second_order
@@ -154,48 +239,77 @@ def VAB_2nd_order_cosine(centers_1: torch.Tensor,
                          ) -> torch.Tensor:
     """
     2nd order volume overlap of AB weighted by cosine similarity.
-    Torch implemenation with batched and single instance functionality.
+    Torch implementation supporting single instances, matched batches, and broadcasting.
+
+    Parameters
+    ----------
+    centers_1 : torch.Tensor (N,3) or (B,N,3) or (1,N,3)
+    centers_2 : torch.Tensor (M,3) or (B,M,3) or (1,M,3)
+    vectors_1 : torch.Tensor (N,3) or (B,N,3) or (1,N,3)
+    vectors_2 : torch.Tensor (M,3) or (B,M,3) or (1,M,3)
+    alpha : float
+    allow_antiparallel : bool
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar or (B,) tensor of overlap scores.
     """
 
+    R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # (B, N1, N2) or (N1, N2)
+    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
+
+    # Normalize vectors
+    # For batched: (B, N, 3) -> (B, N, 3)
+    # For single: (N, 3) -> (N, 3)
+    norm_dim = vectors_1.dim() - 1
+    vec1_norm = F.normalize(vectors_1, p=2, dim=norm_dim)
+    vec2_norm = F.normalize(vectors_2, p=2, dim=norm_dim)
+
+    # Batched case
+    if R2_cdist.dim() == 3:
+        R2_permuted = R2_cdist.permute(0, 2, 1)  # (B, N2, N1)
+        
+        # Cosine similarity V2: (B, N1, N2)
+        # vec1_norm: (B or 1, N1, 3), vec2_norm: (B or 1, N2, 3)
+        # Need vec2_norm.permute(0,2,1) for matmul -> (B or 1, 3, N2)
+        # Result of matmul: (B, N1, N2)
+        V2_sim_N1_N2 = torch.matmul(vec1_norm, vec2_norm.permute(0,2,1) if vec2_norm.dim() == 3 else vec2_norm.T)
+        V2_sim_permuted = V2_sim_N1_N2.permute(0, 2, 1) # (B, N2, N1) for multiplication with R2_permuted
+
+        if allow_antiparallel:
+            V2_sim_permuted = torch.abs(V2_sim_permuted)
+        else:
+            V2_sim_permuted = torch.clamp(V2_sim_permuted, 0., 1.) # wrong direction should be 0 rather than negative
+        V2_weighted_permuted = (V2_sim_permuted + 2.) / 3. # Following PheSA's suggestion for weighting
+
+        VAB_second_order = torch.sum(torch.sum(term_common *
+                                               V2_weighted_permuted *
+                                               torch.exp(-(alpha / 2) * R2_permuted), # R2 is (B, N2, N1)
+                                               dim=2),
+                                     dim=1)
     # Single instance
-    if len(centers_1.shape) == 2:
-        # cosine similarity
-        vectors_1 = F.normalize(vectors_1, p=2, dim=1)
-        vectors_2 = F.normalize(vectors_2, p=2, dim=1)
-        V2 = torch.matmul(vectors_1, vectors_2.T).T
+    elif R2_cdist.dim() == 2: # R2_cdist is (N1, N2)
+        # Cosine similarity V2_sim: (N1, N2)
+        # vec1_norm: (N1,3), vec2_norm: (N2,3) -> vec2_norm.T: (3,N2)
+        V2_sim_N1_N2 = torch.matmul(vec1_norm, vec2_norm.T) # (N1,N2)
+        # No transpose needed for V2_sim_N1_N2 if R2_cdist is used directly
+
         if allow_antiparallel:
-            # 
-            V2 = torch.abs(V2)
+            V2_sim_N1_N2 = torch.abs(V2_sim_N1_N2)
         else:
-            V2 = torch.clamp(V2, 0., 1.)
+            V2_sim_N1_N2 = torch.clamp(V2_sim_N1_N2, 0., 1.)
+        V2_weighted_N1_N2 = (V2_sim_N1_N2 + 2.) / 3. # Following PheSA's suggestion for weighting
 
-        V2 = (V2 + 2.)/3. # Following PheSA's suggestion for weighting
-
-        R2 = (torch.cdist(centers_1, centers_2, compute_mode='use_mm_for_euclid_dist')**2.0).T
-
-        VAB_second_order = torch.sum(np.pi**(1.5) * V2 * torch.exp(-(alpha / 2) * R2) / ((2*alpha)**(1.5)))
-
-    # Batched
-    elif len(centers_1.shape) == 3:
-        # Cosine similarity
-        vectors_1 = F.normalize(vectors_1, p=2, dim=2)
-        vectors_2 = F.normalize(vectors_2, p=2, dim=2)
-        V2 = torch.matmul(vectors_1, vectors_2.permute(0,2,1)).permute(0,2,1)
-        if allow_antiparallel:
-            V2 = torch.abs(V2)
-        else:
-            V2 = torch.clamp(V2, 0., 1.) # wrong direction should be 0 rather than negative
-
-        V2 = (V2 + 2.)/3. # Following PheSA's suggestion for weighting
-
-        R2 = (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
-    
-        VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
-                                               V2 * 
-                                               torch.exp(-(alpha / 2) * R2) /
-                                               ((2*alpha)**(1.5)),
-                                               dim = 2),
-                                     dim = 1)
+        VAB_second_order = torch.sum(term_common *
+                                     V2_weighted_N1_N2 *
+                                     torch.exp(-(alpha / 2) *
+                                     R2_cdist)) # Use R2_cdist directly
+    else:
+        raise ValueError(
+            f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
+            f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
+        )
     return VAB_second_order
 
 
@@ -209,54 +323,87 @@ def VAB_2nd_order_cosine_mask(centers_1: torch.Tensor,
                               mask_2: torch.Tensor
                               ) -> torch.Tensor:
     """
-    2nd order volume overlap of AB weighted by cosine similarity.
-    Torch implemenation with batched and single instance functionality.
+    2nd order volume overlap of AB weighted by cosine similarity, with masking.
+    Torch implementation supporting single instances, matched batches, and broadcasting.
+
+    Parameters
+    ----------
+    centers_1 : torch.Tensor (N,3) or (B,N,3) or (1,N,3)
+    centers_2 : torch.Tensor (M,3) or (B,M,3) or (1,M,3)
+    vectors_1 : torch.Tensor (N,3) or (B,N,3) or (1,N,3)
+    vectors_2 : torch.Tensor (M,3) or (B,M,3) or (1,M,3)
+    alpha : float
+    allow_antiparallel : bool
+    mask_1 : torch.Tensor (N,) or (B,N) or (1,N)
+    mask_2 : torch.Tensor (M,) or (B,M) or (1,M)
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar or (B,) tensor of overlap scores.
     """
+    R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # (B, N1, N2) or (N1, N2)
+    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
 
-    # Single instance
-    if len(centers_1.shape) == 2:
-        # cosine similarity
-        masked_centers_1 = centers_1[mask_1.bool()]
-        masked_centers_2 = centers_2[mask_2.bool()]
-        masked_vectors_1 = vectors_1[mask_1.bool()]
-        masked_vectors_2 = vectors_2[mask_2.bool()]
-        masked_vectors_1 = F.normalize(masked_vectors_1, p=2, dim=1)
-        masked_vectors_2 = F.normalize(masked_vectors_2, p=2, dim=1)
-        V2 = torch.matmul(masked_vectors_1, masked_vectors_2.T).T
-        if allow_antiparallel:
-            V2 = torch.abs(V2)
-        else:
-            V2 = torch.clamp(V2, 0., 1.)
-
-        V2 = (V2 + 2.)/3. # Following PheSA's suggestion for weighting
-
-        R2 = (torch.cdist(masked_centers_1, masked_centers_2, compute_mode='use_mm_for_euclid_dist')**2.0).T
-
-        VAB_second_order = torch.sum(np.pi**(1.5) * V2 * torch.exp(-(alpha / 2) * R2) / ((2*alpha)**(1.5)))
-
-    # Batched
-    elif len(centers_1.shape) == 3:
-        # Cosine similarity
-        vectors_1 = F.normalize(vectors_1, p=2, dim=2)
-        vectors_2 = F.normalize(vectors_2, p=2, dim=2)
-        V2 = torch.matmul(vectors_1, vectors_2.permute(0,2,1)).permute(0,2,1)
-        if allow_antiparallel:
-            V2 = torch.abs(V2)
-        else:
-            V2 = torch.clamp(V2, 0., 1.) # wrong direction should be 0 rather than negative
-
-        V2 = (V2 + 2.)/3. # Following PheSA's suggestion for weighting
-
-        R2 = (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
-        mask_mat = (mask_1[:, :, None] * mask_2[:, None, :]).permute(0,2,1)
+    # Normalize vectors
+    norm_dim_v1 = vectors_1.dim() - 1
+    norm_dim_v2 = vectors_2.dim() - 1
+    vec1_norm = F.normalize(vectors_1, p=2, dim=norm_dim_v1)
+    vec2_norm = F.normalize(vectors_2, p=2, dim=norm_dim_v2)
     
-        VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
-                                               mask_mat *
-                                               V2 * 
-                                               torch.exp(-(alpha / 2) * R2) /
-                                               ((2*alpha)**(1.5)),
-                                               dim = 2),
-                                     dim = 1)
+    m1_final = mask_1.float()
+    m2_final = mask_2.float()
+
+    # Batched case
+    if R2_cdist.dim() == 3:
+        R2_permuted = R2_cdist.permute(0, 2, 1)  # (B, N2, N1)
+
+        # Cosine similarity V2_sim: (B, N1, N2) -> permute to (B, N2, N1)
+        V2_sim = torch.matmul(vec1_norm, vec2_norm.permute(0,2,1) if vec2_norm.dim() == 3 else vec2_norm.T)
+        V2_sim_permuted = V2_sim.permute(0, 2, 1)
+
+        if allow_antiparallel:
+            V2_sim_permuted = torch.abs(V2_sim_permuted)
+        else:
+            V2_sim_permuted = torch.clamp(V2_sim_permuted, 0., 1.) # wrong direction should be 0 rather than negative
+        V2_weighted_permuted = (V2_sim_permuted + 2.) / 3. # Following PheSA's suggestion for weighting
+
+        # Prepare masks
+        if m1_final.dim() == 1: m1_final = m1_final.unsqueeze(0)
+        if m2_final.dim() == 1: m2_final = m2_final.unsqueeze(0)
+        mask_mat_permuted = (m1_final.unsqueeze(2) * m2_final.unsqueeze(1)).permute(0, 2, 1) # (B, N2, N1)
+
+        VAB_second_order = torch.sum(torch.sum(term_common *
+                                               mask_mat_permuted *
+                                               V2_weighted_permuted *
+                                               torch.exp(-(alpha / 2) * R2_permuted), # R2 is (B, N2, N1)
+                                               dim=2),
+                                     dim=1)
+    # Single instance
+    elif R2_cdist.dim() == 2: # R2_cdist is (N1, N2)
+
+        # Cosine similarity V2_sim: (N1, N2)
+        V2_sim_N1_N2 = torch.matmul(vec1_norm, vec2_norm.T) # (N1,N2)
+        # No transpose needed for V2_sim if R2_cdist is used directly
+
+        if allow_antiparallel:
+            V2_sim_N1_N2 = torch.abs(V2_sim_N1_N2)
+        else:
+            V2_sim_N1_N2 = torch.clamp(V2_sim_N1_N2, 0., 1.) # wrong direction should be 0 rather than negative
+        V2_weighted_N1_N2 = (V2_sim_N1_N2 + 2.) / 3. # Following PheSA's suggestion for weighting
+        
+        # Mask mat should be (N1,N2)
+        mask_mat_N1_N2 = m1_final.unsqueeze(1) * m2_final.unsqueeze(0) # (N1,1)*(1,N2) -> (N1,N2)
+
+        VAB_second_order = torch.sum(term_common *
+                                     mask_mat_N1_N2 *
+                                     V2_weighted_N1_N2 *
+                                     torch.exp(-(alpha / 2) * R2_cdist)) # Use R2_cdist directly
+    else:
+        raise ValueError(
+            f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
+            f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
+        )
     return VAB_second_order
 
 
@@ -268,32 +415,50 @@ def VAB_2nd_order_cosine_mask_batch(cdist_21: torch.Tensor,
                                     mask_2: torch.Tensor
                                     ) -> torch.Tensor:
     """
-    2nd order volume overlap of AB weighted by cosine similarity.
-    Torch implemenation for only batched inputs where cdist and vmm were precomputed.
+    2nd order volume overlap of AB (batched) weighted by cosine similarity, 
+    with masking, using precomputed cdist and vector dot products (vmm).
+    Assumes inputs `cdist_21`, `vmm_21`, `mask_1`, `mask_2` are already batched and broadcast-compatible.
 
+    Parameters
+    ----------
     cdist_21 : torch.Tensor (B,M,N)
-        Precomputed (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
+        Precomputed squared Euclidean distances, e.g., (torch.cdist(centers_2, centers_1)**2.0).
     vmm_21 : torch.Tensor (B,M,N)
-        Precomputed torch.matmul(vectors_1, vectors_2.permute(0,2,1)).permute(0,2,1).
-        Assume that vectors_1, vectors_2 were normalized and thus vmm = cosine similarity.
+        Precomputed dot products of normalized vectors, e.g., torch.matmul(vectors_2, vectors_1.permute(0,2,1)).
+        This corresponds to cosine similarities if vectors were normalized.
+    alpha : float
+        Gaussian width parameter.
+    allow_antiparallel : bool
+        If true, absolute cosine similarity is used.
+    mask_1 : torch.Tensor (B,N) or (1,N)
+        Mask for the first set of points/vectors (N dimension).
+    mask_2 : torch.Tensor (B,M) or (1,M)
+        Mask for the second set of points/vectors (M dimension).
+
+    Returns
+    -------
+    torch.Tensor : (B,)
+        Batched Tanimoto similarity scores.
     """
-    # Cosine similarity
+    # Cosine similarity weighting
+    vmm_21_processed = vmm_21
     if allow_antiparallel:
-        vmm_21 = torch.abs(vmm_21)
+        vmm_21_processed = torch.abs(vmm_21_processed)
     else:
-        vmm_21 = torch.clamp(vmm_21, 0., 1.) # wrong direction should be 0 rather than negative
+        vmm_21_processed = torch.clamp(vmm_21_processed, 0., 1.) # wrong direction should be 0 rather than negative
+    vmm_21_weighted = (vmm_21_processed + 2.) / 3. # Following PheSA's suggestion for weighting
 
-    vmm_21 = (vmm_21 + 2.)/3. # Following PheSA's suggestion for weighting
+    # Prepare mask_mat (B,M,N)
+    mask_mat = (mask_2.unsqueeze(2) * mask_1.unsqueeze(1))
+    
+    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
 
-    mask_mat = (mask_1[:, :, None] * mask_2[:, None, :]).permute(0,2,1)
-
-    VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
+    VAB_second_order = torch.sum(torch.sum(term_common *
                                             mask_mat *
-                                            vmm_21 * 
-                                            torch.exp(-(alpha / 2) * cdist_21) /
-                                            ((2*alpha)**(1.5)),
+                                            vmm_21_weighted * 
+                                            torch.exp(-(alpha / 2) * cdist_21),
                                             dim = 2),
-                                    dim = 1)
+                                dim = 1)
     return VAB_second_order
 
 
