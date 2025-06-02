@@ -99,6 +99,10 @@ scikit-learn>=1.3
 ```
 
 ## Installation
+### via PyPI
+`pip install shepherd-score`
+
+### For local development (includes `examples/`, `tests/`, etc.)
 1. Clone this repo
 2. Navigate to this repo's top-level directory
 3. Set up the environment following the instructions above
