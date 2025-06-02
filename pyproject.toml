@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shepherd-score"
+version = "0.1.0"
+description = "3D scoring functions used for evaluation of ShEPhERD"
+readme = "README.md"
+requires-python = ">=3.8,<3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Kento Abeywardane", email = "kento@mit.edu"}
+]
+keywords = [
+    "bioinformatics",
+    "molecular-modeling",
+    "3d-scoring",
+    "drug-discovery",
+    "chemistry",
+    "bioisosteres"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Cheminformatics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "open3d>=0.18",
+]
+
+[project.urls]
+Homepage = "https://github.com/kentoabeywardane/shepherd-score"
+Repository = "https://github.com/kentoabeywardane/shepherd-score"
+Documentation = "https://github.com/kentoabeywardane/shepherd-score"
+"Bug Tracker" = "https://github.com/kentoabeywardane/shepherd-score/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+]
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shepherd_score*"]
+exclude = ["tests*", "examples*", "scripts*"]
+
+[tool.setuptools.package-data]
+"shepherd_score" = ["*.yml", "*.yaml", "*.json", "*.txt", "*.fdef", "*.pdbqt"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["shepherd_score"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=shepherd_score",
+    "--cov-report=term-missing",
+] 
