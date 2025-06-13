@@ -13,7 +13,7 @@ _const_npoints_alphas = np.array([0.6011, 0.8668, 1.022, 1.118, 1.216, 1.258])
 ALPHA = interp1d(_npoints, _const_npoints_alphas, 'quadratic')
 
 ### Electrostatics
-COULOMB_SCALING = 1e4/(4*55.263*np.pi)
+COULOMB_SCALING = 1e4/(4*55.263*np.pi) # eV*A/e^2
 LAM_SCALING = COULOMB_SCALING**2
 
 ### Pharmacophores
