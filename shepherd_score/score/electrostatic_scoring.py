@@ -25,16 +25,10 @@ def VAB_2nd_order_esp(centers_1: torch.Tensor,
     R2_sq = torch.cdist(centers_1, centers_2)**2.0
     C2_sq = torch.cdist(charges_1, charges_2)**2.0
 
-    # Common term for VAB calculation
-    term_common = np.pi**(1.5) / ((2*alpha)**(1.5))
-
     if R2_sq.dim() == 2: # Both centers_1 and centers_2 were single instances
         # R2_sq and C2_sq have shape (N, M)
-        # No transpose needed, sum directly over (N,M) matrices.
-        # R2 = R2_sq.T # Removed
-        # C2 = C2_sq.T # Removed
-
-        VAB_2nd_order = torch.sum(term_common \
+        VAB_2nd_order = torch.sum(np.pi**(1.5) \
+                                  / ((2*alpha)**(1.5)) \
                                   * torch.exp(-(alpha / 2) * R2_sq) \
                                   * torch.exp(-C2_sq/lam))
 
@@ -47,11 +41,12 @@ def VAB_2nd_order_esp(centers_1: torch.Tensor,
         R2 = R2_sq.permute(0,2,1) 
         C2 = C2_sq.permute(0,2,1)
 
-        VAB_2nd_order = torch.sum(torch.sum(term_common \
+        VAB_2nd_order = torch.sum(torch.sum(np.pi**(1.5) \
+                                            / ((2*alpha)**(1.5)) \
                                             * torch.exp(-(alpha / 2) * R2) \
                                             * torch.exp(-C2/lam),
                                             dim = 2), # Sum over N
-                                    dim = 1)  # Sum over M, result is (B,)
+                                    dim = 1) # Sum over M
     else:
         raise ValueError(f"Unexpected dimension for R2_sq: {R2_sq.dim()}. centers_1: {centers_1.shape}, centers_2: {centers_2.shape}")
 
@@ -114,7 +109,6 @@ def get_overlap_esp(centers_1: torch.Tensor,
         charges_1 = torch.Tensor(charges_1)
     if isinstance(charges_2, np.ndarray):
         charges_2 = torch.Tensor(charges_2)
-    # initialize prefactor and alpha matrices
     if len(charges_1.shape) == 1:
         charges_1 = charges_1.reshape((-1,1))
     elif len(charges_1.shape) == 2:
@@ -123,7 +117,6 @@ def get_overlap_esp(centers_1: torch.Tensor,
         charges_2 = charges_2.reshape((-1,1))
     elif len(charges_2.shape) == 2:
         charges_2 = charges_2.unsqueeze(2)
-    
 
     tanimoto_esp = shape_tanimoto_esp(centers_1, centers_2,
                                       charges_1, charges_2,
@@ -133,7 +126,7 @@ def get_overlap_esp(centers_1: torch.Tensor,
 
 
 def _esp_comparison(points_1: torch.Tensor,
-                    centers_w_H_2: torch.Tensor, # EXPECTS HYDROGENS INCLUDED
+                    centers_w_H_2: torch.Tensor,
                     partial_charges_2: torch.Tensor,
                     points_charges_1: torch.Tensor,
                     radii_2: torch.Tensor,
@@ -183,39 +176,24 @@ def _esp_comparison(points_1: torch.Tensor,
         in ESP or due to masking of poorly aligned surface points.
     """
     lam = LAM_SCALING * lam
-    # return
     distances = torch.cdist(points_1, centers_w_H_2)
     # single instance path for points_1
-    if len(points_1.shape) == 2: # points_1 is (N_surf, 3), points_charges_1 is (N_surf,)
+    if len(points_1.shape) == 2:
         if distances.dim() == 2: # centers_w_H_2 is also single (M+m_H, 3)
-            # radii_2 is (M+m_H,), partial_charges_2 is (M+m_H,)
-            # Original single-instance logic
             mask = torch.where(torch.all(distances >= radii_2 + probe_radius, axis=1), 1., 0.) # (N_surf,)
-            # Calculate the potentials
             esp_at_surf_1 = torch.matmul(partial_charges_2, 1 / distances.T) * COULOMB_SCALING # (N_surf,)
             esp_diff_sq = torch.square(points_charges_1 - esp_at_surf_1) # (N_surf,)
             esp = torch.sum(mask * torch.exp(-esp_diff_sq/lam)) # scalar
 
         elif distances.dim() == 3: # centers_w_H_2 is batched (B, M+m_H, 3)
-            # distances is (B, N_surf, M+m_H)
-            # radii_2 is (B, M+m_H), partial_charges_2 is (B, M+m_H)
-            # points_charges_1 is (N_surf,)
 
             # mask out molecule 1 surface points that are within molecule 2 (batched)
-            # distances: (B, N_surf, M+m_H), radii_2.unsqueeze(1): (B, 1, M+m_H)
             mask = torch.where(torch.all(distances >= radii_2.unsqueeze(1) + probe_radius, axis=2), 1., 0.) # (B, N_surf)
 
-            # partial_charges_2.unsqueeze(1): (B, 1, M+m_H)
-            # (1 / distances.permute(0,2,1)): (B, M+m_H, N_surf)
             esp_at_surf_1 = torch.matmul(partial_charges_2.unsqueeze(1), 1 / distances.permute(0,2,1)) * COULOMB_SCALING # (B, 1, N_surf)
 
-            # Compare with points_charges_1 (single, N_surf) - broadcast points_charges_1
-            # points_charges_1.unsqueeze(0): (1, N_surf) or .unsqueeze(0).unsqueeze(-1) (1,N,1) vs (B,1,N)
-            # esp_at_surf_1 is (B,1,N_surf), points_charges_1 is (N_surf,)
-            # points_charges_1.unsqueeze(0) -> (1, N_surf)
             esp_diff_sq = torch.square(points_charges_1.unsqueeze(0) - esp_at_surf_1.squeeze(1)) # (B, N_surf) after broadcasting and squeeze
 
-            # Sum over N_surf points for each batch item
             esp = torch.sum(mask * torch.exp(-esp_diff_sq/lam), axis=1) # (B,)
         else:
             raise ValueError(f"Distances tensor has unexpected dimensions {distances.dim()} when points_1 is single.")
@@ -230,22 +208,17 @@ def _esp_comparison(points_1: torch.Tensor,
         if centers_w_H_2.shape[0] != points_1.shape[0] and centers_w_H_2.dim() == 3:
              raise ValueError(f"centers_w_H_2 has unexpected shape {centers_w_H_2.shape} when points_1 is batched. points_1: {points_1.shape}.")
 
-        if _radii_2.dim() == 1: # If radii_2 is single (M,), unsqueeze for broadcasting
+        if _radii_2.dim() == 1:
             _radii_2 = _radii_2.unsqueeze(0)
-        if _partial_charges_2.dim() == 1: # If partial_charges_2 is single (M,), unsqueeze for broadcasting
+        if _partial_charges_2.dim() == 1:
             _partial_charges_2 = _partial_charges_2.unsqueeze(0)
 
         # mask out molecule 1 surface points that are within molecule 2
-        # distances (B, N, M), _radii_2.unsqueeze(1) (B,1,M) or (1,1,M)
         mask = torch.where(torch.all(distances >= _radii_2.unsqueeze(1) + probe_radius, axis=2), 1., 0.) # (B,N)
 
         # Calculate the potentials
-        # _partial_charges_2.unsqueeze(1) (B,1,M) or (1,1,M)
-        # (1/distances.permute(0,2,1)) (B,M,N)
         esp_at_surf_1 = torch.matmul(_partial_charges_2.unsqueeze(1), 1 / distances.permute(0,2,1)) * COULOMB_SCALING # (B,1,N)
 
-        # points_charges_1 is (B,N). unsqueeze(1) gives (B,1,N)
-        # esp_at_surf_1 is (B,1,N)
         esp_diff_sq = torch.square(points_charges_1.unsqueeze(1) - esp_at_surf_1) # (B,1,N)
         esp = torch.sum(mask * torch.exp(-esp_diff_sq/lam).squeeze(1), axis=1) # (B,)
     else:

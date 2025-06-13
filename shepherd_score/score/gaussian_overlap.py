@@ -32,32 +32,30 @@ def VAB_2nd_order(centers_1: torch.Tensor,
     - c1=(N,3), c2=(B,M,3)     -> cdist_out=(B,N,M) (c1 broadcasted)
     - c1=(1,N,3), c2=(B,M,3)   -> cdist_out=(B,N,M) (c1 broadcasted)
     """
-    
-    R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # p=2 is default for cdist
-
-    # Common term in the VAB calculation
-    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
+    R2_cdist = torch.cdist(centers_1, centers_2)**2.0
 
     # Batched case
     if len(R2_cdist.shape) == 3:
         R2 = R2_cdist.permute(0, 2, 1)  # (B, N_c2, N_c1)
         
-        VAB_second_order = torch.sum(torch.sum(term_common *
+        VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
+                                               ((2 * alpha)**1.5) *
                                                torch.exp(-(alpha / 2) * R2),
                                                dim=2),
                                      dim=1)  # Resulting shape: (B,)
-    
+
     # Single instance
     elif len(R2_cdist.shape) == 2:
-        # Sum directly over the (N_c1, N_c2) matrix, no transpose needed.
-        VAB_second_order = torch.sum(term_common *
+        # No transpose needed since sum
+        VAB_second_order = torch.sum((np.pi**1.5) /
+                                     ((2 * alpha)**1.5) *
                                      torch.exp(-(alpha / 2) * R2_cdist))
     else:
         raise ValueError(
             f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
             f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
         )
-        
+
     return VAB_second_order
 
 
@@ -104,7 +102,6 @@ def get_overlap(centers_1: Union[torch.Tensor, np.ndarray],
         centers_1 = torch.Tensor(centers_1)
     if isinstance(centers_2, np.ndarray):
         centers_2 = torch.Tensor(centers_2)
-    # initialize prefactor and alpha matrices
     tanimoto = shape_tanimoto(centers_1, centers_2, alpha)
     return tanimoto
 
@@ -140,11 +137,6 @@ def VAB_2nd_order_mask(centers_1: torch.Tensor,
     """
     R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # Shape: (B, N1, N2) or (N1, N2)
 
-    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
-
-    # Prepare masks for broadcasting
-    # m1_final will be (B, N1) or (1, N1) or (N1,)
-    # m2_final will be (B, N2) or (1, N2) or (N2,)
     m1_final = mask_1.float()
     m2_final = mask_2.float()
 
@@ -165,7 +157,8 @@ def VAB_2nd_order_mask(centers_1: torch.Tensor,
         # mask_mat will broadcast to (B, N1, N2) then permuted to (B, N2, N1)
         mask_mat = (m1_final_unsqueezed * m2_final_unsqueezed).permute(0, 2, 1)
 
-        VAB_second_order = torch.sum(torch.sum(term_common *
+        VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
+                                               ((2 * alpha)**1.5) *
                                                mask_mat *
                                                torch.exp(-(alpha / 2) * R2),
                                                dim=2),
@@ -176,10 +169,11 @@ def VAB_2nd_order_mask(centers_1: torch.Tensor,
         # mask_mat should be (N1, N2) for direct multiplication with R2_cdist
         mask_mat = m1_final.unsqueeze(1) * m2_final.unsqueeze(0) # (N1,1) * (1,N2) -> (N1,N2)
         
-        VAB_second_order = torch.sum(term_common *
+        VAB_second_order = torch.sum((np.pi**1.5) /
+                                     ((2 * alpha)**1.5) *
                                      mask_mat *
                                      torch.exp(-(alpha / 2) *
-                                     R2_cdist)) # Use R2_cdist directly
+                                     R2_cdist))
     else:
         raise ValueError(
             f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
@@ -220,10 +214,9 @@ def VAB_2nd_order_mask_batch(cdist_21: torch.Tensor,
     # mask_mat: (B,M,1) * (B,1,N) -> (B,M,N) due to broadcasting rules
     mask_mat = (mask_2.unsqueeze(2) * mask_1.unsqueeze(1))
 
-    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
-
-    VAB_second_order = torch.sum(torch.sum(term_common *
-                                            mask_mat * 
+    VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
+                                            ((2 * alpha)**1.5) *
+                                            mask_mat *
                                             torch.exp(-(alpha / 2) * cdist_21),
                                             dim = 2),
                                 dim = 1)
@@ -255,9 +248,7 @@ def VAB_2nd_order_cosine(centers_1: torch.Tensor,
     torch.Tensor
         Scalar or (B,) tensor of overlap scores.
     """
-
     R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # (B, N1, N2) or (N1, N2)
-    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
 
     # Normalize vectors
     # For batched: (B, N, 3) -> (B, N, 3)
@@ -283,7 +274,8 @@ def VAB_2nd_order_cosine(centers_1: torch.Tensor,
             V2_sim_permuted = torch.clamp(V2_sim_permuted, 0., 1.) # wrong direction should be 0 rather than negative
         V2_weighted_permuted = (V2_sim_permuted + 2.) / 3. # Following PheSA's suggestion for weighting
 
-        VAB_second_order = torch.sum(torch.sum(term_common *
+        VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
+                                               ((2 * alpha)**1.5) *
                                                V2_weighted_permuted *
                                                torch.exp(-(alpha / 2) * R2_permuted), # R2 is (B, N2, N1)
                                                dim=2),
@@ -291,7 +283,7 @@ def VAB_2nd_order_cosine(centers_1: torch.Tensor,
     # Single instance
     elif R2_cdist.dim() == 2: # R2_cdist is (N1, N2)
         # Cosine similarity V2_sim: (N1, N2)
-        # vec1_norm: (N1,3), vec2_norm: (N2,3) -> vec2_norm.T: (3,N2)
+        # vec1_norm: (N1,3), vec2_norm: (N2,3)
         V2_sim_N1_N2 = torch.matmul(vec1_norm, vec2_norm.T) # (N1,N2)
         # No transpose needed for V2_sim_N1_N2 if R2_cdist is used directly
 
@@ -301,9 +293,10 @@ def VAB_2nd_order_cosine(centers_1: torch.Tensor,
             V2_sim_N1_N2 = torch.clamp(V2_sim_N1_N2, 0., 1.)
         V2_weighted_N1_N2 = (V2_sim_N1_N2 + 2.) / 3. # Following PheSA's suggestion for weighting
 
-        VAB_second_order = torch.sum(term_common *
-                                     V2_weighted_N1_N2 *
-                                     torch.exp(-(alpha / 2) *
+        VAB_second_order = torch.sum((np.pi**1.5) \
+                                     / ((2 * alpha)**1.5) \
+                                     * V2_weighted_N1_N2 \
+                                     * torch.exp(-(alpha / 2) *
                                      R2_cdist)) # Use R2_cdist directly
     else:
         raise ValueError(
@@ -343,7 +336,6 @@ def VAB_2nd_order_cosine_mask(centers_1: torch.Tensor,
         Scalar or (B,) tensor of overlap scores.
     """
     R2_cdist = torch.cdist(centers_1, centers_2)**2.0  # (B, N1, N2) or (N1, N2)
-    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
 
     # Normalize vectors
     norm_dim_v1 = vectors_1.dim() - 1
@@ -373,7 +365,8 @@ def VAB_2nd_order_cosine_mask(centers_1: torch.Tensor,
         if m2_final.dim() == 1: m2_final = m2_final.unsqueeze(0)
         mask_mat_permuted = (m1_final.unsqueeze(2) * m2_final.unsqueeze(1)).permute(0, 2, 1) # (B, N2, N1)
 
-        VAB_second_order = torch.sum(torch.sum(term_common *
+        VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
+                                               ((2 * alpha)**1.5) *
                                                mask_mat_permuted *
                                                V2_weighted_permuted *
                                                torch.exp(-(alpha / 2) * R2_permuted), # R2 is (B, N2, N1)
@@ -391,14 +384,16 @@ def VAB_2nd_order_cosine_mask(centers_1: torch.Tensor,
         else:
             V2_sim_N1_N2 = torch.clamp(V2_sim_N1_N2, 0., 1.) # wrong direction should be 0 rather than negative
         V2_weighted_N1_N2 = (V2_sim_N1_N2 + 2.) / 3. # Following PheSA's suggestion for weighting
-        
+
         # Mask mat should be (N1,N2)
         mask_mat_N1_N2 = m1_final.unsqueeze(1) * m2_final.unsqueeze(0) # (N1,1)*(1,N2) -> (N1,N2)
 
-        VAB_second_order = torch.sum(term_common *
+        VAB_second_order = torch.sum((np.pi**1.5) /
+                                     ((2 * alpha)**1.5) *
                                      mask_mat_N1_N2 *
                                      V2_weighted_N1_N2 *
-                                     torch.exp(-(alpha / 2) * R2_cdist)) # Use R2_cdist directly
+                                     torch.exp(-(alpha / 2) *R2_cdist)
+                                     )
     else:
         raise ValueError(
             f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
@@ -450,12 +445,11 @@ def VAB_2nd_order_cosine_mask_batch(cdist_21: torch.Tensor,
 
     # Prepare mask_mat (B,M,N)
     mask_mat = (mask_2.unsqueeze(2) * mask_1.unsqueeze(1))
-    
-    term_common = (np.pi**1.5) / ((2 * alpha)**1.5)
 
-    VAB_second_order = torch.sum(torch.sum(term_common *
+    VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
+                                            ((2 * alpha)**1.5) *
                                             mask_mat *
-                                            vmm_21_weighted * 
+                                            vmm_21_weighted *
                                             torch.exp(-(alpha / 2) * cdist_21),
                                             dim = 2),
                                 dim = 1)
@@ -504,7 +498,7 @@ def VAB_2nd_order_batched(centers_1: torch.Tensor,
     R2 = (torch.cdist(centers_1, centers_2)**2.0).permute(0,2,1)
 
     prefactor1_prod_prefactor2 = (prefactors_1.unsqueeze(1) * prefactors_2.unsqueeze(2))
-    
+
     alpha1_prod_alpha2 = (alphas_1.unsqueeze(1) * alphas_2.unsqueeze(2))
     alpha1_sum_alpha2 = (alphas_1.unsqueeze(1) + alphas_2.unsqueeze(2))
     VAB_second_order = torch.sum(torch.sum(np.pi**(1.5) *
@@ -571,8 +565,7 @@ def get_overlap_full(centers_1:torch.Tensor,
                      prefactor:float = 0.8,
                      alpha:float = 0.81
                      ) -> torch.Tensor:
-
-    # initialize prefactor and alpha matrices
+    """ Computes the gaussian overlap for a batch of centers with custom prefactor and alpha values."""
     prefactors_1 = torch.ones(centers_1.shape[0]) * prefactor
     prefactors_2 = torch.ones(centers_2.shape[0]) * prefactor
     alphas_1 = torch.ones(prefactors_1.shape[0]) * alpha

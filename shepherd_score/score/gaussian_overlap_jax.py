@@ -10,6 +10,7 @@ https://doi.org/10.1021/j100011a016
 """
 from jax import jit, Array
 import jax.numpy as jnp
+import jax
 
 
 ###################################################################################################
@@ -118,14 +119,14 @@ def get_overlap_jax_mask(centers_1: Array,
     tanimoto = shape_tanimoto_jax_mask(centers_1, centers_2, mask_1, mask_2, alpha)
     return tanimoto
 
-# Original function without JIT decorator
-def _VAB_2nd_order_cosine_jax_impl(centers_1: Array,
-                                   centers_2: Array,
-                                   vectors_1: Array,
-                                   vectors_2: Array,
-                                   alpha: float,
-                                   allow_antiparallel: bool,
-                                   ) -> Array:
+
+def _VAB_2nd_order_cosine_jax(centers_1: Array,
+                              centers_2: Array,
+                              vectors_1: Array,
+                              vectors_2: Array,
+                              alpha: float,
+                              allow_antiparallel: bool,
+                              ) -> Array:
     """
     2nd order volume overlap of AB weighted by cosine similarity (JAX version) - implementation part.
     """
@@ -139,10 +140,12 @@ def _VAB_2nd_order_cosine_jax_impl(centers_1: Array,
     # Cosine similarity: (N1, N2)
     V2_sim = jnp.dot(vec1_norm, vec2_norm.T)
 
-    if allow_antiparallel:
-        V2_sim = jnp.abs(V2_sim)
-    else:
-        V2_sim = jnp.clip(V2_sim, 0., 1.)
+    V2_sim = jax.lax.cond(
+        allow_antiparallel,
+        lambda x: jnp.abs(x),    # True branch
+        lambda x: jnp.clip(x, 0., 1.),  # False branch
+        V2_sim
+    )
     V2_weighted = (V2_sim + 2.) / 3.
 
     VAB_second_order = jnp.sum(term_common *
@@ -150,5 +153,4 @@ def _VAB_2nd_order_cosine_jax_impl(centers_1: Array,
                                jnp.exp(-(alpha / 2) * R2))
     return VAB_second_order
 
-# Apply JIT to the implementation function
-VAB_2nd_order_cosine_jax = jit(_VAB_2nd_order_cosine_jax_impl, static_argnames=["allow_antiparallel"])
+VAB_2nd_order_cosine_jax = jit(_VAB_2nd_order_cosine_jax, static_argnames=["allow_antiparallel"])
