@@ -2,7 +2,6 @@
 Unit tests for alignment and related fucntions.
 """
 import os
-os.environ['JAX_PLATFORMS'] = 'cpu'
 import numpy as np
 import torch
 import jax.numpy as jnp
@@ -10,6 +9,26 @@ import jax.numpy as jnp
 from shepherd_score.alignment_utils.se3_np import quaternions_to_rotation_matrix_np, get_SE3_transform_np, apply_SE3_transform_np
 from shepherd_score.alignment_utils.se3_jax import quaternions_to_rotation_matrix_jax, get_SE3_transform_jax, apply_SE3_transform_jax
 from shepherd_score.alignment_utils.se3 import quaternions_to_rotation_matrix, get_SE3_transform, apply_SE3_transform
+
+# Configure JAX platform before import to avoid GPU errors
+def _configure_jax_platform():
+    """Configure JAX platform based on GPU availability."""
+    try:
+        # Try to detect GPU through other means first
+        import subprocess
+        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+        gpu_detected = result.returncode == 0
+    except (FileNotFoundError, subprocess.SubprocessError):
+        gpu_detected = False
+
+    if not gpu_detected:
+        # Force JAX to use CPU only if no GPU detected
+        os.environ['JAX_PLATFORMS'] = 'cpu'
+
+    return gpu_detected
+
+# Pre-configure JAX platform
+_gpu_detected_early = _configure_jax_platform()
 
 class TestSE3:
     """

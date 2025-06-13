@@ -15,7 +15,26 @@ from shepherd_score.score.gaussian_overlap_np import get_overlap_np # For esp_co
 
 # Try to import JAX and skip tests if not available
 import os
-os.environ['JAX_PLATFORMS'] = 'cpu' # Ensure JAX runs on CPU for tests if no GPU configured
+# Configure JAX platform before import to avoid GPU errors
+def _configure_jax_platform():
+    """Configure JAX platform based on GPU availability."""
+    try:
+        # Try to detect GPU through other means first
+        import subprocess
+        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+        gpu_detected = result.returncode == 0
+    except (FileNotFoundError, subprocess.SubprocessError):
+        gpu_detected = False
+    
+    if not gpu_detected:
+        # Force JAX to use CPU only if no GPU detected
+        os.environ['JAX_PLATFORMS'] = 'cpu'
+    
+    return gpu_detected
+
+# Pre-configure JAX platform
+_gpu_detected_early = _configure_jax_platform()
+
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 es_jax = pytest.importorskip("shepherd_score.score.electrostatic_scoring_jax")
