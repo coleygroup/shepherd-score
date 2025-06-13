@@ -1,5 +1,8 @@
 """
 Pharmacophore scoring with JAX.
+
+This module may not be as fast as the NumPy version.
+TODO: Try to optimize this module.
 """
 from typing import Union, Callable, Literal, Tuple
 from functools import partial
@@ -13,7 +16,7 @@ from shepherd_score.score.constants import P_TYPES, P_ALPHAS
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
 
 
-@jit
+@partial(jit, static_argnames=['overlap_func', 'allow_antiparallel'])
 def _compute_ref_overlap_jax(overlap_func: Callable,
                              anchors_1: Array,
                              alpha: float,
@@ -30,7 +33,7 @@ def _compute_ref_overlap_jax(overlap_func: Callable,
     return VAA
 
 
-@jit
+@partial(jit, static_argnames=['overlap_func', 'allow_antiparallel'])
 def _compute_fit_overlap_jax(overlap_func: Callable,
                              anchors_2: Array,
                              alpha: float,
@@ -47,7 +50,7 @@ def _compute_fit_overlap_jax(overlap_func: Callable,
     return VBB
 
 
-@jit
+@partial(jit, static_argnames=['overlap_func', 'allow_antiparallel'])
 def _compute_all_overlaps_jax(overlap_func: Callable,
                               anchors_1: Array,
                               anchors_2: Array,
@@ -94,10 +97,9 @@ def tversky_func_jax(VAB: Array,
 
     Similarity(Tversky) = Overlap{1,2} / (sigma*Overlap{1,1} + (1-sigma)*Overlap{2,2})
     """
-    return jnp.clip(VAB / (sigma * VAA + (1 - sigma) * VBB), a_min=None, a_max=1.0)
+    return jnp.clip(VAB / (sigma * VAA + (1 - sigma) * VBB), min=None, max=1.0)
 
 
-@partial(jit, static_argnums=(0,6))
 def get_vector_volume_overlap_score_jax(ptype_str: str,
                                         ptype_1: Array,
                                         ptype_2: Array,
@@ -155,7 +157,6 @@ def get_vector_volume_overlap_score_jax(ptype_str: str,
     return VAB, VAA, VBB
 
 
-@partial(jit, static_argnums=(0,))
 def get_volume_overlap_score_jax(ptype_str: str,
                                  ptype_1: Array,
                                  ptype_2: Array,
@@ -202,7 +203,6 @@ def get_volume_overlap_score_jax(ptype_str: str,
     return VAB, VAA, VBB
 
 
-@partial(jit, static_argnums=(0,7))
 def get_volume_overlap_score_extended_points_jax(ptype_str: str,
                                                  ptype_1: Array,
                                                  ptype_2: Array,
@@ -278,7 +278,6 @@ def get_volume_overlap_score_extended_points_jax(ptype_str: str,
 
 _SIM_TYPE = Literal['tanimoto', 'tversky', 'tversky_ref', 'tversky_fit']
 
-@partial(jit, static_argnums=(6,7,8))
 def get_overlap_pharm_jax(ptype_1: Array,
                           ptype_2: Array,
                           anchors_1: Array,
@@ -334,15 +333,7 @@ def get_overlap_pharm_jax(ptype_1: Array,
         # For now, assume valid input due to _SIM_TYPE or raise error outside jit scope.
         raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
-    # Pharmacophores present in the molecules (Simplified for JAX)
-    # This part needs to be handled carefully for JIT compilation if ptypes are dynamic.
-    # Assuming P_TYPES_LWRCASE is static and known.
-    # For JAX, it's better if the loop over ptype_str is explicit rather than dict lookups.
-
     overlap, ref_overlap, fit_overlap = jnp.array(0.0), jnp.array(0.0), jnp.array(0.0)
-
-    # Explicitly iterate over known pharmacophore types
-    # This is more JAX-friendly than dynamic dict lookups within a jitted function.
 
     # Hydrophobe
     VAB_h, VAA_h, VBB_h = get_volume_overlap_score_jax(ptype_str='hydrophobe',
@@ -418,7 +409,6 @@ def get_overlap_pharm_jax(ptype_1: Array,
     return scores
 
 
-@partial(jit, static_argnums=(8,9,10))
 def get_pharm_combo_score_jax(centers_1: Array,
                               centers_2: Array,
                               ptype_1: Array,
