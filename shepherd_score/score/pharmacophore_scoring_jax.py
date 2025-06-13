@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jax import jit, Array
 
 from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax, VAB_2nd_order_cosine_jax
+from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax_mask, VAB_2nd_order_cosine_jax_mask
 from shepherd_score.score.constants import P_TYPES, P_ALPHAS
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
 
@@ -50,27 +51,6 @@ def _compute_fit_overlap_jax(overlap_func: Callable,
     return VBB
 
 
-@partial(jit, static_argnames=['overlap_func', 'allow_antiparallel'])
-def _compute_all_overlaps_jax(overlap_func: Callable,
-                              anchors_1: Array,
-                              anchors_2: Array,
-                              alpha: float,
-                              vectors_1: Union[Array, None] = None,
-                              vectors_2: Union[Array, None] = None,
-                              allow_antiparallel: bool = False,
-                              ) -> Tuple[Array, Array, Array]:
-    """ Single instance only. """
-    # Just anchor volume overlap
-    if (vectors_1 is None or vectors_2 is None):
-        VAB = overlap_func(anchors_1, anchors_2, alpha)
-        VAA = overlap_func(anchors_1, anchors_1, alpha)
-        VBB = overlap_func(anchors_2, anchors_2, alpha)
-    # Anchor and vector volume overlap for single instance
-    else:
-        VAB = overlap_func(anchors_1, anchors_2, vectors_1, vectors_2, alpha, allow_antiparallel)
-        VAA = overlap_func(anchors_1, anchors_1, vectors_1, vectors_1, alpha, allow_antiparallel)
-        VBB = overlap_func(anchors_2, anchors_2, vectors_2, vectors_2, alpha, allow_antiparallel)
-    return VAB, VAA, VBB
 
 
 @jit
@@ -97,7 +77,7 @@ def tversky_func_jax(VAB: Array,
 
     Similarity(Tversky) = Overlap{1,2} / (sigma*Overlap{1,1} + (1-sigma)*Overlap{2,2})
     """
-    return jnp.clip(VAB / (sigma * VAA + (1 - sigma) * VBB), min=None, max=1.0)
+    return jnp.clip(VAB / (sigma * VAA + (1 - sigma) * VBB), min=None, max=1.0) 
 
 
 def get_vector_volume_overlap_score_jax(ptype_str: str,
@@ -112,48 +92,16 @@ def get_vector_volume_overlap_score_jax(ptype_str: str,
     """
     Compute volumentric overlap score with cosine similarity of vectors. JAX version.
     """
-    ptype_str_lwr = ptype_str.lower() # JAX requires static arguments for string operations inside jit
+    ptype_str_lwr = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str_lwr)
-
-    mask_inds_1 = jnp.where(ptype_1 == ptype_idx, size=ptype_1.shape[0], fill_value=-1)[0]
-    mask_inds_2 = jnp.where(ptype_2 == ptype_idx, size=ptype_2.shape[0], fill_value=-1)[0]
     
-    mask_inds_1 = mask_inds_1[mask_inds_1 != -1]
-    mask_inds_2 = mask_inds_2[mask_inds_2 != -1]
+    mask_1 = ptype_1 == ptype_idx
+    mask_2 = ptype_2 == ptype_idx
 
-    VAB = jnp.array(0.0)
-    VAA = jnp.array(0.0)
-    VBB = jnp.array(0.0)
+    VAB = VAB_2nd_order_cosine_jax_mask(anchors_1, anchors_2, vectors_1, vectors_2, mask_1, mask_2, P_ALPHAS[ptype_str_lwr], allow_antiparallel)
+    VAA = VAB_2nd_order_cosine_jax_mask(anchors_1, anchors_1, vectors_1, vectors_1, mask_1, mask_1, P_ALPHAS[ptype_str_lwr], allow_antiparallel)
+    VBB = VAB_2nd_order_cosine_jax_mask(anchors_2, anchors_2, vectors_2, vectors_2, mask_2, mask_2, P_ALPHAS[ptype_str_lwr], allow_antiparallel)
 
-    # Define a helper to avoid re-typing
-    def compute_overlap(current_VAB, current_VAA, current_VBB, p1, p2, a1, a2, v1, v2, ap):
-        if mask_inds_1.shape[0] == 0 and mask_inds_2.shape[0] == 0:
-            return current_VAB, current_VAA, current_VBB
-        elif mask_inds_1.shape[0] == 0:
-            _VBB = _compute_fit_overlap_jax(overlap_func=VAB_2nd_order_cosine_jax,
-                                           anchors_2=a2[mask_inds_2],
-                                           vectors_2=v2[mask_inds_2],
-                                           alpha=P_ALPHAS[ptype_str_lwr],
-                                           allow_antiparallel=ap)
-            return current_VAB, current_VAA, current_VBB + _VBB
-        elif mask_inds_2.shape[0] == 0:
-            _VAA = _compute_ref_overlap_jax(overlap_func=VAB_2nd_order_cosine_jax,
-                                           anchors_1=a1[mask_inds_1],
-                                           vectors_1=v1[mask_inds_1],
-                                           alpha=P_ALPHAS[ptype_str_lwr],
-                                           allow_antiparallel=ap)
-            return current_VAB, current_VAA + _VAA, current_VBB
-        else:
-            _VAB, _VAA, _VBB = _compute_all_overlaps_jax(overlap_func=VAB_2nd_order_cosine_jax,
-                                                        anchors_1=a1[mask_inds_1],
-                                                        anchors_2=a2[mask_inds_2],
-                                                        vectors_1=v1[mask_inds_1],
-                                                        vectors_2=v2[mask_inds_2],
-                                                        alpha=P_ALPHAS[ptype_str_lwr],
-                                                        allow_antiparallel=ap)
-            return current_VAB + _VAB, current_VAA + _VAA, current_VBB + _VBB
-
-    VAB, VAA, VBB = compute_overlap(VAB, VAA, VBB, ptype_1, ptype_2, anchors_1, anchors_2, vectors_1, vectors_2, allow_antiparallel)
     return VAB, VAA, VBB
 
 
@@ -169,37 +117,13 @@ def get_volume_overlap_score_jax(ptype_str: str,
     ptype_str_lwr = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str_lwr)
     
-    mask_inds_1 = jnp.where(ptype_1 == ptype_idx, size=ptype_1.shape[0], fill_value=-1)[0]
-    mask_inds_2 = jnp.where(ptype_2 == ptype_idx, size=ptype_2.shape[0], fill_value=-1)[0]
+    mask_1 = ptype_1 == ptype_idx
+    mask_2 = ptype_2 == ptype_idx
 
-    mask_inds_1 = mask_inds_1[mask_inds_1 != -1]
-    mask_inds_2 = mask_inds_2[mask_inds_2 != -1]
+    VAB = VAB_2nd_order_jax_mask(anchors_1, anchors_2, mask_1, mask_2, P_ALPHAS[ptype_str_lwr])
+    VAA = VAB_2nd_order_jax_mask(anchors_1, anchors_1, mask_1, mask_1, P_ALPHAS[ptype_str_lwr])
+    VBB = VAB_2nd_order_jax_mask(anchors_2, anchors_2, mask_2, mask_2, P_ALPHAS[ptype_str_lwr])
 
-    VAB = jnp.array(0.0)
-    VAA = jnp.array(0.0)
-    VBB = jnp.array(0.0)
-    
-    def compute_overlap(current_VAB, current_VAA, current_VBB, p1, p2, a1, a2):
-        if mask_inds_1.shape[0] == 0 and mask_inds_2.shape[0] == 0:
-            return current_VAB, current_VAA, current_VBB
-        elif mask_inds_1.shape[0] == 0:
-            _VBB = _compute_fit_overlap_jax(overlap_func=VAB_2nd_order_jax,
-                                           anchors_2=a2[mask_inds_2],
-                                           alpha=P_ALPHAS[ptype_str_lwr])
-            return current_VAB, current_VAA, current_VBB + _VBB
-        elif mask_inds_2.shape[0] == 0:
-            _VAA = _compute_ref_overlap_jax(overlap_func=VAB_2nd_order_jax,
-                                           anchors_1=a1[mask_inds_1],
-                                           alpha=P_ALPHAS[ptype_str_lwr])
-            return current_VAB, current_VAA + _VAA, current_VBB
-        else:
-            _VAB, _VAA, _VBB = _compute_all_overlaps_jax(overlap_func=VAB_2nd_order_jax,
-                                                        anchors_1=a1[mask_inds_1],
-                                                        anchors_2=a2[mask_inds_2],
-                                                        alpha=P_ALPHAS[ptype_str_lwr])
-            return current_VAB + _VAB, current_VAA + _VAA, current_VBB + _VBB
-            
-    VAB, VAA, VBB = compute_overlap(VAB, VAA, VBB, ptype_1, ptype_2, anchors_1, anchors_2)
     return VAB, VAA, VBB
 
 
@@ -217,67 +141,38 @@ def get_volume_overlap_score_extended_points_jax(ptype_str: str,
     """
     ptype_str_lwr = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str_lwr)
+    alpha = P_ALPHAS[ptype_str_lwr]
 
-    mask_inds_1 = jnp.where(ptype_1 == ptype_idx, size=ptype_1.shape[0], fill_value=-1)[0]
-    mask_inds_2 = jnp.where(ptype_2 == ptype_idx, size=ptype_2.shape[0], fill_value=-1)[0]
+    mask_1 = ptype_1 == ptype_idx
+    mask_2 = ptype_2 == ptype_idx
     
-    mask_inds_1 = mask_inds_1[mask_inds_1 != -1]
-    mask_inds_2 = mask_inds_2[mask_inds_2 != -1]
-
     VAB, VAA, VBB = jnp.array(0.0), jnp.array(0.0), jnp.array(0.0)
 
-    def update_scores_if_empty(current_VAB, current_VAA, current_VBB, m1_empty, m2_empty, a1, a2, v1, v2):
-        if m1_empty and m2_empty:
-            return current_VAB, current_VAA, current_VBB
-        elif m1_empty:
-            _VBB_anchor = _compute_fit_overlap_jax(overlap_func=VAB_2nd_order_jax,
-                                                 anchors_2=a2[mask_inds_2],
-                                                 alpha=P_ALPHAS[ptype_str_lwr])
-            _VBB_extended = _compute_fit_overlap_jax(overlap_func=VAB_2nd_order_jax,
-                                                   anchors_2=v2[mask_inds_2] + a2[mask_inds_2],
-                                                   alpha=P_ALPHAS[ptype_str_lwr])
-            return current_VAB, current_VAA, current_VBB + _VBB_anchor + _VBB_extended
-        elif m2_empty:
-            _VAA_anchor = _compute_ref_overlap_jax(overlap_func=VAB_2nd_order_jax,
-                                                 anchors_1=a1[mask_inds_1],
-                                                 alpha=P_ALPHAS[ptype_str_lwr])
-            _VAA_extended = _compute_ref_overlap_jax(overlap_func=VAB_2nd_order_jax,
-                                                   anchors_1=v1[mask_inds_1] + a1[mask_inds_1],
-                                                   alpha=P_ALPHAS[ptype_str_lwr])
-            return current_VAB, current_VAA + _VAA_anchor + _VAA_extended, current_VBB
-        return None # Indicates that normal processing should continue
+    # Score extended points
+    VAB_extended = VAB_2nd_order_jax_mask(anchors_1 + vectors_1, anchors_2 + vectors_2, mask_1, mask_2, alpha)
+    VAA_extended = VAB_2nd_order_jax_mask(anchors_1 + vectors_1, anchors_1 + vectors_1, mask_1, mask_1, alpha)
+    VBB_extended = VAB_2nd_order_jax_mask(anchors_2 + vectors_2, anchors_2 + vectors_2, mask_2, mask_2, alpha)
 
-
-    res = update_scores_if_empty(VAB, VAA, VBB, mask_inds_1.shape[0]==0, mask_inds_2.shape[0]==0, anchors_1, anchors_2, vectors_1, vectors_2)
-    if res is not None:
-        return res
-
-    _VAB_extended, _VAA_extended, _VBB_extended = _compute_all_overlaps_jax(
-        overlap_func=VAB_2nd_order_jax,
-        anchors_1=vectors_1[mask_inds_1] + anchors_1[mask_inds_1],
-        anchors_2=vectors_2[mask_inds_2] + anchors_2[mask_inds_2],
-        alpha=P_ALPHAS[ptype_str_lwr]
-    )
-    VAB += _VAB_extended
-    VAA += _VAA_extended
-    VBB += _VBB_extended
-
+    VAB += VAB_extended
+    VAA += VAA_extended
+    VBB += VBB_extended
+    
+    # Score anchors if not only_extended
     if not only_extended:
-        _VAB_anchor, _VAA_anchor, _VBB_anchor = _compute_all_overlaps_jax(
-            overlap_func=VAB_2nd_order_jax,
-            anchors_1=anchors_1[mask_inds_1],
-            anchors_2=anchors_2[mask_inds_2],
-            alpha=P_ALPHAS[ptype_str_lwr]
-        )
-        VAB += _VAB_anchor
-        VAA += _VAA_anchor
-        VBB += _VBB_anchor
+        VAB_anchor = VAB_2nd_order_jax_mask(anchors_1, anchors_2, mask_1, mask_2, alpha)
+        VAA_anchor = VAB_2nd_order_jax_mask(anchors_1, anchors_1, mask_1, mask_1, alpha)
+        VBB_anchor = VAB_2nd_order_jax_mask(anchors_2, anchors_2, mask_2, mask_2, alpha)
         
+        VAB += VAB_anchor
+        VAA += VAA_anchor
+        VBB += VBB_anchor
+
     return VAB, VAA, VBB
 
 
 _SIM_TYPE = Literal['tanimoto', 'tversky', 'tversky_ref', 'tversky_fit']
 
+@partial(jit, static_argnames=['similarity', 'extended_points', 'only_extended'])
 def get_overlap_pharm_jax(ptype_1: Array,
                           ptype_2: Array,
                           anchors_1: Array,
@@ -409,6 +304,7 @@ def get_overlap_pharm_jax(ptype_1: Array,
     return scores
 
 
+@partial(jit, static_argnames=['similarity', 'extended_points', 'only_extended'])
 def get_pharm_combo_score_jax(centers_1: Array,
                               centers_2: Array,
                               ptype_1: Array,
