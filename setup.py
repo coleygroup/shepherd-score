@@ -2,12 +2,13 @@
 from setuptools import setup, find_packages
 
 REQUIREMENTS = [
-    'open3d>=0.18'
+    'open3d>=0.18',
+    'py3Dmol',
 ]
 
 setup(
     name="shepherd_score",
-    version="0.1.0",
+    version="1.0.0",
     packages=find_packages(),
     install_requires=REQUIREMENTS,  # Add your dependencies here
     author="Kento Abeywardane",

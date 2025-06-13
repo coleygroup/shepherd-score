@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shepherd-score"
-version = "0.1.0"
+version = "1.0.0"
 description = "3D scoring functions used for evaluation of ShEPhERD"
 readme = "README.md"
 requires-python = ">=3.8,<3.12"
