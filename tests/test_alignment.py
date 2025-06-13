@@ -10,14 +10,17 @@ import jax.numpy as jnp
 from shepherd_score.alignment import (
     optimize_ROCS_overlay,
     optimize_ROCS_esp_overlay,
-    optimize_esp_combo_score_overlay
+    optimize_esp_combo_score_overlay,
+    optimize_pharm_overlay,
 )
 from shepherd_score.alignment_jax import (
     optimize_ROCS_overlay_jax,
     optimize_ROCS_esp_overlay_jax,
-    optimize_esp_combo_score_overlay_jax
+    optimize_esp_combo_score_overlay_jax,
+    optimize_pharm_overlay_jax,
 )
 from shepherd_score.alignment_jax import convert_to_jnp_array
+from shepherd_score.score.constants import P_TYPES
 
 # Configure JAX platform before import to avoid GPU errors
 def _configure_jax_platform():
@@ -45,6 +48,13 @@ def jax_outputs_to_torch(aligned_points_jax, transform_jax, score_jax):
     transform_torch_equiv = torch.from_numpy(np.array(transform_jax))
     score_torch_equiv = torch.from_numpy(np.array(score_jax))
     return aligned_points_torch_equiv, transform_torch_equiv, score_torch_equiv
+
+def jax_pharm_outputs_to_torch(aligned_anchors_jax, aligned_vectors_jax, transform_jax, score_jax):
+    aligned_anchors_torch_equiv = torch.from_numpy(np.array(aligned_anchors_jax))
+    aligned_vectors_torch_equiv = torch.from_numpy(np.array(aligned_vectors_jax))
+    transform_torch_equiv = torch.from_numpy(np.array(transform_jax))
+    score_torch_equiv = torch.from_numpy(np.array(score_jax))
+    return aligned_anchors_torch_equiv, aligned_vectors_torch_equiv, transform_torch_equiv, score_torch_equiv
 
 # Define default parameters for tests
 DEFAULT_ALPHA = 1.0
@@ -130,6 +140,35 @@ def common_esp_combo_data(common_points_data, common_charges_data):
     
     # Return both PyTorch and JAX versions of the data dictionary
     return data, data_jax
+
+@pytest.fixture(scope="module")
+def common_pharm_data():
+    torch.manual_seed(0)
+    np.random.seed(0)
+    
+    num_pharm_ref = 10
+    num_pharm_fit = 8
+    
+    ptype_1_torch = torch.randint(0, len(P_TYPES), (num_pharm_ref,), dtype=torch.long)
+    ptype_2_torch = torch.randint(0, len(P_TYPES), (num_pharm_fit,), dtype=torch.long)
+
+    anchors_1_torch = torch.rand(num_pharm_ref, 3, dtype=DEFAULT_DTYPE) * 10
+    anchors_2_torch = torch.rand(num_pharm_fit, 3, dtype=DEFAULT_DTYPE) * 10
+    
+    vectors_1_torch = torch.rand(num_pharm_ref, 3, dtype=DEFAULT_DTYPE) - 0.5
+    vectors_1_torch = torch.nn.functional.normalize(vectors_1_torch, p=2, dim=1)
+    vectors_2_torch = torch.rand(num_pharm_fit, 3, dtype=DEFAULT_DTYPE) - 0.5
+    vectors_2_torch = torch.nn.functional.normalize(vectors_2_torch, p=2, dim=1)
+
+    ptype_1_jax = jnp.array(ptype_1_torch.numpy())
+    ptype_2_jax = jnp.array(ptype_2_torch.numpy())
+    anchors_1_jax = jnp.array(anchors_1_torch.numpy())
+    anchors_2_jax = jnp.array(anchors_2_torch.numpy())
+    vectors_1_jax = jnp.array(vectors_1_torch.numpy())
+    vectors_2_jax = jnp.array(vectors_2_torch.numpy())
+
+    return (ptype_1_torch, ptype_2_torch, anchors_1_torch, anchors_2_torch, vectors_1_torch, vectors_2_torch,
+            ptype_1_jax, ptype_2_jax, anchors_1_jax, anchors_2_jax, vectors_1_jax, vectors_2_jax)
 
 
 class TestOptimizeROCSOverlayConsistency:
@@ -260,3 +299,65 @@ class TestOptimizeEspComboScoreOverlayConsistency:
         data_t, data_j = common_esp_combo_data
         tc_t, tc_j = common_trans_centers_data
         self._run_and_compare(data_t, data_j, num_repeats=50, trans_torch=tc_t, trans_jax=tc_j)
+
+
+class TestOptimizePharmOverlayConsistency:
+    def _run_and_compare(self, pharm_data_torch, pharm_data_jax, num_repeats, trans_torch, trans_jax, similarity='tanimoto', extended_points=False, only_extended=False):
+        p1_t, p2_t, a1_t, a2_t, v1_t, v2_t = pharm_data_torch
+        p1_j, p2_j, a1_j, a2_j, v1_j, v2_j = pharm_data_jax
+
+        # PyTorch run
+        aligned_anchors_t, aligned_vectors_t, transform_t, score_t = optimize_pharm_overlay(
+            p1_t, p2_t, a1_t, a2_t, v1_t, v2_t,
+            similarity=similarity, extended_points=extended_points, only_extended=only_extended,
+            num_repeats=num_repeats, trans_centers=trans_torch,
+            lr=DEFAULT_LR, max_num_steps=DEFAULT_MAX_STEPS, verbose=DEFAULT_VERBOSE
+        )
+
+        # JAX run
+        aligned_anchors_j, aligned_vectors_j, transform_j, score_j = optimize_pharm_overlay_jax(
+            p1_j, p2_j, a1_j, a2_j, v1_j, v2_j,
+            similarity=similarity, extended_points=extended_points, only_extended=only_extended,
+            num_repeats=num_repeats, trans_centers=trans_jax,
+            lr=DEFAULT_LR, max_num_steps=DEFAULT_MAX_STEPS, verbose=DEFAULT_VERBOSE
+        )
+        
+        aligned_anchors_j_t, aligned_vectors_j_t, transform_j_t, score_j_t = jax_pharm_outputs_to_torch(
+            aligned_anchors_j, aligned_vectors_j, transform_j, score_j
+        )
+        
+        assert torch.allclose(aligned_anchors_t, aligned_anchors_j_t, atol=COORD_ATOL, rtol=COORD_RTOL), "Aligned anchors mismatch"
+        assert torch.allclose(aligned_vectors_t, aligned_vectors_j_t, atol=COORD_ATOL, rtol=COORD_RTOL), "Aligned vectors mismatch"
+        assert torch.allclose(transform_t, transform_j_t, atol=TRANSFORM_ATOL, rtol=TRANSFORM_RTOL), "Transform mismatch"
+        assert torch.allclose(score_t, score_j_t, atol=SCORE_ATOL, rtol=SCORE_RTOL), "Score mismatch"
+
+    def test_pharm_overlay_single(self, common_pharm_data):
+        data_torch = common_pharm_data[:6]
+        data_jax = common_pharm_data[6:]
+        self._run_and_compare(data_torch, data_jax, num_repeats=1, trans_torch=None, trans_jax=None)
+
+    def test_pharm_overlay_num_repeats_batch(self, common_pharm_data):
+        data_torch = common_pharm_data[:6]
+        data_jax = common_pharm_data[6:]
+        self._run_and_compare(data_torch, data_jax, num_repeats=5, trans_torch=None, trans_jax=None)
+
+    def test_pharm_overlay_trans_centers_batch(self, common_pharm_data, common_trans_centers_data):
+        data_torch = common_pharm_data[:6]
+        data_jax = common_pharm_data[6:]
+        tc_t, tc_j = common_trans_centers_data
+        self._run_and_compare(data_torch, data_jax, num_repeats=50, trans_torch=tc_t, trans_jax=tc_j)
+
+    def test_pharm_overlay_extended_points(self, common_pharm_data):
+        data_torch = common_pharm_data[:6]
+        data_jax = common_pharm_data[6:]
+        self._run_and_compare(data_torch, data_jax, num_repeats=5, trans_torch=None, trans_jax=None, extended_points=True)
+
+    def test_pharm_overlay_only_extended(self, common_pharm_data):
+        data_torch = common_pharm_data[:6]
+        data_jax = common_pharm_data[6:]
+        self._run_and_compare(data_torch, data_jax, num_repeats=5, trans_torch=None, trans_jax=None, extended_points=True, only_extended=True)
+
+    def test_pharm_overlay_tversky_ref(self, common_pharm_data):
+        data_torch = common_pharm_data[:6]
+        data_jax = common_pharm_data[6:]
+        self._run_and_compare(data_torch, data_jax, num_repeats=5, trans_torch=None, trans_jax=None, similarity='tversky_ref')

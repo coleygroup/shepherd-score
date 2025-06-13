@@ -12,6 +12,7 @@ import torch
 
 from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax
 from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax
+from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, _SIM_TYPE
 from shepherd_score.alignment_utils.pca_jax import quaternions_for_principal_component_alignment_jax, rotation_axis_jax, vmap_angle_between_vecs_jax, vmap_quaternion_from_axis_angle_jax
 from shepherd_score.alignment_utils.se3_jax import get_SE3_transform_jax, apply_SE3_transform_jax
 from shepherd_score.alignment import _initialize_se3_params, _initialize_se3_params_with_translations
@@ -27,6 +28,17 @@ vmap_esp_combo_score = vmap(esp_combo_score_jax, (None, 0,
                                                   None, None, None, None))
 vmap_apply_SE3_transform_jax = vmap(apply_SE3_transform_jax, (None, 0))
 vmap_get_SE3_transform_jax = vmap(get_SE3_transform_jax, 0)
+
+
+def apply_SO3_transform_jax(vectors: Array, se3_matrix: Array) -> Array:
+    """
+    Apply SO(3) transformation (rotation) to a set of vectors.
+    """
+    rotation_matrix = se3_matrix[..., :3, :3]
+    return jnp.matmul(vectors, rotation_matrix.transpose())
+
+
+vmap_apply_SO3_transform_jax = vmap(apply_SO3_transform_jax, (None, 0))
 
 
 def _get_points_fibonacci_jax(num_samples: int) -> Array:
@@ -1011,3 +1023,151 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
         best_transform = SE3_transform.at[best_idx].get()
         best_score = scores.at[best_idx].get()
     return best_alignment, best_transform, best_score
+
+
+def _objective_pharm_overlay_jax(se3_params: Array,
+                                 ref_pharms: Array,
+                                 fit_pharms: Array,
+                                 ref_anchors: Array,
+                                 fit_anchors: Array,
+                                 ref_vectors: Array,
+                                 fit_vectors: Array,
+                                 similarity: _SIM_TYPE = 'tanimoto',
+                                 extended_points: bool = False,
+                                 only_extended: bool = False
+                                 ) -> Array:
+    """
+    Objective function to optimize pharmacophore overlay for a single instance.
+    """
+    se3_matrix = get_SE3_transform_jax(se3_params)
+    fit_anchors_transformed = apply_SE3_transform_jax(fit_anchors, se3_matrix)
+    fit_vectors_transformed = apply_SO3_transform_jax(fit_vectors, se3_matrix)
+
+    score = get_overlap_pharm_jax(ptype_1=ref_pharms,
+                                  ptype_2=fit_pharms,
+                                  anchors_1=ref_anchors,
+                                  anchors_2=fit_anchors_transformed,
+                                  vectors_1=ref_vectors,
+                                  vectors_2=fit_vectors_transformed,
+                                  similarity=similarity,
+                                  extended_points=extended_points,
+                                  only_extended=only_extended)
+    return score
+
+batched_obj_pharm_overlay_helper = vmap(_objective_pharm_overlay_jax, (0, None, None, None, None, None, None, None, None, None))
+
+def objective_pharm_overlay_jax(se3_params: Array,
+                                ref_pharms: Array,
+                                fit_pharms: Array,
+                                ref_anchors: Array,
+                                fit_anchors: Array,
+                                ref_vectors: Array,
+                                fit_vectors: Array,
+                                similarity: _SIM_TYPE = 'tanimoto',
+                                extended_points: bool = False,
+                                only_extended: bool = False
+                                ) -> Array:
+    """
+    Objective function to optimize pharmacophore overlay. Batched.
+    """
+    scores = batched_obj_pharm_overlay_helper(se3_params,
+                                              ref_pharms,
+                                              fit_pharms,
+                                              ref_anchors,
+                                              fit_anchors,
+                                              ref_vectors,
+                                              fit_vectors,
+                                              similarity,
+                                              extended_points,
+                                              only_extended)
+    return 1 - scores.mean()
+
+
+jit_val_grad_obj_pharm_overlay = jit(value_and_grad(objective_pharm_overlay_jax), static_argnames=('similarity', 'extended_points', 'only_extended'))
+
+
+def optimize_pharm_overlay_jax(ref_pharms: Array,
+                               fit_pharms: Array,
+                               ref_anchors: Array,
+                               fit_anchors: Array,
+                               ref_vectors: Array,
+                               fit_vectors: Array,
+                               similarity: _SIM_TYPE = 'tanimoto',
+                               extended_points: bool = False,
+                               only_extended: bool = False,
+                               num_repeats: int = 50,
+                               trans_centers: Union[Array, np.ndarray, None] = None,
+                               lr: float = 0.1,
+                               max_num_steps: int = 200,
+                               verbose: bool = False
+                               ) -> Tuple[Array, Array, Array, Array]:
+    """
+    Optimize alignment of fit_anchors with respect to ref_anchors using SE(3) transformations and
+    maximizing pharmacophore overlap score. JAX implementation.
+    """
+    if trans_centers is None:
+        se3_params = _initialize_se3_params(ref_points=torch.Tensor(np.array(ref_anchors)),
+                                            fit_points=torch.Tensor(np.array(fit_anchors)),
+                                            num_repeats=num_repeats).detach()
+        if num_repeats == 1:
+            se3_params = se3_params.unsqueeze(0)
+    else:
+        se3_params = _initialize_se3_params_with_translations(
+            ref_points=torch.Tensor(np.array(ref_anchors)),
+            fit_points=torch.Tensor(np.array(fit_anchors)),
+            trans_centers=torch.Tensor(np.array(trans_centers)),
+            num_repeats_per_trans=10).detach()
+
+    if len(se3_params.shape) == 1:
+        se3_params.unsqueeze(0)
+    se3_params = jnp.array(se3_params)
+    current_num_repeats = se3_params.shape[0]
+
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(se3_params)
+
+    if verbose:
+        init_score = get_overlap_pharm_jax(ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors, similarity, extended_points, only_extended)
+        print(f'Initial pharmacophore similarity score: {init_score:.3}')
+    
+    last_loss = 1
+    counter = 0
+
+    for step in range(max_num_steps):
+        loss, grads = jit_val_grad_obj_pharm_overlay(se3_params, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors, similarity, extended_points, only_extended)
+        updates, opt_state = optimizer.update(grads, opt_state, se3_params)
+        se3_params = optax.apply_updates(se3_params, updates)
+
+        if abs(loss - last_loss) > 1e-5:
+            counter = 0
+        else:
+            counter += 1
+        last_loss = loss
+        if counter > 10:
+            break
+    
+    SE3_transform = vmap_get_SE3_transform_jax(se3_params)
+    aligned_anchors = vmap_apply_SE3_transform_jax(fit_anchors, SE3_transform)
+    aligned_vectors = vmap_apply_SO3_transform_jax(fit_vectors, SE3_transform)
+
+    scores = vmap(get_overlap_pharm_jax, (None, None, None, 0, None, 0, None, None, None))(
+        ref_pharms, fit_pharms, ref_anchors, aligned_anchors, ref_vectors, aligned_vectors, similarity, extended_points, only_extended
+    )
+
+    if current_num_repeats == 1:
+        if verbose:
+            print(f'Optimized pharmacophore similarity score: {scores.squeeze():.3}')
+        best_alignment = aligned_anchors.squeeze()
+        best_aligned_vectors = aligned_vectors.squeeze()
+        best_transform = SE3_transform.squeeze()
+        best_score = scores.squeeze()
+    else:
+        if verbose:
+            print(f'Optimized pharmacophore similarity score -- max: {scores.max():.3} | mean: {scores.mean():.3} | min: {scores.min():.3}')
+        best_idx = jnp.argmax(scores)
+        best_alignment = aligned_anchors[best_idx]
+        best_aligned_vectors = aligned_vectors[best_idx]
+        best_transform = SE3_transform[best_idx]
+        best_score = scores[best_idx]
+        
+    return best_alignment, best_aligned_vectors, best_transform, best_score
