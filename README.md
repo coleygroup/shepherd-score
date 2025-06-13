@@ -109,7 +109,7 @@ scikit-learn>=1.3
 4. Run `pip install -e .` for developer install
 
 ## Usage
-The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap and ESP similarity, but currently *not* for pharmacophores.
+The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.
 
 ### Base functions
 #### Conformer generation
