@@ -5,6 +5,7 @@ molecules.
 
 from typing import Union, Optional, List, Tuple
 import os
+from tqdm import tqdm
 
 import numpy as np
 from rdkit import Chem
@@ -598,7 +599,7 @@ class Objective:
             if self.xtb_opt:
                 charge = Chem.GetFormalCharge(Chem.MolFromSmiles(smiles))
                 fit_mols, _, fit_partial_charges = generate_opt_conformers_xtb(
-                    smiles, charge=charge, MMFF_optimize=True, verbose=False, num_confs=num_conformers
+                    smiles, charge=charge, MMFF_optimize=True, verbose=False, num_confs=num_conformers, temp_dir=TMPDIR
                 )
             else:
                 fit_mols = generate_opt_conformers(smiles, MMFF_optimize=True, verbose=False, num_confs=num_conformers)
@@ -627,7 +628,8 @@ class Objective:
                        smiles: List[str],
                        num_conformers: int = 5,
                        trans_init: bool = False,
-                       use_jax: bool = False) -> List[float]:
+                       use_jax: bool = False,
+                       verbose=False) -> List[float]:
         """
         Aligns and scores multiple fit SMILES.
 
@@ -644,19 +646,24 @@ class Objective:
         List[float] : similarity scores. Returns a value of -1 if Objective.score fails for any reason.
         """
         scores = []
-        for smi in smiles:
+        if verbose:
+            pbar = tqdm(smiles, total=len(smiles))
+        else:
+            pbar = smiles
+        for smi in pbar:
             try:
                 # Canonicalize smiles
                 smi = Chem.CanonSmiles(smi)
             except:
                 # if not a valid smiles skip
                 scores.append(-1.)
-                self.buffer[smi] = scores[-1]
+                self.buffer[smi] = {'esp': None,
+                                    'pharm': None}
                 continue
 
             if smi in self.buffer:
                 # skip if we've already computed it
-                scores.append(self.buffer[smi])
+                scores.append(self.buffer[smi]['esp'] + self.buffer[smi]['pharm'])
             else:
                 try:
                     esp_score, pharm_score = self.score(
@@ -668,6 +675,8 @@ class Objective:
                     scores.append(esp_score + pharm_score)
                 except:
                     scores.append(-1.)
+                    esp_score = None
+                    pharm_score = None
 
             self.buffer[smi] = {'esp': esp_score,
                                 'pharm': pharm_score}

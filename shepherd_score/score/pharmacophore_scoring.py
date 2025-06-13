@@ -304,17 +304,23 @@ def get_volume_overlap_score_extended_points(ptype_str: str,
             VAB, VAA, VBB = 0., 0., 0.
         elif len(mask_inds_1) == 0:
             VAB, VAA = 0., 0.
-            VBB = _compute_fit_overlap(overlap_func=VAB_2nd_order,
-                                       anchors_2=anchors_2[mask_inds_2],
-                                       alpha = P_ALPHAS[ptype_str])
+            if not only_extended:
+                VBB = _compute_fit_overlap(overlap_func=VAB_2nd_order,
+                                           anchors_2=anchors_2[mask_inds_2],
+                                           alpha = P_ALPHAS[ptype_str])
+            else:
+                VBB = 0.
             VBB += _compute_fit_overlap(overlap_func=VAB_2nd_order,
                                         anchors_2=vectors_2[mask_inds_2]+anchors_2[mask_inds_2],
                                         alpha = P_ALPHAS[ptype_str])
         elif len(mask_inds_2) == 0:
             VAB, VBB = 0., 0.
-            VAA = _compute_ref_overlap(overlap_func=VAB_2nd_order,
-                                       anchors_1=anchors_1[mask_inds_1],
-                                       alpha = P_ALPHAS[ptype_str])
+            if not only_extended:
+                VAA = _compute_ref_overlap(overlap_func=VAB_2nd_order,
+                                           anchors_1=anchors_1[mask_inds_1],
+                                           alpha = P_ALPHAS[ptype_str])
+            else:
+                VAA = 0.
             VAA += _compute_ref_overlap(overlap_func=VAB_2nd_order,
                                         anchors_1=vectors_1[mask_inds_1]+anchors_1[mask_inds_1],
                                         alpha = P_ALPHAS[ptype_str])

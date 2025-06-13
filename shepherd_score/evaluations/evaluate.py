@@ -2,17 +2,25 @@
 Evaluation pipeline classes for generated molecules.
 """
 
+import sys
 import os
 from typing import Union, List, Tuple, Optional
 from pathlib import Path
 from tqdm import tqdm
 from copy import deepcopy
 import itertools
+from importlib.metadata import distributions
 
 import numpy as np
 import pandas as pd
 from rdkit import Chem
-from rdkit.Contrib.SA_Score import sascorer
+
+if any(d.metadata["Name"] == 'rdkit' for d in distributions()):
+    from rdkit.Contrib.SA_Score import sascorer
+else:
+    sys.path.append(os.path.join(os.environ['CONDA_PREFIX'],'share','RDKit','Contrib'))
+    from SA_Score import sascorer
+
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 from rdkit.DataStructs import TanimotoSimilarity
@@ -33,7 +41,7 @@ morgan_fp_gen = rdFingerprintGenerator.GetMorganGenerator(radius=3, includeChira
 
 TMPDIR = Path('./')
 if 'TMPDIR' in os.environ:
-    TMPDIR = Path(os.environ['TMPDIR'])    
+    TMPDIR = Path(os.environ['TMPDIR'])
 
 
 class ConfEval:

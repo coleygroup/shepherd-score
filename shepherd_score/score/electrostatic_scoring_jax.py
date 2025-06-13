@@ -63,9 +63,9 @@ def get_overlap_esp_jax(centers_1: Array,
         Coordinates for the sets of points representing molecule 1.
     centers_2 : Array (N, 3)
         Coordinates for the sets of points representing molecule 2.
-    charges_1 : Array (N,)
+    charges_1 : Array (N,1)
         Electrostatic energy for the sets of points representing molecule 1.
-    charges_2 : Array (N,)
+    charges_2 : Array (N,1)
         Electrostatic energy for the sets of points representing molecule 2.
     alpha : float
         Parameter controlling the width of the Gaussians.
@@ -78,10 +78,8 @@ def get_overlap_esp_jax(centers_1: Array,
         Tanimoto similarities of electrostatics.
     """
     # initialize prefactor and alpha matrices
-    if len(charges_1.shape) == 1:
-        charges_1 = charges_1.reshape((-1,1))
-    if len(charges_2.shape) == 1:
-        charges_2 = charges_2.reshape((-1,1))
+    charges_1 = jnp.reshape(charges_1, (-1, 1))
+    charges_2 = jnp.reshape(charges_2, (-1, 1))
 
     tanimoto = shape_tanimoto_esp_jax(centers_1, centers_2,
                                       charges_1, charges_2,
@@ -221,7 +219,6 @@ def esp_combo_score_jax(centers_w_H_1: Array,
     Array (1,)
         Similarity score (range: [0, 1]). Higher is more similar.
     """
-
     # Calculate the difference in ESP at the surface of molecule 1
     #   Expects hydrogens for the centers
     esp_1 = _esp_comparison_jax(points_1, centers_w_H_2, partial_charges_2, point_charges_1, radii_2, probe_radius, lam)
