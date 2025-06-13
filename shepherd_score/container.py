@@ -824,7 +824,34 @@ class MoleculePair:
             aligned_fit_vectors : np.ndarray (P, 3) aligned coordinates of pharmacophore vectors
         """
         if use_jax:
-            raise NotImplementedError(f'Jax version of alignment has not been implemented yet. Use PyTorch version by setting `use_jax` to False.')
+            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
+                try:
+                    import jax.numpy as jnp
+                except ImportError:
+                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
+            import jax.numpy as jnp
+            from .alignment_jax import optimize_pharm_overlay_jax
+            
+            aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = optimize_pharm_overlay_jax(
+                ref_pharms=jnp.array(self.ref_molec.pharm_types),
+                fit_pharms=jnp.array(self.fit_molec.pharm_types),
+                ref_anchors=jnp.array(self.ref_molec.pharm_ancs),
+                fit_anchors=jnp.array(self.fit_molec.pharm_ancs),
+                ref_vectors=jnp.array(self.ref_molec.pharm_vecs),
+                fit_vectors=jnp.array(self.fit_molec.pharm_vecs),
+                similarity=similarity,
+                extended_points=extended_points,
+                only_extended=only_extended,
+                num_repeats=num_repeats,
+                trans_centers=self.ref_molec.pharm_ancs if trans_init else None,
+                lr=lr,
+                max_num_steps=max_num_steps,
+                verbose=verbose
+            )
+
+            self.transform_pharm = np.array(se3_transform)
+            self.sim_aligned_pharm = np.array(score)
+            return np.array(aligned_fit_anchors), np.array(aligned_fit_vectors)
         # PyTorch
         aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = optimize_pharm_overlay(
             ref_pharms=torch.from_numpy(self.ref_molec.pharm_types).to(torch.float32).to(self.device),
