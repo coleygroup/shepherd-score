@@ -1,7 +1,7 @@
 """
 Visualize pharmacophores and exit vectors with py3dmol.
 """
-from typing import Union
+from typing import Union, List
 from pathlib import Path
 
 import numpy as np
@@ -40,7 +40,7 @@ def __draw_arrow(view, color, anchor_pos, rel_unit_vec, flip: bool = False):
     })
 
 
-def draw(mol: Chem.rdchem.Mol,
+def draw(mol: Union[Chem.Mol, str],
          feats: dict = {},
          pharm_types: Union[np.ndarray, None] = None,
          pharm_ancs: Union[np.ndarray, None] = None,
@@ -54,6 +54,37 @@ def draw(mol: Chem.rdchem.Mol,
          height = 400):
     """
     Draw molecule with pharmacophore features and point cloud on surface accessible surface and electrostatics.
+
+    Parameters
+    ----------
+    mol : Chem.Mol | str
+        The molecule to draw. Either an RDKit Mol object or a string of the molecule in XYZ format.
+        The XYZ string does not need to be a valid molecular structure.
+    
+    Optional Parameters
+    -------------------
+    feats : dict
+        The pharmacophores to draw in a dictionary format with features as keys.
+    pharm_types : np.ndarray (N,)
+        The pharmacophores types
+    pharm_ancs : np.ndarray (N, 3)
+        The pharmacophores positions / anchor points.
+    pharm_vecs : np.ndarray (N, 3)
+        The pharmacophores vectors / directions.
+    point_cloud : np.ndarray (N, 3)
+        The point cloud positions.
+    esp : np.ndarray (N,)
+        The electrostatics values.
+    add_SAS : bool
+        Whether to add the SAS surface computed by py3Dmol.
+    view : py3Dmol.view
+        The view to draw the molecule to. If None, a new view will be created.
+    removeHs : bool (default: False)
+        Whether to remove the hydrogen atoms.
+    width : int (default: 800)
+        The width of the view.
+    height : int (default: 400)
+        The height of the view.
     """
     if esp is not None:
         esp_colors = np.zeros((len(esp), 3))
@@ -65,7 +96,12 @@ def draw(mol: Chem.rdchem.Mol,
         view.removeAllModels()
     if removeHs:
         mol = Chem.RemoveHs(mol)
-    IPythonConsole.addMolToView(mol, view ,confId=0)
+    
+    if isinstance(mol, Chem.Mol):
+        IPythonConsole.addMolToView(mol, view, confId=0)
+    else:
+        view.addModel(mol, 'str')
+        view.setStyle({'model': 0}, {'stick': {'opacity': 1.0}})    
     keys = ['x', 'y', 'z']
 
     if feats:
@@ -201,3 +237,60 @@ def create_pharmacophore_file_for_chimera(mol: Chem.Mol,
         f.write(bild)
     # write mol
     Chem.MolToMolFile(mol, save_dir_ / f'x1_{id}.sdf')
+
+
+def draw_2d(ref_mol: Chem.Mol,
+            mols: List[Chem.Mol | None],
+            mols_per_row: int = 5,
+            use_svg: bool = True,
+            ):
+    """
+    Draw 2D grid image of the reference molecule and a list of corresponding molecules.
+    It will align the molecules to the reference molecule using the MCS and highlight
+    the maximum common substructure between the reference molecule and the other molecules.
+
+    Parameters
+    ----------
+    ref_mol : Chem.Mol
+        The reference molecule to align the other molecules to.
+    mols : List[Chem.Mol | None]
+        The list of molecules to draw.
+    mols_per_row : int
+        The number of molecules to draw per row.
+    use_svg : bool
+        Whether to use SVG for the image.
+
+    Returns
+    -------
+    MolsToGridImage
+        The image of the molecules.
+
+    Credit
+    ------
+    https://github.com/PatWalters/practical_cheminformatics_tutorials/
+    """
+    from rdkit.Chem import rdFMCS, AllChem
+    temp_mol = Chem.MolFromSmiles(Chem.MolToSmiles(ref_mol))
+    valid_mols = [Chem.MolFromSmiles(Chem.MolToSmiles(m)) for m in mols if m is not None]
+    if (len(valid_mols) == 1 and valid_mols[0] is None) or len(valid_mols) == 0:
+        return Chem.Draw.MolToImage(temp_mol, useSVG=True, legend='Target | Found no valid molecules')
+
+    valid_inds = [i for i in range(len(mols)) if mols[i] is not None]
+    params = rdFMCS.MCSParameters()
+    params.BondCompareParameters.CompleteRingsOnly = True
+    params.AtomCompareParameters.CompleteRingsOnly = True
+    # find the MCS
+    mcs = rdFMCS.FindMCS([temp_mol] + valid_mols, params)
+    # get query molecule from the MCS, we will use this as a template for alignment
+    qmol = mcs.queryMol
+    # generate coordinates for the template
+    AllChem.Compute2DCoords(qmol)
+    # generate coordinates for the molecules using the template
+    [AllChem.GenerateDepictionMatching2DStructure(m, qmol) for m in valid_mols]
+    
+    return Chem.Draw.MolsToGridImage(
+        [temp_mol]+ valid_mols,
+        highlightAtomLists=[temp_mol.GetSubstructMatch(mcs.queryMol)]+[m.GetSubstructMatch(mcs.queryMol) for m in valid_mols],
+        molsPerRow=mols_per_row,
+        legends=['Target'] + [f'Sample {i}' for i in valid_inds],
+        useSVG=use_svg)
