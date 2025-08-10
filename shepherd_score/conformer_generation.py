@@ -283,50 +283,53 @@ def optimize_conformer_with_xtb(conformer: rdkit.Chem.Mol,
         # rand = str((os.getpid() * int(time.time())) % 123456789)
         rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
         out_dir = Path(f'temp_xtb_opt_{rand}/')
-        if temp_dir != '':
-            out_dir = temp_dir / out_dir
-        out_dir.mkdir(exist_ok=True)
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-        input_file = 'input_mol.xyz'
-        rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
+            input_file = 'input_mol.xyz'
+            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
 
-        if solvent is not None:
-            subprocess.check_call(
-                ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
-        else:
-            subprocess.check_call(
-                ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
+            if solvent is not None:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
 
-        xtb_coords_list, xtb_elements_list = read_multi_xyz_file(out_dir/'xtbopt.xyz')
-        xtb_coords = xtb_coords_list[0]
-        xtb_mol = update_mol_coordinates(mol, xtb_coords)
+            xtb_coords_list, xtb_elements_list = read_multi_xyz_file(out_dir/'xtbopt.xyz')
+            xtb_coords = xtb_coords_list[0]
+            xtb_mol = update_mol_coordinates(mol, xtb_coords)
 
-        with open(out_dir/'xtbopt.xyz', 'r') as file:
-            lines = file.readlines()
-            for line in lines:
-                if 'energy' in line:
-                    numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
-                    energy = float(numbers[0])
-                    break
-        
-        with open(out_dir/'charges', 'r') as file:
-            lines = file.readlines()
-            charges = [0]*len(lines)
-            for i, line in enumerate(lines):
-                charges[i] = float(line.split()[0]) 
-                xtb_mol.GetAtomWithIdx(i).SetProp('charge', str(charges[i]))
+            with open(out_dir/'xtbopt.xyz', 'r') as file:
+                lines = file.readlines()
+                for line in lines:
+                    if 'energy' in line:
+                        numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
+                        energy = float(numbers[0])
+                        break
+            
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
+                    xtb_mol.GetAtomWithIdx(i).SetProp('charge', str(charges[i]))
 
-        xtb_mol.SetProp("energy", str(energy))
+            xtb_mol.SetProp("energy", str(energy))
 
-        shutil.rmtree(out_dir)
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
         return (xtb_mol, energy, charges)
 
@@ -356,53 +359,56 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
         # rand = str((os.getpid() * int(time.time())) % 123456789)
         rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
         out_dir = Path(f'temp_xtb_opt_{rand}/')
-        if temp_dir != '':
-            out_dir = temp_dir / out_dir
-        out_dir.mkdir(exist_ok=True)
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-        input_file = 'input_mol.xyz'
-        with open(out_dir/input_file, 'w') as f:
-            f.write(xyz_block)
+            input_file = 'input_mol.xyz'
+            with open(out_dir/input_file, 'w') as f:
+                f.write(xyz_block)
 
-        if solvent is not None:
-            subprocess.check_call(
-                ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
-        else:
-            subprocess.check_call(
-                ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
-        
-        opt_xyz_path = out_dir/'xtbopt.xyz'
-        if opt_xyz_path.is_file():
-            with open(out_dir/'xtbopt.xyz', 'r') as file:
-                xtb_xyz_block = file.readlines()
-                for line in xtb_xyz_block:
-                    if 'energy' in line:
-                        numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
-                        energy = float(numbers[0])
-                        break
+            if solvent is not None:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            
+            opt_xyz_path = out_dir/'xtbopt.xyz'
+            if opt_xyz_path.is_file():
+                with open(out_dir/'xtbopt.xyz', 'r') as file:
+                    xtb_xyz_block = file.readlines()
+                    for line in xtb_xyz_block:
+                        if 'energy' in line:
+                            numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
+                            energy = float(numbers[0])
+                            break
 
-            if 'energy' in xtb_xyz_block[1]:
-                xtb_xyz_block[1] = '\n' # Replace energy line with blank
-            xtb_xyz_block = ''.join(xtb_xyz_block)
-        else:
-            xtb_xyz_block = None
-            energy = None
+                if 'energy' in xtb_xyz_block[1]:
+                    xtb_xyz_block[1] = '\n' # Replace energy line with blank
+                xtb_xyz_block = ''.join(xtb_xyz_block)
+            else:
+                xtb_xyz_block = None
+                energy = None
 
-        with open(out_dir/'charges', 'r') as file:
-            lines = file.readlines()
-            charges = [0]*len(lines)
-            for i, line in enumerate(lines):
-                charges[i] = float(line.split()[0]) 
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
 
-        shutil.rmtree(out_dir)
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
         return (xtb_xyz_block, energy, charges)
 
@@ -435,35 +441,38 @@ def charges_from_single_point_conformer_with_xtb(conformer: rdkit.Chem.Mol,
         # rand = str((os.getpid() * int(time.time())) % 123456789)
         rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
         out_dir = Path(f'temp_xtb_opt_{rand}/')
-        if temp_dir != '':
-            out_dir = temp_dir / out_dir
-        out_dir.mkdir(exist_ok=True)
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-        input_file = 'input_mol.xyz'
-        rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
+            input_file = 'input_mol.xyz'
+            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
 
-        if solvent is not None:
-            subprocess.check_call(
-                ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
-        else:
-            subprocess.check_call(
-                ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
+            if solvent is not None:
+                subprocess.check_call(
+                    ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                subprocess.check_call(
+                    ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
 
-        with open(out_dir/'charges', 'r') as file:
-            lines = file.readlines()
-            charges = [0]*len(lines)
-            for i, line in enumerate(lines):
-                charges[i] = float(line.split()[0]) 
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
 
-        shutil.rmtree(out_dir)
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
         return charges
 
@@ -494,43 +503,45 @@ def single_point_xtb_from_xyz(xyz_block: str,
         # rand = str((os.getpid() * int(time.time())) % 123456789)
         rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
         out_dir = Path(f'temp_xtb_opt_{rand}/')
-        if temp_dir != '':
-            out_dir = temp_dir / out_dir
-        out_dir.mkdir(exist_ok=True)
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-        input_file = 'input_mol.xyz'
-        with open(out_dir/input_file, 'w') as f:
-            f.write(xyz_block)
+            input_file = 'input_mol.xyz'
+            with open(out_dir/input_file, 'w') as f:
+                f.write(xyz_block)
 
-        if solvent is not None:
-            output = subprocess.check_output(
-                ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                universal_newlines=True,
-                stderr=subprocess.STDOUT,
-            )
-        else:
-            output = subprocess.check_output(
-                ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
-                cwd = out_dir,
-                universal_newlines=True,
-                stderr=subprocess.STDOUT,
-            )
+            if solvent is not None:
+                output = subprocess.check_output(
+                    ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    universal_newlines=True,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                output = subprocess.check_output(
+                    ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    universal_newlines=True,
+                    stderr=subprocess.STDOUT,
+                )
 
-        output = output.split('\n')
-        for line in output[::-1]:
-            if 'TOTAL ENERGY' in line:
-                numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
-                energy = float(numbers[0])
-                break
+            output = output.split('\n')
+            for line in output[::-1]:
+                if 'TOTAL ENERGY' in line:
+                    numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
+                    energy = float(numbers[0])
+                    break
 
-        with open(out_dir/'charges', 'r') as file:
-            lines = file.readlines()
-            charges = [0]*len(lines)
-            for i, line in enumerate(lines):
-                charges[i] = float(line.split()[0]) 
-
-        shutil.rmtree(out_dir)
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
         return energy, charges
 
