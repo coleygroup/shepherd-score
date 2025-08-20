@@ -33,7 +33,10 @@ The formulation of the interaction profile representation, scoring, alignment, a
 │   │   │   ├── convert_data.py
 │   │   │   └── interactions.py
 │   │   ├── docking.py                      # Docking evaluations
-│   │   └── evaluate.py                     # Generated conformer evaluation pipelines
+│   │   └── evaluate/                       # Generated conformer evaluation pipelines
+│   │       ├── evals.py                    # Individual evaluation classes
+│   │       ├── pipelines.py                # Evaluation pipeline classes
+│   │       └── _pipeline_eval_single.py    # Internal pipeline evaluation functions
 │   ├── pharm_utils/
 │   │   ├── pharmacophore.py
 │   │   ├── pharm_vec.py
@@ -110,6 +113,8 @@ scikit-learn>=1.3
 
 ## Usage
 The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.
+
+**Update 8/20/25**: Applicable xTB functions and evaluation pipeline evaluations are now parallelizable through the `num_workers` argument in the `.evaluate` method.
 
 ### Base functions
 #### Conformer generation
@@ -265,7 +270,7 @@ conf_eval = ConfEval(atoms=atom_array, positions=position_array)
 uncond_pipe = UnconditionalEvalPipeline(
     generated_mols = [(a, p) for a, p in zip(atom_arrays, position_arrays)]
 )
-uncond_pipe.evaluate()
+uncond_pipe.evaluate(num_workers=4)
 
 # Properties are stored as attributes and can be converted into pandas df's
 sample_df, global_series = uncond_pipe.to_pandas()

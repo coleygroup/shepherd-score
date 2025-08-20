@@ -18,6 +18,7 @@ from pathlib import Path
 from tqdm import tqdm
 import uuid
 from typing import Optional
+import contextlib
 
 import rdkit
 import rdkit.Chem
@@ -26,6 +27,29 @@ from rdkit.Geometry import Point3D
 from rdkit.Chem import rdDistGeom
 from rdkit.Chem import rdMolAlign
 from rdkit.ML.Cluster import Butina
+
+
+@contextlib.contextmanager
+def set_thread_limits(num_threads: int):
+    """Temporarily set threading environment variables."""
+    env_vars = [
+        'OMP_NUM_THREADS',
+        'OPENBLAS_NUM_THREADS',
+        'MKL_NUM_THREADS',
+        'NUMEXPR_NUM_THREADS',
+        'VECLIB_MAXIMUM_THREADS',
+    ]
+    old_env = {var: os.environ.get(var) for var in env_vars}
+    try:
+        for var in env_vars:
+            os.environ[var] = str(num_threads)
+        yield
+    finally:
+        for var, val in old_env.items():
+            if val is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = val
 
 
 def update_mol_coordinates(mol: rdkit.Chem.Mol, coordinates) -> rdkit.Chem.Mol:
@@ -255,55 +279,59 @@ def optimize_conformer_with_xtb(conformer: rdkit.Chem.Mol,
     """
     mol = deepcopy(conformer)
 
-    # rand = str((os.getpid() * int(time.time())) % 123456789)
-    rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
-    out_dir = Path(f'temp_xtb_opt_{rand}/')
-    if temp_dir != '':
-        out_dir = temp_dir / out_dir
-    out_dir.mkdir(exist_ok=True)
+    with set_thread_limits(num_cores):
+        # rand = str((os.getpid() * int(time.time())) % 123456789)
+        rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
+        out_dir = Path(f'temp_xtb_opt_{rand}/')
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-    input_file = 'input_mol.xyz'
-    rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
+            input_file = 'input_mol.xyz'
+            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
 
-    if solvent is not None:
-        subprocess.check_call(
-            ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
-    else:
-        subprocess.check_call(
-            ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
+            if solvent is not None:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
 
-    xtb_coords_list, xtb_elements_list = read_multi_xyz_file(out_dir/'xtbopt.xyz')
-    xtb_coords = xtb_coords_list[0]
-    xtb_mol = update_mol_coordinates(mol, xtb_coords)
+            xtb_coords_list, xtb_elements_list = read_multi_xyz_file(out_dir/'xtbopt.xyz')
+            xtb_coords = xtb_coords_list[0]
+            xtb_mol = update_mol_coordinates(mol, xtb_coords)
 
-    with open(out_dir/'xtbopt.xyz', 'r') as file:
-        lines = file.readlines()
-        for line in lines:
-            if 'energy' in line:
-                numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
-                energy = float(numbers[0])
-                break
-    
-    with open(out_dir/'charges', 'r') as file:
-        lines = file.readlines()
-        charges = [0]*len(lines)
-        for i, line in enumerate(lines):
-            charges[i] = float(line.split()[0]) 
-            xtb_mol.GetAtomWithIdx(i).SetProp('charge', str(charges[i]))
+            with open(out_dir/'xtbopt.xyz', 'r') as file:
+                lines = file.readlines()
+                for line in lines:
+                    if 'energy' in line:
+                        numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
+                        energy = float(numbers[0])
+                        break
+            
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
+                    xtb_mol.GetAtomWithIdx(i).SetProp('charge', str(charges[i]))
 
-    xtb_mol.SetProp("energy", str(energy))
+            xtb_mol.SetProp("energy", str(energy))
 
-    shutil.rmtree(out_dir)
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
-    return (xtb_mol, energy, charges)
+        return (xtb_mol, energy, charges)
 
 
 def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
@@ -327,59 +355,62 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
         (xtb_mol, energy, charges) -- tuple of optimized RDKit mol object, xtb energy (in Hartrees)
                                       and partial charges (in e-)
     """
-    
-    # rand = str((os.getpid() * int(time.time())) % 123456789)
-    rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
-    out_dir = Path(f'temp_xtb_opt_{rand}/')
-    if temp_dir != '':
-        out_dir = temp_dir / out_dir
-    out_dir.mkdir(exist_ok=True)
+    with set_thread_limits(num_cores):
+        # rand = str((os.getpid() * int(time.time())) % 123456789)
+        rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
+        out_dir = Path(f'temp_xtb_opt_{rand}/')
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-    input_file = 'input_mol.xyz'
-    with open(out_dir/input_file, 'w') as f:
-        f.write(xyz_block)
+            input_file = 'input_mol.xyz'
+            with open(out_dir/input_file, 'w') as f:
+                f.write(xyz_block)
 
-    if solvent is not None:
-        subprocess.check_call(
-            ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
-    else:
-        subprocess.check_call(
-            ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
-    
-    opt_xyz_path = out_dir/'xtbopt.xyz'
-    if opt_xyz_path.is_file():
-        with open(out_dir/'xtbopt.xyz', 'r') as file:
-            xtb_xyz_block = file.readlines()
-            for line in xtb_xyz_block:
-                if 'energy' in line:
-                    numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
-                    energy = float(numbers[0])
-                    break
+            if solvent is not None:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                subprocess.check_call(
+                    ['xtb', input_file, '--opt', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            
+            opt_xyz_path = out_dir/'xtbopt.xyz'
+            if opt_xyz_path.is_file():
+                with open(out_dir/'xtbopt.xyz', 'r') as file:
+                    xtb_xyz_block = file.readlines()
+                    for line in xtb_xyz_block:
+                        if 'energy' in line:
+                            numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
+                            energy = float(numbers[0])
+                            break
 
-        if 'energy' in xtb_xyz_block[1]:
-            xtb_xyz_block[1] = '\n' # Replace energy line with blank
-        xtb_xyz_block = ''.join(xtb_xyz_block)
-    else:
-        xtb_xyz_block = None
-        energy = None
+                if 'energy' in xtb_xyz_block[1]:
+                    xtb_xyz_block[1] = '\n' # Replace energy line with blank
+                xtb_xyz_block = ''.join(xtb_xyz_block)
+            else:
+                xtb_xyz_block = None
+                energy = None
 
-    with open(out_dir/'charges', 'r') as file:
-        lines = file.readlines()
-        charges = [0]*len(lines)
-        for i, line in enumerate(lines):
-            charges[i] = float(line.split()[0]) 
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
 
-    shutil.rmtree(out_dir)
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
-    return (xtb_xyz_block, energy, charges)
+        return (xtb_xyz_block, energy, charges)
 
 
 def charges_from_single_point_conformer_with_xtb(conformer: rdkit.Chem.Mol,
@@ -406,40 +437,44 @@ def charges_from_single_point_conformer_with_xtb(conformer: rdkit.Chem.Mol,
 
     mol = deepcopy(conformer)
 
-    # rand = str((os.getpid() * int(time.time())) % 123456789)
-    rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
-    out_dir = Path(f'temp_xtb_opt_{rand}/')
-    if temp_dir != '':
-        out_dir = temp_dir / out_dir
-    out_dir.mkdir(exist_ok=True)
+    with set_thread_limits(num_cores):
+        # rand = str((os.getpid() * int(time.time())) % 123456789)
+        rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
+        out_dir = Path(f'temp_xtb_opt_{rand}/')
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-    input_file = 'input_mol.xyz'
-    rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
+            input_file = 'input_mol.xyz'
+            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
 
-    if solvent is not None:
-        subprocess.check_call(
-            ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
-    else:
-        subprocess.check_call(
-            ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
+            if solvent is not None:
+                subprocess.check_call(
+                    ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                subprocess.check_call(
+                    ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
 
-    with open(out_dir/'charges', 'r') as file:
-        lines = file.readlines()
-        charges = [0]*len(lines)
-        for i, line in enumerate(lines):
-            charges[i] = float(line.split()[0]) 
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
 
-    shutil.rmtree(out_dir)
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
-    return charges
+        return charges
 
 
 def single_point_xtb_from_xyz(xyz_block: str,
@@ -464,111 +499,128 @@ def single_point_xtb_from_xyz(xyz_block: str,
         charges -- list of partial charges for each atom (in e-)
     """
 
-    # rand = str((os.getpid() * int(time.time())) % 123456789)
-    rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
-    out_dir = Path(f'temp_xtb_opt_{rand}/')
-    if temp_dir != '':
-        out_dir = temp_dir / out_dir
-    out_dir.mkdir(exist_ok=True)
+    with set_thread_limits(num_cores):
+        # rand = str((os.getpid() * int(time.time())) % 123456789)
+        rand = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
+        out_dir = Path(f'temp_xtb_opt_{rand}/')
+        try:
+            if temp_dir != '':
+                out_dir = temp_dir / out_dir
+            out_dir.mkdir(exist_ok=True)
 
-    input_file = 'input_mol.xyz'
-    with open(out_dir/input_file, 'w') as f:
-        f.write(xyz_block)
+            input_file = 'input_mol.xyz'
+            with open(out_dir/input_file, 'w') as f:
+                f.write(xyz_block)
 
-    if solvent is not None:
-        output = subprocess.check_output(
-            ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            universal_newlines=True,
-            stderr=subprocess.STDOUT,
-        )
-    else:
-        output = subprocess.check_output(
-            ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
-            cwd = out_dir,
-            universal_newlines=True,
-            stderr=subprocess.STDOUT,
-        )
+            if solvent is not None:
+                output = subprocess.check_output(
+                    ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    universal_newlines=True,
+                    stderr=subprocess.STDOUT,
+                )
+            else:
+                output = subprocess.check_output(
+                    ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
+                    cwd = out_dir,
+                    universal_newlines=True,
+                    stderr=subprocess.STDOUT,
+                )
 
-    output = output.split('\n')
-    for line in output[::-1]:
-        if 'TOTAL ENERGY' in line:
-            numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
-            energy = float(numbers[0])
-            break
+            output = output.split('\n')
+            for line in output[::-1]:
+                if 'TOTAL ENERGY' in line:
+                    numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
+                    energy = float(numbers[0])
+                    break
 
-    with open(out_dir/'charges', 'r') as file:
-        lines = file.readlines()
-        charges = [0]*len(lines)
-        for i, line in enumerate(lines):
-            charges[i] = float(line.split()[0]) 
+            with open(out_dir/'charges', 'r') as file:
+                lines = file.readlines()
+                charges = [0]*len(lines)
+                for i, line in enumerate(lines):
+                    charges[i] = float(line.split()[0]) 
+        finally:
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
 
-    shutil.rmtree(out_dir)
-
-    return energy, charges
+        return energy, charges
 
 
 def optimize_conformer_ensemble_with_xtb(conformers,
                                          solvent: Optional[str] = None,
                                          num_processes: int = 8,
+                                         num_workers: int = 1,
                                          charge: int = 0,
                                          temp_dir: str = '',
-                                         verbose: bool = False):
+                                         verbose: bool = False,
+):
     """
-    GFN2-XTB geometry optimization of a list of conformers
-    
+    GFN2-XTB geometry optimization for a list of conformers.
+
     Args:
-        conformers -- list of RDKit mol objects (with 3D coordinates) to be optimized
-        solvent -- None or str indicating any implicit solvent to be used during optimization
-            Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
-        num_cores -- number of cpu cores to be used in the xtb geometry optimization
-        charge -- int of the molecular charge
-        temp_dir -- str temporary directory for I/O
-        verbose -- toggle print tqdm
-    
-    Returns: 
-        conformers_opt -- list of RDKit mol objects containing optimized geometries
-        charges_opt -- list of lists containing partial charges corresponding to each atom of
-                        the optimized geometries
+        conformers: list of RDKit Mol objects (with 3D coordinates) to be optimized.
+        solvent: None or str indicating implicit solvent supported by XTB
+            (https://xtb-docs.readthedocs.io/en/latest/gbsa.html).
+        num_processes: number of CPU cores used per XTB optimization.
+        num_workers: number of parallel workers (processes) to distribute conformers across.
+            Disclaimer: ensure num_workers * num_processes <= available CPUs to avoid oversubscription.
+        charge: molecular charge.
+        temp_dir: temporary directory for XTB I/O.
+        verbose: show a simple progress bar in single-process mode.
+
+    Returns:
+        (conformers_opt, energies_opt, charges_opt)
     """
 
-    if len(conformers) == 1:
-        opt_conf, opt_energy, opt_charges = optimize_conformer_with_xtb(
-            conformers[0],
-            solvent = solvent,
-            num_cores = num_processes,
-            charge=charge,
-            temp_dir=temp_dir
+    if not conformers:
+        return [], [], []
+
+    available_cpus = os.cpu_count() or 1
+    total_requested_cpus = max(1, num_workers) * max(1, num_processes)
+    if total_requested_cpus > available_cpus:
+        raise ValueError(
+            f"Requested num_workers * num_processes = {total_requested_cpus} exceeds available CPUs ({available_cpus})."
         )
-        opt_conf.SetProp("energy", str(opt_energy))
-        conformers_opt = [opt_conf]
-        charges_opt = [opt_charges]
-        energies_opt = [opt_energy]
-    
-    else:
+
+    # Serial path (single conformer or single worker)
+    if len(conformers) == 1 or num_workers <= 1:
         conformers_opt = []
-        charges_opt = []
         energies_opt = []
-        if verbose:
-            pbar = tqdm(conformers, total=len(conformers), desc='XTB opt')
-        else:
-            pbar = conformers
-        for conf in pbar:
+        charges_opt = []
+
+        iterator = tqdm(conformers, total=len(conformers), desc='XTB opt') if verbose else conformers
+        for conf in iterator:
             opt_conf, opt_energy, opt_charges = optimize_conformer_with_xtb(
                 conformer=conf,
                 solvent=solvent,
                 num_cores=num_processes,
                 charge=charge,
-                temp_dir=temp_dir
+                temp_dir=temp_dir,
             )
-            opt_conf.SetProp("energy", str(opt_energy))
-            for i, partial_charge in enumerate(opt_charges):
-                opt_conf.GetAtomWithIdx(i).SetProp('charge', str(partial_charge))
             conformers_opt.append(opt_conf)
-            charges_opt.append(opt_charges)
             energies_opt.append(opt_energy)
+            charges_opt.append(opt_charges)
 
-    return conformers_opt, energies_opt, charges_opt
+        return conformers_opt, energies_opt, charges_opt
+
+    # Parallel
+    from multiprocessing import Pool
+
+    args = [
+        (conf, solvent, num_processes, charge, temp_dir) for conf in conformers
+    ]
+
+    def _worker(params):
+        return optimize_conformer_with_xtb(*params)
+
+    with Pool(processes=num_workers) as pool:
+        iterator = pool.imap(_worker, args)
+        if verbose:
+            iterator = tqdm(iterator, total=len(args), desc='XTB opt')
+        results = list(iterator)
+
+    conformers_opt, energies_opt, charges_opt = zip(*results)
+    return list(conformers_opt), list(energies_opt), list(charges_opt)
 
 
 def generate_opt_conformers_xtb(smiles: str,
@@ -576,6 +628,7 @@ def generate_opt_conformers_xtb(smiles: str,
                                 solvent: Optional[str]=None,
                                 MMFF_optimize: bool = True,
                                 num_processes: int = 1,
+                                num_workers: int = 1,
                                 temp_dir: str = '',
                                 verbose: bool = False,
                                 num_confs: int = 1000):
@@ -589,6 +642,8 @@ def generate_opt_conformers_xtb(smiles: str,
         num_processes -- number of cpu cores to be used in the xtb geometry optimization
         solvent -- None or str indicating any implicit solvent to be used during optimization
             Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
+        num_workers -- number of parallel workers (processes) to distribute conformers across.
+            Disclaimer: ensure num_workers * num_processes <= available CPUs to avoid oversubscription.
         temp_dir -- str temporary directory for I/O
         verbose -- bool toggle tqdm
         num_confs -- int number of conformers to initially generate
@@ -598,6 +653,12 @@ def generate_opt_conformers_xtb(smiles: str,
         clustered_energies_xtb: list of energies for associated conformers
         clustered_charges_xtb: list of partial charges for associated conformers
     """
+    available_cpus = os.cpu_count() or 1
+    total_requested_cpus = max(1, num_workers) * max(1, num_processes)
+    if total_requested_cpus > available_cpus:
+        raise ValueError(
+            f"Requested num_workers * num_processes = {total_requested_cpus} exceeds available CPUs ({available_cpus})."
+        )
     mol_3d = embed_conformer_from_smiles(smiles, attempts = 50, MMFF_optimize = MMFF_optimize)
 
     if mol_3d is None:
@@ -627,6 +688,7 @@ def generate_opt_conformers_xtb(smiles: str,
         clustered_conformers,
         solvent = solvent,
         num_processes = num_processes,
+        num_workers = num_workers,
         charge=charge,
         temp_dir = temp_dir,
         verbose=verbose
