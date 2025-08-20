@@ -37,12 +37,22 @@ def write_xyz_file(atomic_numbers: np.ndarray,
     for i in range(0,N):
         a = int(atomic_numbers[i])
         p = positions[i]
-        xyz+= f'{rdkit.Chem.Atom(a).GetSymbol()} {str(p[0].round(3))} {str(p[1].round(3))} {str(p[2].round(3))}\n'
+        xyz+= f'{rdkit.Chem.Atom(a).GetSymbol()} {p[0]:>15.8f} {p[1]:>15.8f} {p[2]:>15.8f}\n'
     xyz+= '\n'
 
     if path_to_file is not None:
         with open(f'{path_to_file}', 'w') as f:
             f.write(xyz)
+    return xyz
+
+
+def get_xyz_content(atomic_numbers: np.ndarray,
+                    positions: np.ndarray
+                    ) -> str:
+    """
+    Get the xyz block of an atomistic structure.
+    """
+    xyz = write_xyz_file(atomic_numbers, positions, path_to_file=None)
     return xyz
 
 

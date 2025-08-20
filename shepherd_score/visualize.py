@@ -10,10 +10,14 @@ from matplotlib.colors import to_hex
 from rdkit import Chem
 
 # drawing
-from rdkit.Chem.Draw import IPythonConsole
 import py3Dmol
+from IPython.display import SVG
+import matplotlib.colors as mcolors
+from rdkit.Chem.Draw import rdMolDraw2D
+
 
 from shepherd_score.pharm_utils.pharmacophore import feature_colors, get_pharmacophores_dict, get_pharmacophores
+from shepherd_score.evaluations.utils.convert_data import get_xyz_content
 from shepherd_score.score.constants import P_TYPES
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
 P_IND2TYPES = {i : p for i, p in enumerate(P_TYPES)}
@@ -98,10 +102,11 @@ def draw(mol: Union[Chem.Mol, str],
         mol = Chem.RemoveHs(mol)
     
     if isinstance(mol, Chem.Mol):
-        IPythonConsole.addMolToView(mol, view, confId=0)
+        mb = Chem.MolToMolBlock(mol, confId=0)
+        view.addModel(mb, 'sdf')
     else:
-        view.addModel(mol, 'str')
-        view.setStyle({'model': 0}, {'stick': {'opacity': 1.0}})    
+        view.addModel(mol, 'xyz')
+    view.setStyle({'model': 0}, {'stick': {'opacity': 1.0}})    
     keys = ['x', 'y', 'z']
 
     if feats:
@@ -152,6 +157,83 @@ def draw(mol: Union[Chem.Mol, str],
     if add_SAS:
         view.addSurface(py3Dmol.SAS, {'opacity':0.5})
     view.zoomTo()
+    # return view.show() # view.show() to save memory
+    return view
+
+
+def draw_sample(
+    generated_sample: dict,
+    ref_mol = None,
+    only_atoms = False,
+    opacity = 0.6,
+    view = None,
+    width = 800,
+    height = 400):
+    """
+    Draw generated ShEPhERD sample with pharmacophore features and point cloud on surface
+    accessible surface and electrostatics optionally overlaid on the reference molecule.
+
+    Parameters
+    ----------
+    generated_sample : dict
+        The generated sample with the following format.
+        Note that it does NOT use x2 and assumes shape positions are in x3:
+        {
+            'x1': {
+                'atoms': np.ndarray (N,),
+                'positions': np.ndarray (N, 3)
+            },
+            'x2': {
+                'charges': np.ndarray (N,),
+            },
+            'x3': {
+                'types': np.ndarray (N,),
+                'positions': np.ndarray (N, 3),
+                'directions': np.ndarray (N, 3)
+            },
+            'x4': {
+                'types': np.ndarray (N,),
+                'positions': np.ndarray (N, 3),
+                'directions': np.ndarray (N, 3)
+            }
+        }
+    ref_mol : Chem.Mol (default: None)
+        The reference molecule with a conformer.
+    only_atoms : bool (default: False)
+        Whether to only draw the atoms and ignore the interaction profiles.
+    opacity : float (default: 0.6)
+        The opacity of the reference molecule.
+    view : py3Dmol.view (default: None)
+        The view to draw the molecule to. If None, a new view will be created.
+    width : int (default: 800)
+        The width of the view.
+    height : int (default: 400)
+        The height of the view.
+    """
+    if 'x1' not in generated_sample or 'atoms' not in generated_sample['x1'] or 'positions' not in generated_sample['x1']:
+        raise ValueError('Generated sample does not contain atoms and positions in expected dict.')
+    
+    if view is None:
+        view = py3Dmol.view(width=width, height=height)
+        view.removeAllModels()
+    
+    if ref_mol is not None:
+        mb = Chem.MolToMolBlock(ref_mol, confId=0)
+        view.addModel(mb, 'sdf')
+        view.setStyle({'model': 0}, {'stick': {'opacity': opacity}})
+
+    xyz_block = get_xyz_content(generated_sample['x1']['atoms'], generated_sample['x1']['positions'])
+    if xyz_block is None:
+        return view
+
+    view = draw(xyz_block,
+                feats={},
+                pharm_types=generated_sample['x4']['types'] if not only_atoms else None,
+                pharm_ancs=generated_sample['x4']['positions'] if not only_atoms else None,
+                pharm_vecs=generated_sample['x4']['directions'] if not only_atoms else None,
+                point_cloud=generated_sample['x3']['positions'] if not only_atoms else None,
+                esp=generated_sample['x2']['charges'] if not only_atoms else None,
+                view=view)
     # return view.show() # view.show() to save memory
     return view
 
@@ -294,3 +376,62 @@ def draw_2d(ref_mol: Chem.Mol,
         molsPerRow=mols_per_row,
         legends=['Target'] + [f'Sample {i}' for i in valid_inds],
         useSVG=use_svg)
+
+
+def create_highlighted_mol_svg(mol: Chem.Mol,
+                               atom_sets: List[List[int]],
+                               colors: Union[List[str], None] = None,
+                               add_atom_indices: bool = False,
+                               width: int = 800,
+                               height: int = 600
+                               ) -> SVG:
+    """
+    Create an SVG representation of the molecule with highlighted atom sets.
+
+    Parameters
+    ----------
+    mol : Chem.Mol
+        The molecule to draw.
+    atom_sets : List[List[int]]
+        The list of atom sets to highlight.
+    colors : List[str]
+        The list of colors to use for the atom sets.
+    add_atom_indices : bool
+        Whether to add atom indices to the molecule.
+    width : int
+        The width of the SVG image.
+    height : int
+        The height of the SVG image.
+
+    Returns
+    -------
+    SVG: The SVG representation of the molecule with highlighted atom sets.
+    """
+    if colors is None:
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
+    
+    non_empty_sets = [s for s in atom_sets if s]
+    
+    highlight_atoms = {}
+    highlight_colors = {}
+    
+    for set_idx, atom_set in enumerate(non_empty_sets):
+        color_rgb = mcolors.to_rgb(colors[set_idx % len(colors)])
+        for atom_id in atom_set:
+            highlight_atoms[atom_id] = color_rgb
+            highlight_colors[atom_id] = color_rgb
+    
+    drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
+    
+    opts = drawer.drawOptions()
+    opts.addStereoAnnotation = True
+    opts.addAtomIndices = add_atom_indices
+    
+    drawer.DrawMolecule(mol, 
+                       highlightAtoms=list(highlight_atoms.keys()),
+                       highlightAtomColors=highlight_colors)
+    
+    drawer.FinishDrawing()
+    svg = drawer.GetDrawingText()
+    
+    return SVG(svg)
