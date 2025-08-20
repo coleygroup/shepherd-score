@@ -6,10 +6,9 @@ import sys
 import os
 import logging
 import traceback
-from typing import Union, List, Tuple, Optional, Dict, Any
+from typing import Union, List, Tuple, Optional, Dict, Any, Literal
 from pathlib import Path
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 from copy import deepcopy
 import itertools
@@ -38,7 +37,13 @@ from shepherd_score.score.gaussian_overlap_np import get_overlap_np
 from shepherd_score.score.electrostatic_scoring_np import get_overlap_esp_np
 from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
 
+from shepherd_score.conformer_generation import set_thread_limits
+
 from shepherd_score.evaluations.evaluate.evals import ConfEval, ConsistencyEval, ConditionalEval
+from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_unconditional_single, _create_failed_result
+from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_conditional_single, _create_conditional_failed_result
+from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_consistency_single, _create_consistency_failed_result
+from shepherd_score.evaluations.evaluate._pipeline_eval_single import _compute_consistency_upper_bounds
 
 RNG = np.random.default_rng()
 morgan_fp_gen = rdFingerprintGenerator.GetMorganGenerator(radius=3, includeChirality=True)
@@ -50,6 +55,17 @@ if 'TMPDIR' in os.environ:
 # Configure logging for worker processes
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def _unpack_eval_unconditional_single(args):
+    return _eval_unconditional_single(*args)
+
+def _unpack_eval_conditional_single(args):
+    return _eval_conditional_single(*args)
+
+def _unpack_eval_consistency_single(args):
+    return _eval_consistency_single(*args)
+
 
 class UnconditionalEvalPipeline:
     """ Unconditional evaluation pipeline """
@@ -67,10 +83,10 @@ class UnconditionalEvalPipeline:
         solvent : Optional[str] implicit solvent model to use for xtb relaxation
         """
         self.generated_mols = generated_mols
-        self.smiles = []
-        self.smiles_post_opt = []
-        self.molblocks = []
-        self.molblocks_post_opt = []
+        self.smiles = [None] * len(generated_mols)
+        self.smiles_post_opt = [None] * len(generated_mols)
+        self.molblocks = [None] * len(generated_mols)
+        self.molblocks_post_opt = [None] * len(generated_mols)
         self.num_generated_mols = len(generated_mols)
 
         self.solvent = solvent
@@ -86,14 +102,13 @@ class UnconditionalEvalPipeline:
         self.logPs = np.empty(self.num_generated_mols)
         self.QEDs = np.empty(self.num_generated_mols)
         self.fsp3s = np.empty(self.num_generated_mols)
-        self.morgan_fps = []
+        self.morgan_fps = [None] * self.num_generated_mols
 
-        self.strain_energies_post_opt = np.empty(self.num_generated_mols)
         self.SA_scores_post_opt = np.empty(self.num_generated_mols)
         self.logPs_post_opt = np.empty(self.num_generated_mols)
         self.QEDs_post_opt = np.empty(self.num_generated_mols)
         self.fsp3s_post_opt = np.empty(self.num_generated_mols)
-        self.morgan_fps_post_opt = []
+        self.morgan_fps_post_opt = [None] * self.num_generated_mols
 
         # Overall metrics
         self.frac_valid = None
@@ -108,7 +123,9 @@ class UnconditionalEvalPipeline:
     def evaluate(self,
                  num_processes: int = 1,
                  num_workers: int = 1,
-                 verbose: bool = False
+                 verbose: bool = False,
+                 *,
+                 mp_context: Literal['spawn', 'forkserver'] = 'spawn'
                  ):
         """
         Run the evaluation pipeline.
@@ -117,7 +134,16 @@ class UnconditionalEvalPipeline:
         ---------
         num_processes : int number of processors to use for xtb relaxation
         num_workers : int number of parallel worker processes. Constraint: num_workers*num_processes <= available CPUs
+            Only recommended if `generated_mols` is > 100 due to start-up overhead of new processes.
+            If num_workers > 1, multiprocessing is used, and not much is gained by setting
+            num_processes > 1 in this case.
         verbose : bool for whether to print tqdm progress bar
+        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+            'spawn' is recommended for most cases.
+
+        Returns
+        -------
+        None : Just updates the class attributes
         """
         available_cpus = multiprocessing.cpu_count() or 1
         if num_workers < 1:
@@ -126,85 +152,53 @@ class UnconditionalEvalPipeline:
         if num_workers > max_workers_allowed:
             num_workers = max_workers_allowed
 
-        tasks = []
-        task_indices = []
-        results: Dict[int, Dict[str, Any]] = {}
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            for i, gen_mol in enumerate(self.generated_mols):
-                atoms, positions = gen_mol
-                task = executor.submit(_eval_unconditional_single,
-                                       i,
-                                       atoms,
-                                       positions,
-                                       self.solvent,
-                                       num_processes)
-                tasks.append(task)
-                task_indices.append(i)
-
-            if verbose:
-                pbar = tqdm(total=self.num_generated_mols, desc='Unconditional Eval')
-            for fut in as_completed(tasks):
-                try:
-                    res = fut.result()
-                    results[res['i']] = res
-                except Exception as e:
-                    # Find the task index for this future
-                    task_idx = None
-                    for idx, task in enumerate(tasks):
-                        if task is fut:
-                            task_idx = task_indices[idx]
-                            break
-                    if task_idx is None:
-                        task_idx = len(results)  # Fallback
-                    logger.error(f"Worker failed for unconditional molecule {task_idx}: {e}")
-                    results[task_idx] = _create_failed_result(task_idx, f"Worker process failed: {str(e)}")
+        if num_workers > 1:
+            # Don't need to use multiprocessing context since Open3D not used and xtb handled internally
+            multiprocessing.set_start_method(mp_context, force=True)
+            inputs = [(i, atoms, positions, self.solvent, 1)
+                      for i, (atoms, positions) in enumerate(self.generated_mols)]
+            with multiprocessing.Pool(num_workers) as pool:
                 if verbose:
-                    pbar.update(1)
+                    pbar = tqdm(total=self.num_generated_mols, desc='Unconditional Eval')
+
+                results_iter = pool.imap_unordered(_unpack_eval_unconditional_single, inputs, chunksize=1)
+
+                pending_results = {i: None for i in range(self.num_generated_mols)}
+                completed = 0
+
+                for res in results_iter:
+                    idx = res['i']
+                    pending_results[idx] = res
+                    self._process_single_result(res, idx)
+                    completed += 1
+                    if verbose:
+                        pbar.update(1)
+
+                if verbose:
+                    pbar.close()
+
+                # Handle any missing results
+                for i in range(self.num_generated_mols):
+                    if pending_results[i] is None:
+                        logger.warning(f"Missing result for molecule {i}, creating failed result")
+                        failed_res = _create_failed_result(i, "Worker result missing")
+                        self._process_single_result(failed_res, i)
+        else:
+            # Single process evaluation
             if verbose:
-                pbar.close()
-        
-        for i in range(self.num_generated_mols):
-            if i not in results:
-                logger.warning(f"Missing result for molecule {i}, creating failed result")
-                results[i] = _create_failed_result(i, "Worker result missing")
-
-        for i in range(self.num_generated_mols):
-            res = results[i]
-            if res['is_valid']:
-                self.num_valid += 1
-                self.smiles.append(res['smiles'])
-                self.molblocks.append(res['molblock'])
+                pbar = tqdm(enumerate(self.generated_mols),
+                            desc='Unconditional Eval',
+                            total=self.num_generated_mols)
             else:
-                self.smiles.append(None)
-                self.molblocks.append(None)
-            if res['is_valid_post_opt']:
-                self.num_valid_post_opt += 1
-                self.smiles_post_opt.append(res['smiles_post_opt'])
-                self.molblocks_post_opt.append(res['molblock_post_opt'])
-            else:
-                self.smiles_post_opt.append(None)
-                self.molblocks_post_opt.append(None)
+                pbar = enumerate(self.generated_mols)
 
-            if res['molblock'] is not None:
-                try:
-                    mol_pre = Chem.MolFromMolBlock(res['molblock'], removeHs=False)
-                    fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_pre))
-                    self.morgan_fps.append(fp)
-                except Exception:
-                    pass
-            self.num_consistent_graph += 1 if res['is_graph_consistent'] else 0
+            for i, gen_mol in pbar:
+                atoms, positions = gen_mol
 
-            self.strain_energies[i] = res['strain_energy']
-            self.rmsds[i] = res['rmsd']
-            self.SA_scores[i] = res['SA_score']
-            self.QEDs[i] = res['QED']
-            self.logPs[i] = res['logP']
-            self.fsp3s[i] = res['fsp3']
-
-            self.SA_scores_post_opt[i] = res['SA_score_post_opt']
-            self.QEDs_post_opt[i] = res['QED_post_opt']
-            self.logPs_post_opt[i] = res['logP_post_opt']
-            self.fsp3s_post_opt[i] = res['fsp3_post_opt']
+                res = _eval_unconditional_single(
+                    i, atoms, positions, self.solvent, num_processes
+                )
+                self._process_single_result(res, i)
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
@@ -212,6 +206,49 @@ class UnconditionalEvalPipeline:
         self.frac_unique = self.get_frac_unique()
         self.frac_unique_post_opt = self.get_frac_unique_post_opt()
         self.avg_graph_diversity, self.graph_similarity_matrix = self.get_diversity()
+
+
+    def _process_single_result(self, res: Dict[str, Any], i: int):
+        """Helper method to process a single evaluation result."""
+        if res['is_valid']:
+            self.num_valid += 1
+        self.smiles[i] = res['smiles']
+        self.molblocks[i] = res['molblock']
+
+        if res['is_valid_post_opt']:
+            self.num_valid_post_opt += 1
+        self.smiles_post_opt[i] = res['smiles_post_opt']
+        self.molblocks_post_opt[i] = res['molblock_post_opt']
+
+        if res['molblock'] is not None:
+            try:
+                mol_pre = Chem.MolFromMolBlock(res['molblock'], removeHs=False)
+                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_pre))
+                self.morgan_fps[i] = fp
+            except Exception:
+                self.morgan_fps[i] = None
+
+        if res['molblock_post_opt'] is not None:
+            try:
+                mol_post_opt = Chem.MolFromMolBlock(res['molblock_post_opt'], removeHs=False)
+                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_post_opt))
+                self.morgan_fps_post_opt[i] = fp
+            except Exception:
+                self.morgan_fps_post_opt[i] = None
+
+        self.num_consistent_graph += 1 if res['is_graph_consistent'] else 0
+
+        self.strain_energies[i] = res['strain_energy']
+        self.rmsds[i] = res['rmsd']
+        self.SA_scores[i] = res['SA_score']
+        self.QEDs[i] = res['QED']
+        self.logPs[i] = res['logP']
+        self.fsp3s[i] = res['fsp3']
+
+        self.SA_scores_post_opt[i] = res['SA_score_post_opt']
+        self.QEDs_post_opt[i] = res['QED_post_opt']
+        self.logPs_post_opt[i] = res['logP_post_opt']
+        self.fsp3s_post_opt[i] = res['fsp3_post_opt']
 
 
     def get_attr(self, obj, attr: str):
@@ -371,10 +408,10 @@ class ConditionalEvalPipeline:
         self.sims_surf_upper_bound = max(self.ref_surf_resampling_scores)
         self.sims_esp_upper_bound = max(self.ref_surf_esp_resampling_scores)
 
-        self.smiles = []
-        self.smiles_post_opt = []
-        self.molblocks = []
-        self.molblocks_post_opt = []
+        self.smiles = [None] * self.num_generated_mols
+        self.smiles_post_opt = [None] * self.num_generated_mols
+        self.molblocks = [None] * self.num_generated_mols
+        self.molblocks_post_opt = [None] * self.num_generated_mols
         self.num_valid = 0
         self.num_valid_post_opt = 0
         self.num_consistent_graph = 0
@@ -386,13 +423,13 @@ class ConditionalEvalPipeline:
         self.logPs = np.empty(self.num_generated_mols)
         self.QEDs = np.empty(self.num_generated_mols)
         self.fsp3s = np.empty(self.num_generated_mols)
-        self.morgan_fps = []
+        self.morgan_fps = [None] * self.num_generated_mols
 
         self.SA_scores_post_opt = np.empty(self.num_generated_mols)
         self.logPs_post_opt = np.empty(self.num_generated_mols)
         self.QEDs_post_opt = np.empty(self.num_generated_mols)
         self.fsp3s_post_opt = np.empty(self.num_generated_mols)
-        self.morgan_fps_post_opt = []
+        self.morgan_fps_post_opt = [None] * self.num_generated_mols
 
         # Overall metrics
         self.frac_valid = None
@@ -417,7 +454,7 @@ class ConditionalEvalPipeline:
 
         self.sims_surf_target_relax_esp_aligned = np.empty(self.num_generated_mols)
         self.sims_pharm_target_relax_esp_aligned = np.empty(self.num_generated_mols)
-        
+
         # 2D similarities
         self.graph_similarities = np.empty(self.num_generated_mols)
         self.graph_similarities_post_opt = np.empty(self.num_generated_mols)
@@ -425,90 +462,84 @@ class ConditionalEvalPipeline:
 
     def evaluate(self,
                  num_processes: int = 1,
-                 verbose: bool=False):
+                 num_workers: int = 1,
+                 verbose: bool=False,
+                 *,
+                 mp_context: Literal['spawn', 'forkserver'] = 'spawn'
+                 ):
         """ 
         Run conditional evaluation on every generated molecule and store collective values.
 
         Arguments
         ---------
         num_processes : int number of processors to use for xtb relaxation
+        num_workers : int number of workers to use for multiprocessing
+            If num_workers > 1, multiprocessing is used, and not much is gained by setting
+            num_processes > 1.
+            There is an associated overhead of starting up new processes and doing score evaluations.
         verbose : bool for whether to display tqdm
+        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+            'spawn' is recommended for most cases.
 
         Returns
         -------
         None : Just updates the class attributes
         """
-        if verbose:
-            pbar = tqdm(enumerate(self.generated_mols),
-                        desc='Conditional Eval',
-                        total=self.num_generated_mols)
+        available_cpus = multiprocessing.cpu_count() or 1
+        if num_workers < 1:
+            num_workers = 1
+        max_workers_allowed = max(1, available_cpus // max(1, num_processes))
+        if num_workers > max_workers_allowed:
+            num_workers = max_workers_allowed
+        
+        if num_workers > 1:
+            multiprocessing.set_start_method(mp_context, force=True)
+            with set_thread_limits(num_processes):
+                inputs = [(i, self.ref_molec, self.condition, self.num_surf_points, self.pharm_multi_vector, atoms, positions, self.solvent, 1)
+                        for i, (atoms, positions) in enumerate(self.generated_mols)]
+                with multiprocessing.Pool(num_workers) as pool:
+                    if verbose:
+                        pbar = tqdm(total=self.num_generated_mols, desc='Conditional Eval')
+
+                    # Use imap_unordered for better progress tracking
+                    results_iter = pool.imap_unordered(_unpack_eval_conditional_single, inputs, chunksize=1)
+
+                    # Create a mapping to track original indices since imap_unordered doesn't preserve order
+                    pending_results = {i: None for i in range(self.num_generated_mols)}
+
+                    for res in results_iter:
+                        idx = res['i']
+                        pending_results[idx] = res
+                        self._process_single_result(res, idx)
+                        if verbose:
+                            pbar.update(1)
+
+                    if verbose:
+                        pbar.close()
+
+                    # Handle any missing results
+                    for i in range(self.num_generated_mols):
+                        if pending_results[i] is None:
+                            logger.warning(f"Missing result for molecule {i}, creating failed result")
+                            failed_res = _create_conditional_failed_result(i, "Worker result missing")
+                            self._process_single_result(failed_res, i)
         else:
-            pbar = enumerate(self.generated_mols)
-        for i, gen_mol in pbar:
-            atoms, positions = gen_mol
-
-            cond_eval = ConditionalEval(
-                ref_molec=self.ref_molec,
-                atoms=atoms,
-                positions=positions,
-                condition=self.condition,
-                num_surf_points=self.num_surf_points,
-                pharm_multi_vector=self.pharm_multi_vector,
-                num_processes=num_processes,
-                solvent=self.solvent
-            )
-
-            # Conformer attributes
-            self.num_consistent_graph += 1 if cond_eval.is_graph_consistent else 0
-            self.molblocks.append(cond_eval.molblock)
-            self.molblocks_post_opt.append(cond_eval.molblock_post_opt)
-
-            if cond_eval.is_valid:
-                self.num_valid += 1
-                self.smiles.append(cond_eval.smiles)
+            # Single process evaluation
+            if verbose:
+                pbar = tqdm(enumerate(self.generated_mols),
+                            desc='Conditional Eval',
+                            total=self.num_generated_mols)
             else:
-                self.smiles.append(None)
-            if cond_eval.is_valid_post_opt:
-                self.num_valid_post_opt += 1
-                self.smiles_post_opt.append(cond_eval.smiles_post_opt)
-            else:
-                self.smiles_post_opt.append(None)
+                pbar = enumerate(self.generated_mols)
 
-            self.strain_energies[i] = self.get_attr(cond_eval, 'strain_energy')
-            self.rmsds[i] = self.get_attr(cond_eval, 'rmsd')
-            self.SA_scores[i] = self.get_attr(cond_eval, 'SA_score')
-            self.QEDs[i] = self.get_attr(cond_eval, 'QED')
-            self.logPs[i] = self.get_attr(cond_eval, 'logP')
-            self.fsp3s[i] = self.get_attr(cond_eval, 'fsp3')
-            if cond_eval.morgan_fp is not None:
-                self.graph_similarities[i] = TanimotoSimilarity(cond_eval.morgan_fp, self.ref_mol_morgan_fp)
-            else:
-                self.graph_similarities[i] = np.nan
-            if cond_eval.morgan_fp_post_opt is not None:
-                self.graph_similarities_post_opt[i] = TanimotoSimilarity(cond_eval.morgan_fp_post_opt, self.ref_mol_morgan_fp)
-            else:
-                self.graph_similarities_post_opt[i] = np.nan
-            
-            self.SA_scores_post_opt[i] = self.get_attr(cond_eval, 'SA_score_post_opt')
-            self.QEDs_post_opt[i] = self.get_attr(cond_eval, 'QED_post_opt')
-            self.logPs_post_opt[i] = self.get_attr(cond_eval, 'logP_post_opt')
-            self.fsp3s_post_opt[i] = self.get_attr(cond_eval, 'fsp3_post_opt')
+            for i, gen_mol in pbar:
+                atoms, positions = gen_mol
 
-            # Conditional attributes
-            self.sims_surf_target[i] = self.get_attr(cond_eval, 'sim_surf_target')
-            self.sims_esp_target[i] = self.get_attr(cond_eval, 'sim_esp_target')
-            self.sims_pharm_target[i] = self.get_attr(cond_eval, 'sim_pharm_target')
-
-            self.sims_surf_target_relax[i] = self.get_attr(cond_eval, 'sim_surf_target_relax')
-            self.sims_esp_target_relax[i] = self.get_attr(cond_eval, 'sim_esp_target_relax')
-            self.sims_pharm_target_relax[i] = self.get_attr(cond_eval, 'sim_pharm_target_relax')      
-
-            self.sims_surf_target_relax_optimal[i] = self.get_attr(cond_eval, 'sim_surf_target_relax_optimal')
-            self.sims_esp_target_relax_optimal[i] = self.get_attr(cond_eval, 'sim_esp_target_relax_optimal')
-            self.sims_pharm_target_relax_optimal[i] = self.get_attr(cond_eval, 'sim_pharm_target_relax_optimal')
-
-            self.sims_surf_target_relax_esp_aligned[i] = self.get_attr(cond_eval, 'sim_surf_target_relax_esp_aligned')
-            self.sims_pharm_target_relax_esp_aligned[i] = self.get_attr(cond_eval, 'sim_pharm_target_relax_esp_aligned')
+                res = _eval_conditional_single(
+                    i, self.ref_molec, self.condition, self.num_surf_points,
+                    self.pharm_multi_vector, atoms, positions, self.solvent, num_processes
+                )
+                self._process_single_result(res, i)
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
@@ -517,7 +548,80 @@ class ConditionalEvalPipeline:
         self.frac_unique_post_opt = self.get_frac_unique_post_opt()
         self.avg_graph_diversity = self.get_diversity()
 
-    
+
+    def _process_single_result(self, res: Dict[str, Any], i: int):
+        """Helper method to process a single evaluation result."""
+        if res['is_valid']:
+            self.num_valid += 1
+        self.smiles[i] = res['smiles']
+        self.molblocks[i] = res['molblock']
+
+        if res['is_valid_post_opt']:
+            self.num_valid_post_opt += 1
+        self.smiles_post_opt[i] = res['smiles_post_opt']
+        self.molblocks_post_opt[i] = res['molblock_post_opt']
+
+        if res['molblock'] is not None:
+            try:
+                mol_pre = Chem.MolFromMolBlock(res['molblock'], removeHs=False)
+                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_pre))
+                self.morgan_fps[i] = fp
+                if self.ref_mol_morgan_fp is not None:
+                    self.graph_similarities[i] = TanimotoSimilarity(fp, self.ref_mol_morgan_fp)
+                else:
+                    self.graph_similarities[i] = np.nan
+            except Exception:
+                self.morgan_fps[i] = None
+                self.graph_similarities[i] = np.nan
+        else:
+            self.morgan_fps[i] = None
+            self.graph_similarities[i] = np.nan
+
+        if res['molblock_post_opt'] is not None:
+            try:
+                mol_post_opt = Chem.MolFromMolBlock(res['molblock_post_opt'], removeHs=False)
+                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_post_opt))
+                self.morgan_fps_post_opt[i] = fp
+                if self.ref_mol_morgan_fp is not None:
+                    self.graph_similarities_post_opt[i] = TanimotoSimilarity(fp, self.ref_mol_morgan_fp)
+                else:
+                    self.graph_similarities_post_opt[i] = np.nan
+            except Exception:
+                self.morgan_fps_post_opt[i] = None
+                self.graph_similarities_post_opt[i] = np.nan
+        else:
+            self.morgan_fps_post_opt[i] = None
+            self.graph_similarities_post_opt[i] = np.nan
+
+        self.num_consistent_graph += 1 if res['is_graph_consistent'] else 0
+
+        self.strain_energies[i] = res['strain_energy']
+        self.rmsds[i] = res['rmsd']
+        self.SA_scores[i] = res['SA_score']
+        self.QEDs[i] = res['QED']
+        self.logPs[i] = res['logP']
+        self.fsp3s[i] = res['fsp3']
+
+        self.SA_scores_post_opt[i] = res['SA_score_post_opt']
+        self.QEDs_post_opt[i] = res['QED_post_opt']
+        self.logPs_post_opt[i] = res['logP_post_opt']
+        self.fsp3s_post_opt[i] = res['fsp3_post_opt']
+
+        self.sims_surf_target[i] = res['sim_surf_target']
+        self.sims_esp_target[i] = res['sim_esp_target']
+        self.sims_pharm_target[i] = res['sim_pharm_target']
+        self.sims_surf_target_relax[i] = res['sim_surf_target_relax']
+        self.sims_esp_target_relax[i] = res['sim_esp_target_relax']
+        self.sims_pharm_target_relax[i] = res['sim_pharm_target_relax']
+
+        self.sims_surf_target_relax_optimal[i] = res['sim_surf_target_relax_optimal']
+        self.sims_esp_target_relax_optimal[i] = res['sim_esp_target_relax_optimal']
+        self.sims_pharm_target_relax_optimal[i] = res['sim_pharm_target_relax_optimal']
+
+        self.sims_surf_target_relax_esp_aligned[i] = res['sim_surf_target_relax_esp_aligned']
+        self.sims_pharm_target_relax_esp_aligned[i] = res['sim_pharm_target_relax_esp_aligned']
+
+
     def resampling_surf_scores(self) -> Union[np.ndarray, None]:
         """
         Capture distribution of surface similarity and surface ESP scores caused by resampling
@@ -737,10 +841,10 @@ class ConsistencyEvalPipeline:
 
         self.pharm_multi_vector = pharm_multi_vector
 
-        self.smiles = []
-        self.smiles_post_opt = []
-        self.molblocks = []
-        self.molblocks_post_opt = []
+        self.smiles = [None] * self.num_generated_mols
+        self.smiles_post_opt = [None] * self.num_generated_mols
+        self.molblocks = [None] * self.num_generated_mols
+        self.molblocks_post_opt = [None] * self.num_generated_mols
         self.num_valid = 0
         self.num_valid_post_opt = 0
         self.num_consistent_graph = 0
@@ -752,13 +856,13 @@ class ConsistencyEvalPipeline:
         self.logPs = np.empty(self.num_generated_mols)
         self.QEDs = np.empty(self.num_generated_mols)
         self.fsp3s = np.empty(self.num_generated_mols)
-        self.morgan_fps = []
+        self.morgan_fps = [None] * self.num_generated_mols
 
         self.SA_scores_post_opt = np.empty(self.num_generated_mols)
         self.logPs_post_opt = np.empty(self.num_generated_mols)
         self.QEDs_post_opt = np.empty(self.num_generated_mols)
         self.fsp3s_post_opt = np.empty(self.num_generated_mols)
-        self.morgan_fps_post_opt = []
+        self.morgan_fps_post_opt = [None] * self.num_generated_mols
 
         # Overall metrics
         self.frac_valid = None
@@ -794,149 +898,91 @@ class ConsistencyEvalPipeline:
 
     def evaluate(self,
                  num_processes: int = 1,
-                 verbose: bool=False):
-        """ 
+                 num_workers: int = 1,
+                 verbose: bool = False,
+                 *,
+                 mp_context: Literal['spawn', 'forkserver'] = 'spawn'
+                 ):
+        """
         Run consistency evaluation on every generated molecule and store collective values.
 
         Arguments
         ---------
         num_processes : int number of processors to use for xtb relaxation
+        num_workers : int number of workers to use for multiprocessing
+            If num_workers > 1, multiprocessing is used, and not much is gained by setting
+            num_processes > 1 in this case.
+            There is an associated overhead of starting up new processes and doing score evaluations.
         verbose : bool for whether to display tqdm
+        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+            'spawn' is recommended for most cases.
 
         Returns
         -------
         None : Just updates the class attributes
         """
+        available_cpus = multiprocessing.cpu_count() or 1
+        if num_workers < 1:
+            num_workers = 1
+        max_workers_allowed = max(1, available_cpus // max(1, num_processes))
+        if num_workers > max_workers_allowed:
+            num_workers = max_workers_allowed
 
-        if verbose:
-            pbar = tqdm(enumerate(self.generated_mols), desc='Consistency Eval',
-                        total=self.num_generated_mols)
+        if num_workers > 1:
+            multiprocessing.set_start_method(mp_context, force=True)
+            with set_thread_limits(num_processes):
+                inputs = [(i, atoms, positions,
+                        self.generated_surf_points[i] if self.generated_surf_points is not None else None,
+                        self.generated_surf_esp[i] if self.generated_surf_esp is not None else None,
+                        self.generated_pharm_feats[i] if self.generated_pharm_feats is not None else None,
+                        self.pharm_multi_vector, self.probe_radius, self.solvent, 1,
+                        self.random_molblock_charges, i)  # Use i as random seed for reproducibility
+                        for i, (atoms, positions) in enumerate(self.generated_mols)]
+                with multiprocessing.Pool(num_workers) as pool:
+                    if verbose:
+                        pbar = tqdm(total=self.num_generated_mols, desc='Consistency Eval')
+
+                    results_iter = pool.imap_unordered(_unpack_eval_consistency_single, inputs, chunksize=1)
+
+                    pending_results = {i: None for i in range(self.num_generated_mols)}
+
+                    for res in results_iter:
+                        idx = res['i']
+                        pending_results[idx] = res
+                        self._process_single_result(res, idx)
+                        if verbose:
+                            pbar.update(1)
+
+                    if verbose:
+                        pbar.close()
+
+                    # Handle any missing results
+                    for i in range(self.num_generated_mols):
+                        if pending_results[i] is None:
+                            logger.warning(f"Missing result for molecule {i}, creating failed result")
+                            failed_res = _create_consistency_failed_result(i, "Worker result missing")
+                            self._process_single_result(failed_res, i)
         else:
-            pbar = enumerate(self.generated_mols)
-        for i, gen_mol in pbar:
-            atoms, positions = gen_mol
-            surf_points = self.generated_surf_points[i] if self.generated_surf_points is not None else None
-            surf_esp = self.generated_surf_esp[i] if self.generated_surf_esp is not None else None
-            pharm_feats = self.generated_pharm_feats[i] if self.generated_pharm_feats is not None else None
-            if self.num_random_molblock_charges is not None:
-                rand_ind_for_lower_bound = RNG.choice(self.num_random_molblock_charges, 1)[0]
+            # Single process evaluation
+            if verbose:
+                pbar = tqdm(enumerate(self.generated_mols),
+                            desc='Consistency Eval',
+                            total=self.num_generated_mols)
             else:
-                rand_ind_for_lower_bound = 0
+                pbar = enumerate(self.generated_mols)
 
-            consis_eval = ConsistencyEval(
-                atoms=atoms,
-                positions=positions,
-                surf_points=surf_points,
-                surf_esp=surf_esp,
-                pharm_feats=pharm_feats,
-                pharm_multi_vector=self.pharm_multi_vector,
-                probe_radius=self.probe_radius,
-                num_processes=num_processes,
-                solvent=self.solvent
-            )
+            for i, gen_mol in pbar:
+                atoms, positions = gen_mol
+                surf_points = self.generated_surf_points[i] if self.generated_surf_points is not None else None
+                surf_esp = self.generated_surf_esp[i] if self.generated_surf_esp is not None else None
+                pharm_feats = self.generated_pharm_feats[i] if self.generated_pharm_feats is not None else None
 
-            # Conformer attributes
-            self.num_consistent_graph += 1 if consis_eval.is_graph_consistent else 0
-
-            self.molblocks.append(consis_eval.molblock)
-            self.molblocks_post_opt.append(consis_eval.molblock_post_opt)
-            self.smiles.append(consis_eval.smiles)
-
-            if consis_eval.is_valid:
-                self.num_valid += 1
-
-                # Compute similarity score lower bounds
-                if self.num_random_molblock_charges is not None:
-                    rand_molblock_charges = self.random_molblock_charges[rand_ind_for_lower_bound]
-                    rand_molec = Molecule(
-                        mol=Chem.MolFromMolBlock(rand_molblock_charges[0], removeHs=False),
-                        num_surf_points=consis_eval.molec_regen.num_surf_points,
-                        partial_charges=np.array(rand_molblock_charges[1]),
-                        pharm_multi_vector=consis_eval.molec_regen.pharm_multi_vector
-                    )
-
-                    mp = MoleculePair(ref_mol=consis_eval.molec_regen,
-                                      fit_mol=rand_molec,
-                                      num_surf_points=consis_eval.molec_regen.num_surf_points)
-
-                    # align and compare to molec_regen
-                    if consis_eval.molec_regen.surf_pos is not None:
-                        mp.align_with_surf(alpha=ALPHA(mp.num_surf_points),
-                                           num_repeats=50,
-                                           trans_init=False,
-                                           use_jax=False)
-                        self.sims_surf_lower_bound[i] = mp.sim_aligned_surf
-                    else:
-                        self.sims_surf_lower_bound[i] = np.nan
-                    if consis_eval.molec_regen.surf_esp is not None:
-                        mp.align_with_esp(alpha=ALPHA(mp.num_surf_points),
-                                          lam=consis_eval.lam_scaled,
-                                          num_repeats=50,
-                                          trans_init=False,
-                                          use_jax=False)
-                        self.sims_esp_lower_bound[i] = mp.sim_aligned_esp
-                    else:
-                        self.sims_esp_lower_bound[i] = np.nan
-                    if consis_eval.molec_regen.pharm_ancs is not None:
-                        mp.align_with_pharm(num_repeats=50,
-                                            trans_init=False,
-                                            use_jax=False)
-                        self.sims_pharm_lower_bound[i] = mp.sim_aligned_pharm
-                    else:
-                        self.sims_pharm_lower_bound[i] = np.nan
-                else:
-                    self.sims_surf_lower_bound[i] = np.nan
-                    self.sims_esp_lower_bound[i] = np.nan
-                    self.sims_pharm_lower_bound[i] = np.nan
-
-            if consis_eval.is_valid_post_opt:
-                self.num_valid_post_opt += 1
-                self.smiles_post_opt.append(consis_eval.smiles_post_opt)
-
-            # only compute upper bound if consistent
-            if consis_eval.is_valid and consis_eval.is_valid_post_opt:
-                # Upper bound
-                surf_scores, esp_scores = self.resampling_upper_bounds(
-                    consis_eval=consis_eval,
-                    num_samples=5
+                res = _eval_consistency_single(
+                    i, atoms, positions, surf_points, surf_esp, pharm_feats,
+                    self.pharm_multi_vector, self.probe_radius, self.solvent, num_processes,
+                    self.random_molblock_charges, i  # Use i as random seed for reproducibility
                 )
-                if surf_scores is not None:
-                    self.sims_surf_upper_bound[i] = surf_scores
-                else:
-                    self.sims_surf_upper_bound[i] = np.nan
-
-                if esp_scores is not None:
-                    self.sims_esp_upper_bound[i] = esp_scores
-                else:
-                    self.sims_esp_upper_bound[i] = np.nan
-            else:
-                self.sims_esp_upper_bound[i] = np.nan
-                self.sims_surf_upper_bound[i] = np.nan
-
-            self.strain_energies[i] = self.get_attr(consis_eval, 'strain_energy')
-            self.rmsds[i] = self.get_attr(consis_eval, 'rmsd')
-            self.SA_scores[i] = self.get_attr(consis_eval, 'SA_score')
-            self.QEDs[i] = self.get_attr(consis_eval, 'QED')
-            self.logPs[i] = self.get_attr(consis_eval, 'logP')
-            self.fsp3s[i] = self.get_attr(consis_eval, 'fsp3')
-
-            self.SA_scores_post_opt[i] = self.get_attr(consis_eval, 'SA_score_post_opt')
-            self.QEDs_post_opt[i] = self.get_attr(consis_eval, 'QED_post_opt')
-            self.logPs_post_opt[i] = self.get_attr(consis_eval, 'logP_post_opt')
-            self.fsp3s_post_opt[i] = self.get_attr(consis_eval, 'fsp3_post_opt')
-
-            # Conditional attributes
-            self.sims_surf_consistent[i] = self.get_attr(consis_eval, 'sim_surf_consistent')
-            self.sims_esp_consistent[i] = self.get_attr(consis_eval, 'sim_esp_consistent')
-            self.sims_pharm_consistent[i] = self.get_attr(consis_eval, 'sim_pharm_consistent')
-
-            self.sims_surf_consistent_relax[i] = self.get_attr(consis_eval, 'sim_surf_consistent_relax')
-            self.sims_esp_consistent_relax[i] = self.get_attr(consis_eval, 'sim_esp_consistent_relax')
-            self.sims_pharm_consistent_relax[i] = self.get_attr(consis_eval, 'sim_pharm_consistent_relax')
-
-            self.sims_surf_consistent_relax_optimal[i] = self.get_attr(consis_eval, 'sim_surf_consistent_relax_optimal')
-            self.sims_esp_consistent_relax_optimal[i] = self.get_attr(consis_eval, 'sim_esp_consistent_relax_optimal')
-            self.sims_pharm_consistent_relax_optimal[i] = self.get_attr(consis_eval, 'sim_pharm_consistent_relax_optimal')
+                self._process_single_result(res, i)
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
@@ -945,6 +991,71 @@ class ConsistencyEvalPipeline:
         self.frac_unique_post_opt = self.get_frac_unique_post_opt()
         self.avg_graph_diversity, self.graph_similarity_matrix = self.get_diversity(post_opt=False)
         self.avg_graph_diversity_post_opt, self.graph_similarity_matrix_post_opt = self.get_diversity(post_opt=True)
+
+
+    def _process_single_result(self, res: Dict[str, Any], i: int):
+        """Helper method to process a single evaluation result."""
+        if res['is_valid']:
+            self.num_valid += 1
+        self.smiles[i] = res['smiles']
+        self.molblocks[i] = res['molblock']
+
+        if res['is_valid_post_opt']:
+            self.num_valid_post_opt += 1
+        self.smiles_post_opt[i] = res['smiles_post_opt']
+        self.molblocks_post_opt[i] = res['molblock_post_opt']
+
+        if res['molblock'] is not None:
+            try:
+                mol_pre = Chem.MolFromMolBlock(res['molblock'], removeHs=False)
+                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_pre))
+                self.morgan_fps[i] = fp
+            except Exception:
+                self.morgan_fps[i] = None
+
+        if res['molblock_post_opt'] is not None:
+            try:
+                mol_post_opt = Chem.MolFromMolBlock(res['molblock_post_opt'], removeHs=False)
+                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_post_opt))
+                self.morgan_fps_post_opt[i] = fp
+            except Exception:
+                self.morgan_fps_post_opt[i] = None
+
+        self.num_consistent_graph += 1 if res['is_graph_consistent'] else 0
+
+        self.strain_energies[i] = res['strain_energy']
+        self.rmsds[i] = res['rmsd']
+        self.SA_scores[i] = res['SA_score']
+        self.QEDs[i] = res['QED']
+        self.logPs[i] = res['logP']
+        self.fsp3s[i] = res['fsp3']
+
+        self.SA_scores_post_opt[i] = res['SA_score_post_opt']
+        self.QEDs_post_opt[i] = res['QED_post_opt']
+        self.logPs_post_opt[i] = res['logP_post_opt']
+        self.fsp3s_post_opt[i] = res['fsp3_post_opt']
+
+        # Consistency 3D similarity attributes
+        self.sims_surf_consistent[i] = res['sim_surf_consistent']
+        self.sims_esp_consistent[i] = res['sim_esp_consistent']
+        self.sims_pharm_consistent[i] = res['sim_pharm_consistent']
+
+        self.sims_surf_consistent_relax[i] = res['sim_surf_consistent_relax']
+        self.sims_esp_consistent_relax[i] = res['sim_esp_consistent_relax']
+        self.sims_pharm_consistent_relax[i] = res['sim_pharm_consistent_relax']
+
+        self.sims_surf_consistent_relax_optimal[i] = res['sim_surf_consistent_relax_optimal']
+        self.sims_esp_consistent_relax_optimal[i] = res['sim_esp_consistent_relax_optimal']
+        self.sims_pharm_consistent_relax_optimal[i] = res['sim_pharm_consistent_relax_optimal']
+
+        # Lower bound similarities
+        self.sims_surf_lower_bound[i] = res['sim_surf_lower_bound']
+        self.sims_esp_lower_bound[i] = res['sim_esp_lower_bound']
+        self.sims_pharm_lower_bound[i] = res['sim_pharm_lower_bound']
+
+        # Upper bound similarities
+        self.sims_surf_upper_bound[i] = res['sim_surf_upper_bound']
+        self.sims_esp_upper_bound[i] = res['sim_esp_upper_bound']
 
 
     def resampling_surf_scores(self,
@@ -996,68 +1107,9 @@ class ConsistencyEvalPipeline:
             upper_bound_surf : float or None surface similarity upper bound
             upper_bound_esp : float or None ESP similarity upper bound
         """
-        eval_surf = consis_eval.molec_post_opt.surf_pos is not None
-        eval_esp = consis_eval.molec_post_opt.surf_esp is not None and consis_eval.molec_post_opt.surf_pos is not None
-        if eval_surf is False and eval_esp is False:
-            return None, None
-        
-        if num_surf_points is None:
-            num_surf_points = consis_eval.num_surf_points
-
-        # extract multiple instances of the interaction profiles
-        molecs_ls = []
-        for _ in range(num_samples):
-            molec_extract = Molecule(
-                mol=consis_eval.mol_post_opt,
-                num_surf_points=num_surf_points,
-                probe_radius=consis_eval.probe_radius,
-                partial_charges=consis_eval.partial_charges_post_opt,
-            )
-            molecs_ls.append(molec_extract)
-
-        # Score all combinations
-        all_surf_scores = []
-        all_esp_scores = []
-        inds_all_combos = list(itertools.combinations(list(range(len(molecs_ls))), 2))
-
-        for inds in inds_all_combos:
-            molec_1 = molecs_ls[inds[0]]
-            molec_2 = molecs_ls[inds[1]]
-
-            if eval_surf:
-                # surface scoring
-                score = get_overlap_np(
-                    centers_1=molec_1.surf_pos,
-                    centers_2=molec_2.surf_pos,
-                    alpha=ALPHA(num_surf_points)
-                )
-                all_surf_scores.append(score)
-            else:
-                all_surf_scores = None
-
-            if eval_esp:
-                # ESP surface scoring
-                # MAKE SURE TO SCALE LAMBDA
-                score = get_overlap_esp_np(
-                    centers_1=molec_1.surf_pos,
-                    centers_2=molec_2.surf_pos,
-                    charges_1=molec_1.surf_esp,
-                    charges_2=molec_2.surf_esp,
-                    alpha=ALPHA(num_surf_points),
-                    lam = consis_eval.lam_scaled
-                )
-                all_esp_scores.append(score)
-            else:
-                all_esp_scores = None
-
-        upper_bound_surf = None
-        upper_bound_esp = None
-        if all_surf_scores is not None:
-            upper_bound_surf = np.nanmean(np.array(all_surf_scores))
-        if all_esp_scores is not None:
-            upper_bound_esp = np.nanmean(np.array(all_esp_scores))
-
-        return float(upper_bound_surf), float(upper_bound_esp)
+        return _compute_consistency_upper_bounds(
+            consis_eval, num_samples, num_surf_points
+        )
             
 
     def get_attr(self, obj, attr: str):
@@ -1164,77 +1216,3 @@ class ConsistencyEvalPipeline:
         series_global = pd.Series(global_attrs)
 
         return series_global, df_rowwise
-
-
-def _create_failed_result(i: int, error_msg: str) -> Dict[str, Any]:
-    """Create a result dict for failed evaluations with all required fields."""
-    return {
-        'i': i,
-        'is_valid': False,
-        'is_valid_post_opt': False,
-        'is_graph_consistent': False,
-        'smiles': None,
-        'smiles_post_opt': None,
-        'molblock': None,
-        'molblock_post_opt': None,
-        'strain_energy': np.nan,
-        'rmsd': np.nan,
-        'SA_score': np.nan,
-        'QED': np.nan,
-        'logP': np.nan,
-        'fsp3': np.nan,
-        'SA_score_post_opt': np.nan,
-        'QED_post_opt': np.nan,
-        'logP_post_opt': np.nan,
-        'fsp3_post_opt': np.nan,
-        'error': error_msg
-    }
-
-
-def _eval_unconditional_single(i: int,
-                               atoms: np.ndarray,
-                               positions: np.ndarray,
-                               solvent: Optional[str],
-                               num_processes: int) -> Dict[str, Any]:
-    """
-    Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
-    pickling issues.
-    """
-    try:
-        # Input validation
-        if atoms is None or positions is None:
-            raise ValueError("atoms and positions cannot be None")
-        if len(atoms) != len(positions):
-            raise ValueError("atoms and positions must have same length")
-        if len(atoms) == 0:
-            raise ValueError("Empty molecule")
-        
-        conf_eval = ConfEval(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes)
-        
-        res = {
-            'i': i,
-            'is_valid': conf_eval.is_valid,
-            'is_valid_post_opt': conf_eval.is_valid_post_opt,
-            'is_graph_consistent': conf_eval.is_graph_consistent,
-            'smiles': conf_eval.smiles if conf_eval.is_valid else None,
-            'smiles_post_opt': conf_eval.smiles_post_opt if conf_eval.is_valid_post_opt else None,
-            'molblock': conf_eval.molblock if conf_eval.is_valid else None,
-            'molblock_post_opt': conf_eval.molblock_post_opt if conf_eval.is_valid_post_opt else None,
-            'strain_energy': conf_eval.strain_energy if conf_eval.strain_energy is not None else np.nan,
-            'rmsd': conf_eval.rmsd if conf_eval.rmsd is not None else np.nan,
-            'SA_score': conf_eval.SA_score if conf_eval.SA_score is not None else np.nan,
-            'QED': conf_eval.QED if conf_eval.QED is not None else np.nan,
-            'logP': conf_eval.logP if conf_eval.logP is not None else np.nan,
-            'fsp3': conf_eval.fsp3 if conf_eval.fsp3 is not None else np.nan,
-            'SA_score_post_opt': conf_eval.SA_score_post_opt if conf_eval.SA_score_post_opt is not None else np.nan,
-            'QED_post_opt': conf_eval.QED_post_opt if conf_eval.QED_post_opt is not None else np.nan,
-            'logP_post_opt': conf_eval.logP_post_opt if conf_eval.logP_post_opt is not None else np.nan,
-            'fsp3_post_opt': conf_eval.fsp3_post_opt if conf_eval.fsp3_post_opt is not None else np.nan,
-            'error': None
-        }
-        return res
-        
-    except Exception as e:
-        error_msg = f"Unconditional evaluation failed for molecule {i}: {str(e)}"
-        logger.error(f"{error_msg}\n{traceback.format_exc()}")
-        return _create_failed_result(i, error_msg)
