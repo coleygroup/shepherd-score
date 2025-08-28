@@ -4,6 +4,7 @@ Visualize pharmacophores and exit vectors with py3dmol.
 from typing import Union, List, Literal, Optional
 from pathlib import Path
 from copy import deepcopy
+import time
 
 import numpy as np
 from matplotlib.colors import to_hex
@@ -59,6 +60,7 @@ def draw(mol: Union[Chem.Mol, str],
          removeHs = False,
          opacity = 1.0,
          opacity_features = 1.0,
+         color_scheme: Optional[str] = None,
          custom_carbon_color: Optional[str] = None,
          width = 800,
          height = 400
@@ -92,7 +94,10 @@ def draw(mol: Union[Chem.Mol, str],
         The view to draw the molecule to. If None, a new view will be created.
     removeHs : bool (default: False)
         Whether to remove the hydrogen atoms.
-    custom_carbon_color : str (default: 'dark slate grey')
+    color_scheme : str (default: None)
+        Provide a py3Dmol color scheme string.
+        Example: 'whiteCarbon'
+    custom_carbon_color : str (default: None)
         Provide hex color of the carbon atoms. Programmed are 'dark slate grey' and 'light steel blue'.
     opacity : float (default: 1.0)
         The opacity of the molecule.
@@ -120,7 +125,9 @@ def draw(mol: Union[Chem.Mol, str],
     else:
         view.addModel(mol, 'xyz')
     
-    if custom_carbon_color is not None:
+    if color_scheme is not None:
+        view.setStyle({'model': -1}, {'stick': {'colorscheme':color_scheme, 'opacity': opacity}})
+    elif custom_carbon_color is not None:
         if custom_carbon_color == 'dark slate grey':
             custom_carbon_color = '#2F4F4F'
         elif custom_carbon_color == 'light steel blue':
@@ -156,6 +163,10 @@ def draw(mol: Union[Chem.Mol, str],
     
     if feats == {} and pharm_types is not None and pharm_ancs is not None and pharm_vecs is not None:
         for i, ptype in enumerate(pharm_types):
+            # Skip invalid pharmacophore type indices (like -1)
+            if ptype < 0 or ptype >= len(P_TYPES):
+                continue
+                
             fam = P_IND2TYPES[ptype]
             clr = feature_colors.get(fam, (.5,.5,.5))
             view.addSphere({'center':{keys[k]: float(pharm_ancs[i][k]) for k in range(3)},
@@ -196,6 +207,7 @@ def draw_sample(
     only_atoms = False,
     opacity = 0.6,
     view = None,
+    color_scheme: Optional[str] = None,
     custom_carbon_color: Optional[str] = None,
     width = 800,
     height = 400,
@@ -235,6 +247,9 @@ def draw_sample(
         The opacity of the reference molecule.
     view : py3Dmol.view (default: None)
         The view to draw the molecule to. If None, a new view will be created.
+    color_scheme : str (default: None)
+        Provide a py3Dmol color scheme string.
+        Example: 'whiteCarbon'
     custom_carbon_color : str (default: 'dark slate grey')
         Provide hex color of the carbon atoms. Programmed are 'dark slate grey' and 'light steel blue'.
     width : int (default: 800)
@@ -266,7 +281,8 @@ def draw_sample(
                 point_cloud=generated_sample['x3']['positions'] if not only_atoms else None,
                 esp=generated_sample['x3']['charges'] if not only_atoms else None,
                 view=view,
-                custom_carbon_color=custom_carbon_color)
+                color_scheme=color_scheme,
+                custom_carbon_color=custom_carbon_color if color_scheme is None else None)
     # return view.show() # view.show() to save memory
     return view
 
@@ -275,6 +291,7 @@ def draw_molecule(molecule: Molecule,
                   add_SAS = False,
                   view = None,
                   removeHs = False,
+                  color_scheme: Optional[str] = None,
                   custom_carbon_color: Optional[str] = None,
                   opacity: float = 1.0,
                   opacity_features: float = 1.0,
@@ -291,7 +308,8 @@ def draw_molecule(molecule: Molecule,
                 width=width,
                 height=height,
                 removeHs=removeHs,
-                custom_carbon_color=custom_carbon_color,
+                color_scheme=color_scheme,
+                custom_carbon_color=custom_carbon_color if color_scheme is None else None,
                 opacity=opacity,
                 opacity_features=opacity_features)
     return view
@@ -421,16 +439,16 @@ def draw_2d_valid(ref_mol: Chem.Mol,
         useSVG=use_svg)
 
 
-def draw_2d_highlighted_atoms(mol: Chem.Mol,
-                              atom_sets: List[List[int]],
-                              colors: Optional[List[str]] = None,
-                              label: Optional[Literal['atomLabel', 'molAtomMapNumber', 'atomNote']] = None,
-                              compute_2d_coords: bool = True,
-                              add_stereo_annotation: bool = True,
-                              width: int = 800,
-                              height: int = 600,
-                              embed_display: bool = True
-                              ) -> SVG:
+def draw_2d_highlight(mol: Chem.Mol,
+                      atom_sets: List[List[int]],
+                      colors: Optional[List[str]] = None,
+                      label: Optional[Literal['atomLabel', 'molAtomMapNumber', 'atomNote']] = None,
+                      compute_2d_coords: bool = True,
+                      add_stereo_annotation: bool = True,
+                      width: int = 800,
+                      height: int = 600,
+                      embed_display: bool = True
+                      ) -> SVG:
     """
     Create an SVG representation of the molecule with highlighted atom sets.
 
@@ -499,3 +517,30 @@ def mol_with_atom_index(mol: Chem.Mol, label: Literal['atomLabel', 'molAtomMapNu
         atom.SetProp(label, str(atom.GetIdx()))
     return mol_label
 
+
+def view_sample_trajectory(generated_sample, trajectory: Literal['x', 'x0']='x', frame_sleep: float=0.05,
+                           ref_mol = None,
+                           only_atoms = True,
+                           opacity = 0.6,
+                           color_scheme: Optional[str] = None,
+                           custom_carbon_color: Optional[str] = None,
+                           width = 800,
+                           height = 400,
+                           ):
+    """
+    View the trajectory of the generated sample.
+    Must set store_trajectory=True or store_trajectory_x0=True in the `generate` function.
+    """
+    view = py3Dmol.view(width=width, height=height)
+    suffix = f'_{trajectory}' if trajectory == 'x0' else ''
+    for i in range(len(generated_sample['trajectories' + suffix])):
+        view.clear()
+        view = draw_sample(generated_sample['trajectories' + suffix][i],
+                           only_atoms=only_atoms, view = view,
+                           ref_mol=ref_mol,
+                           opacity=opacity,
+                           color_scheme=color_scheme,
+                           custom_carbon_color=custom_carbon_color)
+        view.update()
+        time.sleep(frame_sleep)
+    return view
