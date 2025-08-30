@@ -516,14 +516,18 @@ def single_point_xtb_from_xyz(xyz_block: str,
                 output = subprocess.check_output(
                     ['xtb', input_file, '--scc', '--alpb', solvent, '--parallel', str(num_cores), '--chrg', str(charge)],
                     cwd = out_dir,
-                    universal_newlines=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     stderr=subprocess.STDOUT,
                 )
             else:
                 output = subprocess.check_output(
                     ['xtb', input_file, '--scc', '--parallel', str(num_cores), '--chrg', str(charge)],
                     cwd = out_dir,
-                    universal_newlines=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     stderr=subprocess.STDOUT,
                 )
 

@@ -1,13 +1,16 @@
 """
 Visualize pharmacophores and exit vectors with py3dmol.
 """
-from typing import Union, List
+from typing import Union, List, Literal, Optional
 from pathlib import Path
+from copy import deepcopy
+import time
 
 import numpy as np
 from matplotlib.colors import to_hex
 
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
 # drawing
 import py3Dmol
@@ -24,7 +27,7 @@ P_IND2TYPES = {i : p for i, p in enumerate(P_TYPES)}
 from shepherd_score.container import Molecule
 
 
-def __draw_arrow(view, color, anchor_pos, rel_unit_vec, flip: bool = False):
+def __draw_arrow(view, color, anchor_pos, rel_unit_vec, flip: bool = False, opacity: float = 1.0):
     """
     Add arrow
     """
@@ -35,12 +38,13 @@ def __draw_arrow(view, color, anchor_pos, rel_unit_vec, flip: bool = False):
         flip = 1.
         
     view.addArrow({
-        'start' : {k: anchor_pos[i] for i, k in enumerate(keys)},
-        'end' : {k: flip*2*rel_unit_vec[i] + anchor_pos[i] for i, k in enumerate(keys)},
+        'start' : {k: float(anchor_pos[i]) for i, k in enumerate(keys)},
+        'end' : {k: float(flip*2*rel_unit_vec[i] + anchor_pos[i]) for i, k in enumerate(keys)},
         'radius': .1,
         'radiusRatio':2.5,
         'mid':0.7,
-        'color':to_hex(color)
+        'color':to_hex(color),
+        'opacity': opacity
     })
 
 
@@ -54,8 +58,13 @@ def draw(mol: Union[Chem.Mol, str],
          add_SAS = False,
          view = None,
          removeHs = False,
+         opacity = 1.0,
+         opacity_features = 1.0,
+         color_scheme: Optional[str] = None,
+         custom_carbon_color: Optional[str] = None,
          width = 800,
-         height = 400):
+         height = 400
+):
     """
     Draw molecule with pharmacophore features and point cloud on surface accessible surface and electrostatics.
 
@@ -85,6 +94,15 @@ def draw(mol: Union[Chem.Mol, str],
         The view to draw the molecule to. If None, a new view will be created.
     removeHs : bool (default: False)
         Whether to remove the hydrogen atoms.
+    color_scheme : str (default: None)
+        Provide a py3Dmol color scheme string.
+        Example: 'whiteCarbon'
+    custom_carbon_color : str (default: None)
+        Provide hex color of the carbon atoms. Programmed are 'dark slate grey' and 'light steel blue'.
+    opacity : float (default: 1.0)
+        The opacity of the molecule.
+    opacity_features : float (default: 1.0)
+        The opacity of the pharmacophore features.
     width : int (default: 800)
         The width of the view.
     height : int (default: 400)
@@ -106,7 +124,22 @@ def draw(mol: Union[Chem.Mol, str],
         view.addModel(mb, 'sdf')
     else:
         view.addModel(mol, 'xyz')
-    view.setStyle({'model': 0}, {'stick': {'opacity': 1.0}})    
+    
+    if color_scheme is not None:
+        view.setStyle({'model': -1}, {'stick': {'colorscheme':color_scheme, 'opacity': opacity}})
+    elif custom_carbon_color is not None:
+        if custom_carbon_color == 'dark slate grey':
+            custom_carbon_color = '#2F4F4F'
+        elif custom_carbon_color == 'light steel blue':
+            custom_carbon_color = '#B0C4DE'
+        elif custom_carbon_color.startswith('#'):
+            pass
+        else:
+            raise ValueError(f'Expects hex code for custom_carbon_color, got "{custom_carbon_color}"')
+        view.setStyle({'model': -1, 'elem':'C'},{'stick':{'color':custom_carbon_color, 'opacity': opacity}})
+        view.setStyle({'model': -1, 'not':{'elem':'C'}},{'stick':{'opacity': opacity}})
+    else:
+        view.setStyle({'model': -1}, {'stick': {'opacity': opacity}})
     keys = ['x', 'y', 'z']
 
     if feats:
@@ -116,30 +149,36 @@ def draw(mol: Union[Chem.Mol, str],
             num_points = len(feats[fam]['P'])
             for i in range(num_points):
                 pos = feats[fam]['P'][i]
-                view.addSphere({'center':{keys[k]: pos[k] for k in range(3)},'radius':.5,'color':to_hex(clr)})
+                view.addSphere({'center':{keys[k]: float(pos[k]) for k in range(3)},
+                                'radius':.5,'color':to_hex(clr), 'opacity': opacity_features})
 
                 if fam not in ('Aromatic', 'Donor', 'Acceptor', 'Halogen'):
                     continue
 
                 vec = feats[fam]['V'][i]
-                __draw_arrow(view, clr, pos, vec, flip=False)
+                __draw_arrow(view, clr, pos, vec, flip=False, opacity=opacity_features)
 
                 if fam == 'Aromatic':
-                    __draw_arrow(view, clr, pos, vec, flip=True)
+                    __draw_arrow(view, clr, pos, vec, flip=True, opacity=opacity_features)
     
     if feats == {} and pharm_types is not None and pharm_ancs is not None and pharm_vecs is not None:
         for i, ptype in enumerate(pharm_types):
+            # Skip invalid pharmacophore type indices (like -1)
+            if ptype < 0 or ptype >= len(P_TYPES):
+                continue
+                
             fam = P_IND2TYPES[ptype]
             clr = feature_colors.get(fam, (.5,.5,.5))
-            view.addSphere({'center':{keys[k]: pharm_ancs[i][k] for k in range(3)},'radius':.5,'color':to_hex(clr)})
+            view.addSphere({'center':{keys[k]: float(pharm_ancs[i][k]) for k in range(3)},
+                            'radius':.5,'color':to_hex(clr), 'opacity': opacity_features})
             if fam not in ('Aromatic', 'Donor', 'Acceptor', 'Halogen'):
                 continue
 
             vec = pharm_vecs[i]
-            __draw_arrow(view, clr, pharm_ancs[i], vec, flip=False)
+            __draw_arrow(view, clr, pharm_ancs[i], vec, flip=False, opacity=opacity_features)
 
             if fam == 'Aromatic':
-                __draw_arrow(view, clr, pharm_ancs[i], vec, flip=True)
+                __draw_arrow(view, clr, pharm_ancs[i], vec, flip=True, opacity=opacity_features)
 
     if point_cloud is not None:
         clr = np.zeros(3)
@@ -153,7 +192,8 @@ def draw(mol: Union[Chem.Mol, str],
                     clr = esp_colors[i]
             else:
                 esp_colors = np.ones((len(point_cloud), 3))
-            view.addSphere({'center':{'x':pc[0], 'y':pc[1], 'z':pc[2]}, 'radius':.1,'color':to_hex(clr), 'opacity':0.5})
+            view.addSphere({'center':{'x':float(pc[0]), 'y':float(pc[1]), 'z':float(pc[2])}, 'radius':.1,'color':to_hex(clr), 'opacity':0.5})
+
     if add_SAS:
         view.addSurface(py3Dmol.SAS, {'opacity':0.5})
     view.zoomTo()
@@ -167,8 +207,11 @@ def draw_sample(
     only_atoms = False,
     opacity = 0.6,
     view = None,
+    color_scheme: Optional[str] = None,
+    custom_carbon_color: Optional[str] = None,
     width = 800,
-    height = 400):
+    height = 400,
+):
     """
     Draw generated ShEPhERD sample with pharmacophore features and point cloud on surface
     accessible surface and electrostatics optionally overlaid on the reference molecule.
@@ -184,12 +227,11 @@ def draw_sample(
                 'positions': np.ndarray (N, 3)
             },
             'x2': {
-                'charges': np.ndarray (N,),
+                'positions': np.ndarray (N, 3),
             },
             'x3': {
-                'types': np.ndarray (N,),
+                'charges': np.ndarray (N,),
                 'positions': np.ndarray (N, 3),
-                'directions': np.ndarray (N, 3)
             },
             'x4': {
                 'types': np.ndarray (N,),
@@ -205,6 +247,11 @@ def draw_sample(
         The opacity of the reference molecule.
     view : py3Dmol.view (default: None)
         The view to draw the molecule to. If None, a new view will be created.
+    color_scheme : str (default: None)
+        Provide a py3Dmol color scheme string.
+        Example: 'whiteCarbon'
+    custom_carbon_color : str (default: 'dark slate grey')
+        Provide hex color of the carbon atoms. Programmed are 'dark slate grey' and 'light steel blue'.
     width : int (default: 800)
         The width of the view.
     height : int (default: 400)
@@ -220,7 +267,7 @@ def draw_sample(
     if ref_mol is not None:
         mb = Chem.MolToMolBlock(ref_mol, confId=0)
         view.addModel(mb, 'sdf')
-        view.setStyle({'model': 0}, {'stick': {'opacity': opacity}})
+        view.setStyle({'model': -1}, {'stick': {'opacity': opacity}})
 
     xyz_block = get_xyz_content(generated_sample['x1']['atoms'], generated_sample['x1']['positions'])
     if xyz_block is None:
@@ -232,8 +279,10 @@ def draw_sample(
                 pharm_ancs=generated_sample['x4']['positions'] if not only_atoms else None,
                 pharm_vecs=generated_sample['x4']['directions'] if not only_atoms else None,
                 point_cloud=generated_sample['x3']['positions'] if not only_atoms else None,
-                esp=generated_sample['x2']['charges'] if not only_atoms else None,
-                view=view)
+                esp=generated_sample['x3']['charges'] if not only_atoms else None,
+                view=view,
+                color_scheme=color_scheme,
+                custom_carbon_color=custom_carbon_color if color_scheme is None else None)
     # return view.show() # view.show() to save memory
     return view
 
@@ -242,23 +291,32 @@ def draw_molecule(molecule: Molecule,
                   add_SAS = False,
                   view = None,
                   removeHs = False,
+                  color_scheme: Optional[str] = None,
+                  custom_carbon_color: Optional[str] = None,
+                  opacity: float = 1.0,
+                  opacity_features: float = 1.0,
+                  no_surface_points: bool = False,
                   width = 800,
                   height = 400):
     view = draw(molecule.mol,
                 pharm_types=molecule.pharm_types,
                 pharm_ancs=molecule.pharm_ancs,
                 pharm_vecs=molecule.pharm_vecs,
-                point_cloud=molecule.surf_pos,
-                esp=molecule.surf_esp,
+                point_cloud=molecule.surf_pos if not no_surface_points else None,
+                esp=molecule.surf_esp if not no_surface_points else None,
                 add_SAS=add_SAS,
                 view=view,
                 width=width,
                 height=height,
-                removeHs=removeHs)
+                removeHs=removeHs,
+                color_scheme=color_scheme,
+                custom_carbon_color=custom_carbon_color if color_scheme is None else None,
+                opacity=opacity,
+                opacity_features=opacity_features)
     return view
 
 
-def draw_pharmacophores(mol, view=None, width=800, height=400):
+def draw_pharmacophores(mol, view=None, width=800, height=400, opacity=1.0, opacity_features=1.0):
     """
     Generate the pharmacophores and visualize them.
     """
@@ -266,7 +324,9 @@ def draw_pharmacophores(mol, view=None, width=800, height=400):
          feats = get_pharmacophores_dict(mol),
          view = view,
          width = width,
-         height = height)
+         height = height,
+         opacity=opacity,
+         opacity_features=opacity_features)
 
 
 def create_pharmacophore_file_for_chimera(mol: Chem.Mol,
@@ -321,11 +381,12 @@ def create_pharmacophore_file_for_chimera(mol: Chem.Mol,
     Chem.MolToMolFile(mol, save_dir_ / f'x1_{id}.sdf')
 
 
-def draw_2d(ref_mol: Chem.Mol,
-            mols: List[Chem.Mol | None],
-            mols_per_row: int = 5,
-            use_svg: bool = True,
-            ):
+def draw_2d_valid(ref_mol: Chem.Mol,
+                  mols: List[Chem.Mol | None],
+                  mols_per_row: int = 5,
+                  use_svg: bool = True,
+                  find_atomic_overlap: bool = True,
+                  ):
     """
     Draw 2D grid image of the reference molecule and a list of corresponding molecules.
     It will align the molecules to the reference molecule using the MCS and highlight
@@ -358,33 +419,37 @@ def draw_2d(ref_mol: Chem.Mol,
         return Chem.Draw.MolToImage(temp_mol, useSVG=True, legend='Target | Found no valid molecules')
 
     valid_inds = [i for i in range(len(mols)) if mols[i] is not None]
-    params = rdFMCS.MCSParameters()
-    params.BondCompareParameters.CompleteRingsOnly = True
-    params.AtomCompareParameters.CompleteRingsOnly = True
-    # find the MCS
-    mcs = rdFMCS.FindMCS([temp_mol] + valid_mols, params)
-    # get query molecule from the MCS, we will use this as a template for alignment
-    qmol = mcs.queryMol
-    # generate coordinates for the template
-    AllChem.Compute2DCoords(qmol)
-    # generate coordinates for the molecules using the template
-    [AllChem.GenerateDepictionMatching2DStructure(m, qmol) for m in valid_mols]
+    if find_atomic_overlap:
+        params = rdFMCS.MCSParameters()
+        params.BondCompareParameters.CompleteRingsOnly = True
+        params.AtomCompareParameters.CompleteRingsOnly = True
+        # find the MCS
+        mcs = rdFMCS.FindMCS([temp_mol] + valid_mols, params)
+        # get query molecule from the MCS, we will use this as a template for alignment
+        qmol = mcs.queryMol
+        # generate coordinates for the template
+        AllChem.Compute2DCoords(qmol)
+        # generate coordinates for the molecules using the template
+        [AllChem.GenerateDepictionMatching2DStructure(m, qmol) for m in valid_mols]
     
     return Chem.Draw.MolsToGridImage(
         [temp_mol]+ valid_mols,
-        highlightAtomLists=[temp_mol.GetSubstructMatch(mcs.queryMol)]+[m.GetSubstructMatch(mcs.queryMol) for m in valid_mols],
+        highlightAtomLists=[temp_mol.GetSubstructMatch(mcs.queryMol)]+[m.GetSubstructMatch(mcs.queryMol) for m in valid_mols] if find_atomic_overlap else None,
         molsPerRow=mols_per_row,
         legends=['Target'] + [f'Sample {i}' for i in valid_inds],
         useSVG=use_svg)
 
 
-def create_highlighted_mol_svg(mol: Chem.Mol,
-                               atom_sets: List[List[int]],
-                               colors: Union[List[str], None] = None,
-                               add_atom_indices: bool = False,
-                               width: int = 800,
-                               height: int = 600
-                               ) -> SVG:
+def draw_2d_highlight(mol: Chem.Mol,
+                      atom_sets: List[List[int]],
+                      colors: Optional[List[str]] = None,
+                      label: Optional[Literal['atomLabel', 'molAtomMapNumber', 'atomNote']] = None,
+                      compute_2d_coords: bool = True,
+                      add_stereo_annotation: bool = True,
+                      width: int = 800,
+                      height: int = 600,
+                      embed_display: bool = True
+                      ) -> SVG:
     """
     Create an SVG representation of the molecule with highlighted atom sets.
 
@@ -396,8 +461,8 @@ def create_highlighted_mol_svg(mol: Chem.Mol,
         The list of atom sets to highlight.
     colors : List[str]
         The list of colors to use for the atom sets.
-    add_atom_indices : bool
-        Whether to add atom indices to the molecule.
+    label : Literal['atomLabel', 'molAtomMapNumber', 'atomNote']
+        The label to use for the atom indices.
     width : int
         The width of the SVG image.
     height : int
@@ -424,14 +489,59 @@ def create_highlighted_mol_svg(mol: Chem.Mol,
     drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
     
     opts = drawer.drawOptions()
-    opts.addStereoAnnotation = True
-    opts.addAtomIndices = add_atom_indices
+    opts.addStereoAnnotation = add_stereo_annotation
     
-    drawer.DrawMolecule(mol, 
-                       highlightAtoms=list(highlight_atoms.keys()),
-                       highlightAtomColors=highlight_colors)
+    if label is not None:
+        mol_copy = mol_with_atom_index(mol, label=label)
+    else:
+        mol_copy = deepcopy(mol)
+
+    if compute_2d_coords:
+        AllChem.Compute2DCoords(mol_copy)
+
+    drawer.DrawMolecule(mol_copy, 
+                        highlightAtoms=list(highlight_atoms.keys()),
+                        highlightAtomColors=highlight_colors)
     
     drawer.FinishDrawing()
     svg = drawer.GetDrawingText()
     
-    return SVG(svg)
+    if embed_display:
+        return SVG(svg)
+    else:
+        return svg
+
+
+def mol_with_atom_index(mol: Chem.Mol, label: Literal['atomLabel', 'molAtomMapNumber', 'atomNote']='atomLabel'):
+    mol_label = deepcopy(mol)
+    for atom in mol_label.GetAtoms():
+        atom.SetProp(label, str(atom.GetIdx()))
+    return mol_label
+
+
+def view_sample_trajectory(generated_sample, trajectory: Literal['x', 'x0']='x', frame_sleep: float=0.05,
+                           ref_mol = None,
+                           only_atoms = True,
+                           opacity = 0.6,
+                           color_scheme: Optional[str] = None,
+                           custom_carbon_color: Optional[str] = None,
+                           width = 800,
+                           height = 400,
+                           ):
+    """
+    View the trajectory of the generated sample.
+    Must set store_trajectory=True or store_trajectory_x0=True in the `generate` function.
+    """
+    view = py3Dmol.view(width=width, height=height)
+    suffix = f'_{trajectory}' if trajectory == 'x0' else ''
+    for i in range(len(generated_sample['trajectories' + suffix])):
+        view.clear()
+        view = draw_sample(generated_sample['trajectories' + suffix][i],
+                           only_atoms=only_atoms, view = view,
+                           ref_mol=ref_mol,
+                           opacity=opacity,
+                           color_scheme=color_scheme,
+                           custom_carbon_color=custom_carbon_color)
+        view.update()
+        time.sleep(frame_sleep)
+    return view
