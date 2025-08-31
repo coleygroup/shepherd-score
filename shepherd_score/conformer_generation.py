@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from tqdm import tqdm
 import uuid
-from typing import Optional
+from typing import Optional, List
 import contextlib
 
 import rdkit
@@ -550,14 +550,17 @@ def single_point_xtb_from_xyz(xyz_block: str,
         return energy, charges
 
 
-def optimize_conformer_ensemble_with_xtb(conformers,
-                                         solvent: Optional[str] = None,
-                                         num_processes: int = 8,
-                                         num_workers: int = 1,
-                                         charge: int = 0,
-                                         temp_dir: str = '',
-                                         verbose: bool = False,
-):
+def _optimize_conformer_worker(params):
+    """Worker function for multiprocessing - must be at module level for pickling"""
+    return optimize_conformer_with_xtb(*params)
+
+def optimize_conformer_ensemble_with_xtb(conformers: List[rdkit.Chem.Mol],
+                                       solvent: Optional[str] = None,
+                                       num_processes: int = 1,
+                                       num_workers: int = 1,
+                                       charge: int = 0,
+                                       temp_dir: str = '',
+                                       verbose: bool = False):
     """
     GFN2-XTB geometry optimization for a list of conformers.
 
@@ -608,17 +611,15 @@ def optimize_conformer_ensemble_with_xtb(conformers,
         return conformers_opt, energies_opt, charges_opt
 
     # Parallel
-    from multiprocessing import Pool
+    import multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
 
     args = [
         (conf, solvent, num_processes, charge, temp_dir) for conf in conformers
     ]
 
-    def _worker(params):
-        return optimize_conformer_with_xtb(*params)
-
-    with Pool(processes=num_workers) as pool:
-        iterator = pool.imap(_worker, args)
+    with mp.Pool(processes=num_workers) as pool:
+        iterator = pool.imap(_optimize_conformer_worker, args)
         if verbose:
             iterator = tqdm(iterator, total=len(args), desc='XTB opt')
         results = list(iterator)
