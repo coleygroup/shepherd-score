@@ -1033,10 +1033,6 @@ class MoleculePair:
         accepted_keys = ('jax', 'jnp', 'torch', 'pytorch', 'np', 'numpy')
         if use not in accepted_keys:
             raise ValueError(f"`use` must be in {accepted_keys}. Instead {use} was passed.")
-        if use in ('jax', 'jnp'):
-            raise NotImplementedError(
-                f'Jax version of alignment has not been implemented yet. Use NumPy or PyTorch version by setting `use`.'
-            )
         elif use in ('torch', 'pytorch'):
             # PyTorch
             score = get_overlap_pharm(
@@ -1064,6 +1060,27 @@ class MoleculePair:
                 only_extended=only_extended
             )
             return score
+        elif use in ('jax', 'jnp'):
+            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
+                try:
+                    import jax.numpy as jnp
+                except ImportError:
+                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
+            import jax.numpy as jnp
+            from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax
+
+            score = get_overlap_pharm_jax(
+                ptype_1=jnp.array(self.ref_molec.pharm_types),
+                ptype_2=jnp.array(self.fit_molec.pharm_types),
+                anchors_1=jnp.array(self.ref_molec.pharm_ancs),
+                anchors_2=jnp.array(self.fit_molec.pharm_ancs),
+                vectors_1=jnp.array(self.ref_molec.pharm_vecs),
+                vectors_2=jnp.array(self.fit_molec.pharm_vecs),
+                similarity=similarity,
+                extended_points=extended_points,
+                only_extended=only_extended
+            )
+            return np.array(score)
     
 
     def get_transformed_mol_and_feats(self,
