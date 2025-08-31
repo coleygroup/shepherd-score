@@ -450,7 +450,7 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
 
     # Optimization loop
     if verbose:
-        print(f'Initial shape similarity score: {get_overlap_jax(ref_points, fit_points, alpha):.3}')
+        print(f'Initial shape similarity score: {get_overlap_jax(ref_points, fit_points, alpha):.3f}')
     last_loss = 1
     counter = 0
     for step in range(max_num_steps):
@@ -476,13 +476,13 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
                                   alpha)
     if num_repeats == 1:
         if verbose:
-            print(f'Optimized shape similarity score: {scores:.3}')
+            print(f'Optimized shape similarity score: {scores:.3f}')
         best_alignment = aligned_points
         best_transform = SE3_transform
         best_score = scores
     else:
         if verbose:
-            print(f'Optimized shape similarity score -- max: {scores.max():3} | mean: {scores.mean():.3} | min: {scores.min():3}')
+            print(f'Optimized shape similarity score -- max: {scores.max():3f} | mean: {scores.mean():.3f} | min: {scores.min():3f}')
         best_idx = jnp.argmax(scores)
         best_alignment = aligned_points.at[best_idx].get()
         best_transform = SE3_transform.at[best_idx].get()
@@ -652,7 +652,7 @@ def optimize_ROCS_esp_overlay_jax(ref_points: Array,
 
     # Optimization loop
     if verbose:
-        print(f'Initial shape similarity score: {get_overlap_esp_jax(ref_points, fit_points, ref_charges, fit_charges, alpha, lam):.3}')
+        print(f'Initial shape similarity score: {get_overlap_esp_jax(ref_points, fit_points, ref_charges, fit_charges, alpha, lam):.3f}')
     last_loss = 1
     counter = 0
     for step in range(max_num_steps):
@@ -680,13 +680,13 @@ def optimize_ROCS_esp_overlay_jax(ref_points: Array,
                                       lam)
     if num_repeats == 1:
         if verbose:
-            print(f'Optimized shape+ESP similarity score: {scores:.3}')
+            print(f'Optimized shape+ESP similarity score: {scores:.3f}')
         best_alignment = aligned_points
         best_transform = SE3_transform
         best_score = scores
     else:
         if verbose:
-            print(f'Optimized shape+ESP similarity score -- max: {scores.max():3} | mean: {scores.mean():.3} | min: {scores.min():3}')
+            print(f'Optimized shape+ESP similarity score -- max: {scores.max():3f} | mean: {scores.mean():.3f} | min: {scores.min():3f}')
         best_idx = jnp.argmax(scores)
         best_alignment = aligned_points.at[best_idx].get()
         best_transform = SE3_transform.at[best_idx].get()
@@ -955,7 +955,7 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
                                          lam,
                                          probe_radius,
                                          esp_weight)
-        print(f'Initial ShaEP-inspired similarity score: {init_score:.3}')
+        print(f'Initial ShaEP-inspired similarity score: {init_score:.3f}')
     last_loss = 1
     counter = 0
     for step in range(max_num_steps):
@@ -1011,13 +1011,13 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
                                   esp_weight)
     if num_repeats == 1:
         if verbose:
-            print(f'Optimized ShaEP inspired similarity score: {scores:.3}')
+            print(f'Optimized ShaEP inspired similarity score: {scores:.3f}')
         best_alignment = aligned_points
         best_transform = SE3_transform
         best_score = scores
     else:
         if verbose:
-            print(f'Optimized ShaEP inspired similarity score -- max: {scores.max():3} | mean: {scores.mean():.3} | min: {scores.min():3}')
+            print(f'Optimized ShaEP inspired similarity score -- max: {scores.max():3f} | mean: {scores.mean():.3f} | min: {scores.min():3f}')
         best_idx = jnp.argmax(scores)
         best_alignment = aligned_points.at[best_idx].get()
         best_transform = SE3_transform.at[best_idx].get()
@@ -1128,7 +1128,7 @@ def optimize_pharm_overlay_jax(ref_pharms: Array,
 
     if verbose:
         init_score = get_overlap_pharm_jax(ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors, similarity, extended_points, only_extended)
-        print(f'Initial pharmacophore similarity score: {init_score:.3}')
+        print(f'Initial pharmacophore similarity score: {init_score:.3f}')
     
     last_loss = 1
     counter = 0
@@ -1156,14 +1156,14 @@ def optimize_pharm_overlay_jax(ref_pharms: Array,
 
     if current_num_repeats == 1:
         if verbose:
-            print(f'Optimized pharmacophore similarity score: {scores.squeeze():.3}')
+            print(f'Optimized pharmacophore similarity score: {scores.squeeze():.3f}')
         best_alignment = aligned_anchors.squeeze()
         best_aligned_vectors = aligned_vectors.squeeze()
         best_transform = SE3_transform.squeeze()
         best_score = scores.squeeze()
     else:
         if verbose:
-            print(f'Optimized pharmacophore similarity score -- max: {scores.max():.3} | mean: {scores.mean():.3} | min: {scores.min():.3}')
+            print(f'Optimized pharmacophore similarity score -- max: {scores.max():.3f} | mean: {scores.mean():.3f} | min: {scores.min():.3f}')
         best_idx = jnp.argmax(scores)
         best_alignment = aligned_anchors[best_idx]
         best_aligned_vectors = aligned_vectors[best_idx]

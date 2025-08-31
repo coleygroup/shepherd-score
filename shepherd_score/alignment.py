@@ -365,7 +365,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
 
     # Optimization loop
     if verbose:
-        print(f'Initial shape similarity score: {get_overlap(ref_points, fit_points, alpha):.3}')
+        print(f'Initial shape similarity score: {get_overlap(ref_points, fit_points, alpha):.3f}')
     last_loss = 1
     counter = 0
     # ref_points will be broadcast by the objective/scoring function
@@ -406,13 +406,13 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
                          alpha=alpha)
     if num_repeats == 1:
         if verbose:
-            print(f'Optimized shape similarity score: {scores:.3}')
+            print(f'Optimized shape similarity score: {scores:.3f}')
         best_alignment = aligned_points.cpu()
         best_transform = SE3_transform.cpu()
         best_score = scores.cpu()
     else:
         if verbose:
-            print(f'Optimized shape similarity score -- max: {scores.max():3} | mean: {scores.mean():.3} | min: {scores.min():3}')
+            print(f'Optimized shape similarity score -- max: {scores.max():.3f} | mean: {scores.mean():.3f} | min: {scores.min():.3f}')
         best_idx = torch.argmax(scores.detach().cpu())
         best_alignment = aligned_points.cpu()[best_idx]
         best_transform = SE3_transform.cpu()[best_idx]
@@ -559,7 +559,7 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
 
     # Optimization loop
     if verbose:
-        print(f'Initial ESP similarity score: {get_overlap_esp(ref_points, fit_points, ref_charges, fit_charges, alpha, lam):.3}')
+        print(f'Initial ESP similarity score: {get_overlap_esp(ref_points, fit_points, ref_charges, fit_charges, alpha, lam):.3f}')
     
     last_loss = torch.tensor(float('inf'), device=ref_points.device) # Initialize with a high value
     counter = 0
@@ -618,14 +618,14 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
     
     if current_num_repeats == 1:
         if verbose:
-            print(f'Optimized ESP similarity score: {scores.item():.3}')
+            print(f'Optimized ESP similarity score: {scores.item():.3f}')
         best_alignment = aligned_points.cpu()
         best_transform = SE3_transform.cpu()
         best_score = scores.cpu()
     else:
         best_idx = torch.argmax(scores.detach().cpu())
         if verbose:
-            print(f'Optimized ESP similarity score -- max: {scores[best_idx].item():.3} | mean: {scores.mean().item():.3} | min: {scores.min().item():.3}')
+            print(f'Optimized ESP similarity score -- max: {scores[best_idx].item():.3f} | mean: {scores.mean().item():.3f} | min: {scores.min().item():.3f}')
         best_alignment = aligned_points.cpu()[best_idx]
         best_transform = SE3_transform.cpu()[best_idx]
         best_score = scores.cpu()[best_idx]
@@ -749,7 +749,7 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
             probe_radius=probe_radius,
             esp_weight=esp_weight
         )
-        print(f'Initial ESP-combo score: {init_score.item():.3}')
+        print(f'Initial ESP-combo score: {init_score.item():.3f}')
     
     last_loss = torch.tensor(float('inf'), device=ref_points.device)
     counter = 0
@@ -835,14 +835,14 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
 
     if current_num_repeats == 1:
         if verbose:
-            print(f'Optimized ESP-combo score: {scores.item():.3}')
+            print(f'Optimized ESP-combo score: {scores.item():.3f}')
         best_alignment = aligned_fit_points.cpu() # Consistent: return aligned surface points
         best_transform = SE3_transform.cpu()
         best_score = scores.cpu()
     else:
         best_idx = torch.argmax(scores.detach().cpu())
         if verbose:
-            print(f'Optimized ESP-combo score -- max: {scores[best_idx].item():.3} | mean: {scores.mean().item():.3} | min: {scores.min().item():.3}')
+            print(f'Optimized ESP-combo score -- max: {scores[best_idx].item():.3f} | mean: {scores.mean().item():.3f} | min: {scores.min().item():.3f}')
         best_alignment = aligned_fit_points.cpu()[best_idx]
         best_transform = SE3_transform.cpu()[best_idx]
         best_score = scores.cpu()[best_idx]
@@ -1036,7 +1036,7 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
             extended_points=extended_points,
             only_extended=only_extended
         )
-        print(f'Initial pharmacophore similarity score: {init_score:.3}')
+        print(f'Initial pharmacophore similarity score: {init_score:.3f}')
     last_loss = 1
     counter = 0
     ref_pharms_rep = ref_pharms.repeat((num_repeats,1)).squeeze(0)
@@ -1095,14 +1095,14 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
     )
     if num_repeats == 1:
         if verbose:
-            print(f'Optimized pharmacophore similarity score: {scores:.3}')
+            print(f'Optimized pharmacophore similarity score: {scores:.3f}')
         best_alignment = aligned_anchors.cpu()
         best_aligned_vectors = aligned_vectors.cpu()
         best_transform = SE3_transform.cpu()
         best_score = scores.cpu()
     else:
         if verbose:
-            print(f'Optimized pharmacophore similarity score -- max: {scores.max():3} | mean: {scores.mean():.3} | min: {scores.min():3}')
+            print(f'Optimized pharmacophore similarity score -- max: {scores.max():.3f} | mean: {scores.mean():.3f} | min: {scores.min():.3f}')
         best_idx = torch.argmax(scores.detach().cpu())
         best_alignment = aligned_anchors.cpu()[best_idx]
         best_aligned_vectors = aligned_vectors.cpu()[best_idx]
