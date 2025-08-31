@@ -167,17 +167,14 @@ def _VAB_2nd_order_cosine_jax_mask(centers_1: Array,
                                    ) -> Array:
     """
     2nd order volume overlap of AB weighted by cosine similarity (JAX version) - implementation part.
+    Vectors are assumed to be normalized.
     """
     R2 = jax_sq_cdist(centers_1, centers_2)  # (N1, N2)
     M2 = _mask_prod_jax(mask_1, mask_2)
     term_common = (jnp.pi**1.5) / ((2 * alpha)**1.5)
 
-    # Normalize vectors
-    vec1_norm = vectors_1 / jnp.linalg.norm(vectors_1, axis=-1, keepdims=True)
-    vec2_norm = vectors_2 / jnp.linalg.norm(vectors_2, axis=-1, keepdims=True)
-
     # Cosine similarity: (N1, N2)
-    V2_sim = jnp.dot(vec1_norm, vec2_norm.T)
+    V2_sim = jnp.dot(vectors_1, vectors_2.T)
 
     V2_sim = jax.lax.cond(
         allow_antiparallel,
