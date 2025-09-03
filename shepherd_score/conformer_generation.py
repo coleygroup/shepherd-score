@@ -289,7 +289,7 @@ def optimize_conformer_with_xtb(conformer: rdkit.Chem.Mol,
             out_dir.mkdir(exist_ok=True)
 
             input_file = 'input_mol.xyz'
-            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
+            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, str(out_dir/input_file))
 
             if solvent is not None:
                 subprocess.check_call(
@@ -447,7 +447,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: rdkit.Chem.Mol,
             out_dir.mkdir(exist_ok=True)
 
             input_file = 'input_mol.xyz'
-            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, out_dir/input_file)
+            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, str(out_dir/input_file))
 
             if solvent is not None:
                 subprocess.check_call(
