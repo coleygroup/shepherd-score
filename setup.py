@@ -8,7 +8,7 @@ REQUIREMENTS = [
 
 setup(
     name="shepherd_score",
-    version="1.1.2",
+    version="1.1.3",
     packages=find_packages(),
     install_requires=REQUIREMENTS,  # Add your dependencies here
     author="Kento Abeywardane",

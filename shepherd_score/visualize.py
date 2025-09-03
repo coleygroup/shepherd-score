@@ -205,6 +205,7 @@ def draw_sample(
     generated_sample: dict,
     ref_mol = None,
     only_atoms = False,
+    model_type: Literal['all', 'x2', 'x3', 'x4'] = 'all',
     opacity = 0.6,
     view = None,
     color_scheme: Optional[str] = None,
@@ -259,6 +260,9 @@ def draw_sample(
     """
     if 'x1' not in generated_sample or 'atoms' not in generated_sample['x1'] or 'positions' not in generated_sample['x1']:
         raise ValueError('Generated sample does not contain atoms and positions in expected dict.')
+
+    if model_type not in ['all', 'x2', 'x3', 'x4']:
+        raise ValueError(f'Invalid model type: {model_type}')
     
     if view is None:
         view = py3Dmol.view(width=width, height=height)
@@ -273,13 +277,23 @@ def draw_sample(
     if xyz_block is None:
         return view
 
+    surf_pos = generated_sample['x3']['positions'] if model_type in ['all', 'x3'] else None
+    if model_type == 'x2':
+        surf_pos = generated_sample['x2']['positions']
+    
+    surf_esp = generated_sample['x3']['charges'] if model_type in ['all', 'x3'] else None
+
+    pharm_types = generated_sample['x4']['types'] if model_type in ['all', 'x4'] else None
+    pharm_ancs = generated_sample['x4']['positions'] if model_type in ['all', 'x4'] else None
+    pharm_vecs = generated_sample['x4']['directions'] if model_type in ['all', 'x4'] else None
+
     view = draw(xyz_block,
                 feats={},
-                pharm_types=generated_sample['x4']['types'] if not only_atoms else None,
-                pharm_ancs=generated_sample['x4']['positions'] if not only_atoms else None,
-                pharm_vecs=generated_sample['x4']['directions'] if not only_atoms else None,
-                point_cloud=generated_sample['x3']['positions'] if not only_atoms else None,
-                esp=generated_sample['x3']['charges'] if not only_atoms else None,
+                pharm_types=pharm_types if not only_atoms else None,
+                pharm_ancs=pharm_ancs if not only_atoms else None,
+                pharm_vecs=pharm_vecs if not only_atoms else None,
+                point_cloud=surf_pos if not only_atoms else None,
+                esp=surf_esp if not only_atoms else None,
                 view=view,
                 color_scheme=color_scheme,
                 custom_carbon_color=custom_carbon_color if color_scheme is None else None)
