@@ -22,7 +22,10 @@ else:
     from SA_Score import sascorer
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
+from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 from rdkit.DataStructs import TanimotoSimilarity
+
+from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 
