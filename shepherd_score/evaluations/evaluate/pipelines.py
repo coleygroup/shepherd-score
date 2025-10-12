@@ -5,13 +5,10 @@ Evaluation pipeline classes for generated molecules.
 import sys
 import os
 import logging
-import traceback
 from typing import Union, List, Tuple, Optional, Dict, Any, Literal
 from pathlib import Path
 from tqdm import tqdm
 import multiprocessing
-from copy import deepcopy
-import itertools
 from importlib.metadata import distributions
 
 import numpy as np
@@ -25,10 +22,7 @@ else:
     from SA_Score import sascorer
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
-from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 from rdkit.DataStructs import TanimotoSimilarity
-
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 
@@ -118,6 +112,8 @@ class UnconditionalEvalPipeline:
         self.frac_unique_post_opt = None
         self.avg_graph_diversity = None
         self.graph_similarity_matrix = None
+        self.avg_graph_diversity_post_opt = None
+        self.graph_similarity_matrix_post_opt = None
 
 
     def evaluate(self,
@@ -205,7 +201,8 @@ class UnconditionalEvalPipeline:
         self.frac_consistent = self.get_frac_consistent_graph()
         self.frac_unique = self.get_frac_unique()
         self.frac_unique_post_opt = self.get_frac_unique_post_opt()
-        self.avg_graph_diversity, self.graph_similarity_matrix = self.get_diversity()
+        self.avg_graph_diversity, self.graph_similarity_matrix = self.get_diversity(post_opt=False)
+        self.avg_graph_diversity_post_opt, self.graph_similarity_matrix_post_opt = self.get_diversity(post_opt=True)
 
 
     def _process_single_result(self, res: Dict[str, Any], i: int):
@@ -287,7 +284,7 @@ class UnconditionalEvalPipeline:
             frac = 0.
         return frac
 
-    def get_diversity(self) -> Tuple[float, np.ndarray]:
+    def get_diversity(self, post_opt=False) -> Tuple[float, np.ndarray]:
         """
         Get average molecular graph diversity (average dissimilarity) as defined by GenBench3D (arXiv:2407.04424)
         and the tanimioto similarity matrix of fingerprints.
@@ -298,12 +295,18 @@ class UnconditionalEvalPipeline:
             avg_diversity : float [0,1] where 1 is more diverse (more dissimilar)
             similarity_matrix : np.ndarray (N,N) similarity matrix
         """
-        if self.num_consistent_graph == 0:
-            return None, None
-        similarity_matrix = np.zeros((self.num_consistent_graph, self.num_consistent_graph))
+        if post_opt:
+            if self.num_valid_post_opt == 0:
+                return None, None
+            fps = [fp for fp in self.morgan_fps_post_opt if fp is not None]
+        else:
+            if self.num_valid == 0:
+                return None, None
+            fps = [fp for fp in self.morgan_fps if fp is not None]
+        similarity_matrix = np.zeros((len(fps), len(fps)))
         running_avg_diversity_sum = 0
-        for i, fp1 in enumerate(self.morgan_fps):
-            for j, fp2 in enumerate(self.morgan_fps):
+        for i, fp1 in enumerate(fps):
+            for j, fp2 in enumerate(fps):
                 if i == j:
                     similarity_matrix[i,j] = 1
                 if i > j: # symmetric
@@ -312,7 +315,7 @@ class UnconditionalEvalPipeline:
                     similarity_matrix[i,j] = TanimotoSimilarity(fp1, fp2)
                     running_avg_diversity_sum += (1 - similarity_matrix[i,j])
         # from GenBench3D: arXiv:2407.04424
-        avg_diversity = running_avg_diversity_sum / ((self.num_consistent_graph - 1)*self.num_consistent_graph / 2)
+        avg_diversity = running_avg_diversity_sum / ((len(fps) - 1)*len(fps) / 2)
         return avg_diversity, similarity_matrix
 
 
@@ -774,7 +777,7 @@ def resample_surf_scores(ref_molec: Molecule,
     return surf_scores, esp_scores
 
 
-class ConsistencyEvalPipeline:
+class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
     """ Evaluation pipeline for unconditionally generated molecules with consistency check. """
 
     def __init__(self,
@@ -814,9 +817,10 @@ class ConsistencyEvalPipeline:
         random_molblock_charges : Optional[List[Tuple]] Contains molblock_charges to randomly
             select from, and align with (re-)generated sample.
         """
-        self.generated_mols = generated_mols
-        self.num_generated_mols = len(self.generated_mols)
-        self.solvent = solvent
+        # Initialize parent class (UnconditionalEvalPipeline)
+        super().__init__(generated_mols=generated_mols, solvent=solvent)
+        
+        # Consistency-specific attributes
         self.probe_radius = probe_radius
         self.random_molblock_charges = random_molblock_charges
         if self.random_molblock_charges is not None:
@@ -832,7 +836,7 @@ class ConsistencyEvalPipeline:
             assert self.num_generated_mols == len(generated_surf_esp)
         self.generated_surf_esp = generated_surf_esp
         if self.generated_surf_esp is not None and self.generated_surf_points is None:
-            raise ValueError(f'`generated_surf_pos` must also be provided if `generated_surf_esp` is given.')
+            raise ValueError('`generated_surf_pos` must also be provided if `generated_surf_esp` is given.')
 
         if generated_pharm_feats is not None: # unpack
             self.generated_pharm_feats = generated_pharm_feats
@@ -841,39 +845,7 @@ class ConsistencyEvalPipeline:
 
         self.pharm_multi_vector = pharm_multi_vector
 
-        self.smiles = [None] * self.num_generated_mols
-        self.smiles_post_opt = [None] * self.num_generated_mols
-        self.molblocks = [None] * self.num_generated_mols
-        self.molblocks_post_opt = [None] * self.num_generated_mols
-        self.num_valid = 0
-        self.num_valid_post_opt = 0
-        self.num_consistent_graph = 0
-
-        # Individual properties
-        self.strain_energies = np.empty(self.num_generated_mols)
-        self.rmsds = np.empty(self.num_generated_mols)
-        self.SA_scores = np.empty(self.num_generated_mols)
-        self.logPs = np.empty(self.num_generated_mols)
-        self.QEDs = np.empty(self.num_generated_mols)
-        self.fsp3s = np.empty(self.num_generated_mols)
-        self.morgan_fps = [None] * self.num_generated_mols
-
-        self.SA_scores_post_opt = np.empty(self.num_generated_mols)
-        self.logPs_post_opt = np.empty(self.num_generated_mols)
-        self.QEDs_post_opt = np.empty(self.num_generated_mols)
-        self.fsp3s_post_opt = np.empty(self.num_generated_mols)
-        self.morgan_fps_post_opt = [None] * self.num_generated_mols
-
-        # Overall metrics
-        self.frac_valid = None
-        self.frac_valid_post_opt = None
-        self.frac_consistent = None
-        self.frac_unique = None
-        self.frac_unique_post_opt = None
-        self.avg_graph_diversity = None
-        self.graph_similarity_matrix = None
-        self.avg_graph_diversity_post_opt = None
-        self.graph_similarity_matrix_post_opt = None
+        # Additional overall metrics for post-opt diversity
         
         # 3D similarity scores
         self.sims_surf_consistent = np.empty(self.num_generated_mols)
@@ -995,47 +967,10 @@ class ConsistencyEvalPipeline:
 
     def _process_single_result(self, res: Dict[str, Any], i: int):
         """Helper method to process a single evaluation result."""
-        if res['is_valid']:
-            self.num_valid += 1
-        self.smiles[i] = res['smiles']
-        self.molblocks[i] = res['molblock']
+        # Call parent class method to handle all standard processing
+        super()._process_single_result(res, i)
 
-        if res['is_valid_post_opt']:
-            self.num_valid_post_opt += 1
-        self.smiles_post_opt[i] = res['smiles_post_opt']
-        self.molblocks_post_opt[i] = res['molblock_post_opt']
-
-        if res['molblock'] is not None:
-            try:
-                mol_pre = Chem.MolFromMolBlock(res['molblock'], removeHs=False)
-                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_pre))
-                self.morgan_fps[i] = fp
-            except Exception:
-                self.morgan_fps[i] = None
-
-        if res['molblock_post_opt'] is not None:
-            try:
-                mol_post_opt = Chem.MolFromMolBlock(res['molblock_post_opt'], removeHs=False)
-                fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(mol_post_opt))
-                self.morgan_fps_post_opt[i] = fp
-            except Exception:
-                self.morgan_fps_post_opt[i] = None
-
-        self.num_consistent_graph += 1 if res['is_graph_consistent'] else 0
-
-        self.strain_energies[i] = res['strain_energy']
-        self.rmsds[i] = res['rmsd']
-        self.SA_scores[i] = res['SA_score']
-        self.QEDs[i] = res['QED']
-        self.logPs[i] = res['logP']
-        self.fsp3s[i] = res['fsp3']
-
-        self.SA_scores_post_opt[i] = res['SA_score_post_opt']
-        self.QEDs_post_opt[i] = res['QED_post_opt']
-        self.logPs_post_opt[i] = res['logP_post_opt']
-        self.fsp3s_post_opt[i] = res['fsp3_post_opt']
-
-        # Consistency 3D similarity attributes
+        # Consistency-specific 3D similarity attributes
         self.sims_surf_consistent[i] = res['sim_surf_consistent']
         self.sims_esp_consistent[i] = res['sim_esp_consistent']
         self.sims_pharm_consistent[i] = res['sim_pharm_consistent']
@@ -1111,76 +1046,6 @@ class ConsistencyEvalPipeline:
             consis_eval, num_samples, num_surf_points
         )
             
-
-    def get_attr(self, obj, attr: str):
-        """ Gets an attribute of `obj` via the string name. If it is None, then return np.nan """
-        val = getattr(obj, attr)
-        if val is None:
-            return np.nan
-        else:
-            return val
-        
-    def get_frac_valid(self):
-        """ Fraction of generated molecules that were valid. """
-        return self.num_valid / self.num_generated_mols
-
-    def get_frac_valid_post_opt(self):
-        """ Fraction of generated molecules that were valid after relaxation. """
-        return self.num_valid_post_opt / self.num_generated_mols
-
-    def get_frac_consistent_graph(self):
-        """ Fraction of generated molecules that were consistent before and after relaxation. """
-        return self.num_consistent_graph / self.num_generated_mols
-    
-    def get_frac_unique(self):
-        """ Fraction of unique smiles extracted pre-optimization in the generated set. """
-        if self.num_valid != 0:
-            frac = len(set([s for s in self.smiles if s is not None])) / self.num_valid
-        else:
-            frac = 0.
-        return frac
-
-    def get_frac_unique_post_opt(self):
-        """ Fraction of unique smiles extracted post-optimization in the generated set. """
-        if self.num_valid_post_opt != 0:
-            frac = len(set([s for s in self.smiles_post_opt if s is not None])) / self.num_valid_post_opt
-        else:
-            frac = 0.
-        return frac
-
-
-    def get_diversity(self, post_opt=False) -> Tuple[float, np.ndarray]:
-        """
-        Get average molecular graph diversity (average dissimilarity) as defined by GenBench3D (arXiv:2407.04424)
-        and the tanimioto similarity matrix of fingerprints.
-
-        Returns
-        -------
-        tuple
-            avg_diversity : float [0,1] where 1 is more diverse (more dissimilar)
-            similarity_matrix : np.ndarray (N,N) similarity matrix
-        """
-        if self.num_consistent_graph == 0:
-            return None, None
-        if post_opt:
-            fps = self.morgan_fps_post_opt
-        else:
-            fps = self.morgan_fps
-        similarity_matrix = np.zeros((self.num_consistent_graph, self.num_consistent_graph))
-        running_avg_diversity_sum = 0
-        for i, fp1 in enumerate(fps):
-            for j, fp2 in enumerate(fps):
-                if i == j:
-                    similarity_matrix[i,j] = 1
-                if i > j: # symmetric
-                    similarity_matrix[i,j] = similarity_matrix[j,i]
-                else:
-                    similarity_matrix[i,j] = TanimotoSimilarity(fp1, fp2)
-                    running_avg_diversity_sum += (1 - similarity_matrix[i,j])
-        # from GenBench3D: arXiv:2407.04424
-        avg_diversity = running_avg_diversity_sum / ((self.num_consistent_graph - 1)*self.num_consistent_graph / 2)
-        return avg_diversity, similarity_matrix
-    
 
     def to_pandas(self) -> Tuple[pd.Series, pd.DataFrame]:
         """
