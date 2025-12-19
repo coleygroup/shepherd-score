@@ -12,8 +12,8 @@ The formulation of the interaction profile representation, scoring, alignment, a
 
 ## Table of Contents
 1. [File Structure](#file-structure)
-2. [Requirements](#requirements)
-3. [Installation](#installation)
+2. [Installation](#installation)
+3. [Requirements](#requirements)
 4. [Usage](#how-to-use)
 5. [Scoring and Alignment Examples](#scoring-and-alignment-examples)
 6. [Evaluation Examples and Scripts](#evaluation-examples-and-scripts)
@@ -25,29 +25,21 @@ The formulation of the interaction profile representation, scoring, alignment, a
 .
 ├── shepherd_score/
 │   ├── alignment_utils/                    # Alignment and rigid transformations tools
-│   │   ├── pca.py
-│   │   └── se3.py
 │   ├── evaluations/                        # Evaluation suite
-│   │   ├── pdbs/
-│   │   ├── utils/
-│   │   │   ├── convert_data.py
-│   │   │   └── interactions.py
+│   │   ├── pdbs/                           # PDBQT files used in *ShEPhERD* manuscript
+│   │   ├── utils/                          # Converting data types and others
 │   │   ├── docking.py                      # Docking evaluations
 │   │   └── evaluate/                       # Generated conformer evaluation pipelines
 │   │       ├── evals.py                    # Individual evaluation classes
-│   │       ├── pipelines.py                # Evaluation pipeline classes
-│   │       └── _pipeline_eval_single.py    # Internal pipeline evaluation functions
-│   ├── pharm_utils/
-│   │   ├── pharmacophore.py
-│   │   ├── pharm_vec.py
-│   │   └── smarts_featues.fdef             # Pharmacophore definitions
+│   │       └── pipelines.py                # Evaluation pipeline classes
+│   ├── pharm_utils/                        # Pharmacophore definitions
 │   ├── score/                              # Scoring related functions and constants
 │   │   ├── constants.py
 │   │   ├── electrostatic_scoring.py
 │   │   ├── gaussian_overlap.py
 │   │   └── pharmacophore_scoring.py
 │   ├── alignment.py
-│   ├── conformer_generation.py             # Conformer generation with rdkit and xtb
+│   ├── conformer_generation.py             # RDKit and xtb related functions for conformers
 │   ├── container.py                        # Molecule and MoleculePair classes
 │   ├── extract_profiles.py                 # Functions to extract interaction profiles
 │   ├── generate_point_cloud.py
@@ -56,28 +48,31 @@ The formulation of the interaction profile representation, scoring, alignment, a
 ├── scripts/                                # Scripts for running evaluations
 ├── examples/                               # Jupyter notebook tutorials/examples 
 ├── tests/
-├── environment.yml                         # Environment
 └── README.md
 ```
 
 
+## Installation
+### via PyPI
+`pip install shepherd-score`
+
+### For local development (includes `examples/`, `tests/`, etc.)
+1. Clone this repo
+2. Navigate to this repo's top-level directory
+3. Set up the environment following the instructions above
+4. Run `pip install -e .` for developer install
+
 ## Requirements
-An example environment can be found at `environment.yml`, however, this package should generally work where PyTorch, Open3D, RDKit, and xTB can be installed in an environment with Python >=3.8.
+An example environment can be found at `environment.yml`, however, this package should generally work where PyTorch, Open3D, RDKit, and xTB can be installed in an environment with Python >=3.8. Installation of xTB through conda has been reported to lead to conflicts, so we suggest installing from [source](https://xtb-docs.readthedocs.io/en/latest/setup.html) and adding it to `PATH`.
 
 #### Minimum requirements for interaction profile extraction, scoring/alignment, and evaluations
 ```
-python>=3.8
-numpy>1.2,<2.0
+python>=3.8,<3.12
 pytorch>=1.12
-mkl==2024.0 (use conda)
 open3d>=0.18
 rdkit>=2023.03 (newest available is recommended)
-xtb>=6.6 (use conda)
-scipy>=1.10
-pandas>=2.0
 ```
-
-<sup>Make sure that mkl is *not* 2024.1 since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
+<sup>[NOTE] If using `pytorch<=2.4` sure that mkl is `==2024.0` with conda since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
 
 #### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there and add the optional packages listed below, if needed.
 
@@ -94,22 +89,11 @@ You can pip install the python bindings for Autodock Vina for the python interfa
 jax==0.4.26
 jaxlib==0.4.26+cuda12.cudnn89
 optax==0.2.2
-py3dmol>=2.1.0
 biopython>=1.84
 prolif>=2.0.3
 mdanalysis>=2.2.0
 scikit-learn>=1.3
 ```
-
-## Installation
-### via PyPI
-`pip install shepherd-score`
-
-### For local development (includes `examples/`, `tests/`, etc.)
-1. Clone this repo
-2. Navigate to this repo's top-level directory
-3. Set up the environment following the instructions above
-4. Run `pip install -e .` for developer install
 
 ## Usage
 The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.

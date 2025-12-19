@@ -35,6 +35,10 @@ classifiers = [
 ]
 dependencies = [
     "open3d>=0.18",
+    "py3Dmol",
+    "numpy",
+    "pandas>=2.0",
+    "scipy>=1.10",
 ]
 
 [project.urls]
