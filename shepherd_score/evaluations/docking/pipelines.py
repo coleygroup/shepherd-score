@@ -20,16 +20,38 @@ from shepherd_score.evaluations.docking.docking import VinaSmiles
 from shepherd_score.evaluations.docking.targets import docking_target_info
 
 
-def _eval_docking_single(
-    i: int,
-    smiles: str,
+# Global variable to store VinaSmiles instance in each worker process
+_worker_vina_smiles = None
+
+
+def _init_worker_vina(
     receptor_pdbqt_file: str,
     center: Tuple[float, float, float],
     box_size: Tuple[float, float, float],
     pH: float,
     scorefunction: str,
-    verbose: int,
     num_processes: int,
+    verbose: int,
+):
+    """
+    Initialize VinaSmiles instance in worker process.
+    This is called once per worker when the pool is created.
+    """
+    global _worker_vina_smiles
+    _worker_vina_smiles = VinaSmiles(
+        receptor_pdbqt_file=receptor_pdbqt_file,
+        center=center,
+        box_size=box_size,
+        pH=pH,
+        scorefunction=scorefunction,
+        num_processes=num_processes,
+        verbose=verbose,
+    )
+
+
+def _eval_docking_single(
+    i: int,
+    smiles: str,
     exhaustiveness: int,
     n_poses: int,
     protonate: bool,
@@ -39,34 +61,29 @@ def _eval_docking_single(
     Evaluate a single SMILES string for docking.
     
     This function is designed to be called by multiprocessing workers.
-    It creates a new VinaSmiles instance and evaluates the SMILES.
-    
-    Arguments
-    ---------
-    num_processes : int Number of processes to use for Vina internal parallelism.
+    It uses the pre-initialized VinaSmiles instance from the worker.
     """
+    global _worker_vina_smiles
+
     if smiles is None:
         return {'i': i, 'energy': np.nan, 'error': 'SMILES is None'}
-    
+
+    if _worker_vina_smiles is None:
+        return {'i': i, 'energy': np.nan, 'error': 'VinaSmiles not initialized in worker'}
+
     try:
-        vina_smiles = VinaSmiles(
-            receptor_pdbqt_file=receptor_pdbqt_file,
-            center=center,
-            box_size=box_size,
-            pH=pH,
-            scorefunction=scorefunction,
-            num_processes=num_processes,
-            verbose=verbose,
-        )
-            
-        energy = vina_smiles(
+        # Reset state before each docking call to ensure clean state
+        # (set_ligand_from_string should replace previous ligand, but this ensures clean state)
+        _worker_vina_smiles.state = None
+
+        energy = _worker_vina_smiles(
             ligand_smiles=smiles,
             output_file=save_poses_path,
             exhaustiveness=exhaustiveness,
             n_poses=n_poses,
             protonate=protonate,
         )
-        
+
         return {'i': i, 'energy': float(energy), 'error': None}
     except Exception as e:
         return {'i': i, 'energy': np.nan, 'error': str(e)}
@@ -124,7 +141,7 @@ class DockingEvalPipeline:
             raise ValueError(
                 f"Provided .pdbqt file does not exist. Please check `docking_target_info_dict`. Was given: {path_to_receptor_pdbqt}"
             )
-        
+
         pH = self.docking_target_info[self.pdb_id]['pH'] if 'pH' in self.docking_target_info[self.pdb_id] else 7.4
 
         self.receptor_pdbqt_file = str(path_to_receptor_pdbqt)
@@ -188,7 +205,7 @@ class DockingEvalPipeline:
         energies = []
         indices_to_process = []
         smiles_to_process = []
-        
+
         for i, smiles in enumerate(smiles_ls):
             if smiles in self.buffer:
                 self.repeats += 1
@@ -207,7 +224,7 @@ class DockingEvalPipeline:
             num_workers = 1
         if num_processes < 1:
             num_processes = 1
-        
+
         # Calculate max workers: num_workers * num_processes <= available_cpus
         max_workers_allowed = max(1, available_cpus // max(1, num_processes))
         if num_workers > max_workers_allowed:
@@ -215,59 +232,65 @@ class DockingEvalPipeline:
 
         if num_workers > 1 and len(smiles_to_process) > 0:
             multiprocessing.set_start_method(mp_context, force=True)
-            
-            # Prepare inputs for workers
+
+            # Prepare inputs for workers (only task-specific parameters)
             inputs = []
             for idx, smiles in zip(indices_to_process, smiles_to_process):
                 save_poses_path = None
                 if save_poses_dir_path is not None:
                     save_poses_path = str(dir_path / f'{self.pdb_id}_docked_{idx}{"_prot" if protonate else ""}.pdbqt')
-                
+
                 inputs.append((
                     idx,
                     smiles,
-                    self.receptor_pdbqt_file,
-                    self.center,
-                    self.box_size,
-                    self.pH,
-                    self.scorefunction,
-                    self.verbose,
-                    num_processes,
                     exhaustiveness,
                     n_poses,
                     protonate,
                     save_poses_path,
                 ))
-            
-            with multiprocessing.Pool(num_workers) as pool:
+
+            # Initialize VinaSmiles once per worker using initializer
+            with multiprocessing.Pool(
+                num_workers,
+                initializer=_init_worker_vina,
+                initargs=(
+                    self.receptor_pdbqt_file,
+                    self.center,
+                    self.box_size,
+                    self.pH,
+                    self.scorefunction,
+                    num_processes,
+                    self.verbose,
+                )
+            ) as pool:
                 if verbose:
                     pbar = tqdm(total=len(smiles_to_process), desc=f'Docking {self.pdb_id}')
                 else:
                     pbar = None
 
                 results_iter = pool.imap_unordered(_unpack_eval_docking_single, inputs, chunksize=1)
-                
+
                 pending_results = {idx: None for idx in indices_to_process}
-                
+
                 for res in results_iter:
                     idx = res['i']
                     pending_results[idx] = res
                     energy = res['energy']
                     energies.append((idx, energy))
-                    
+
                     # Update buffer
                     smiles_str = smiles_ls[idx]
                     if smiles_str is not None:
                         self.buffer[smiles_str] = float(energy)
                         if np.isnan(energy):
                             self.num_failed += 1
-                    
+
                     if verbose and pbar is not None:
                         pbar.update(1)
-                
+
                 if verbose and pbar is not None:
                     pbar.close()
-                
+
                 for idx in indices_to_process:
                     if pending_results[idx] is None:
                         energies.append((idx, np.nan))
