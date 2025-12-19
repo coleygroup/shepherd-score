@@ -33,6 +33,7 @@ The formulation of the interaction profile representation, scoring, alignment, a
 │   │       ├── evals.py                    # Individual evaluation classes
 │   │       └── pipelines.py                # Evaluation pipeline classes
 │   ├── pharm_utils/                        # Pharmacophore definitions
+│   ├── protonation/                        # Functions for protonation
 │   ├── score/                              # Scoring related functions and constants
 │   │   ├── constants.py
 │   │   ├── electrostatic_scoring.py
