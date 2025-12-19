@@ -6,9 +6,10 @@ Requires:
 - meeko
 - openbabel (if protonating ligands)
 """
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Literal, Tuple, Any
 from pathlib import Path
 from tqdm import tqdm
+import multiprocessing
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,64 @@ from shepherd_score.evaluations.utils.convert_data import get_smiles_from_atom_p
 
 from shepherd_score.evaluations.docking.docking import VinaSmiles
 from shepherd_score.evaluations.docking.targets import docking_target_info
+
+
+def _eval_docking_single(
+    i: int,
+    smiles: str,
+    receptor_pdbqt_file: str,
+    center: Tuple[float, float, float],
+    box_size: Tuple[float, float, float],
+    pH: float,
+    scorefunction: str,
+    verbose: int,
+    num_processes: int,
+    exhaustiveness: int,
+    n_poses: int,
+    protonate: bool,
+    save_poses_path: Optional[str],
+) -> Dict[str, Any]:
+    """
+    Evaluate a single SMILES string for docking.
+    
+    This function is designed to be called by multiprocessing workers.
+    It creates a new VinaSmiles instance and evaluates the SMILES.
+    
+    Arguments
+    ---------
+    num_processes : int Number of processes to use for Vina internal parallelism.
+    """
+    if smiles is None:
+        return {'i': i, 'energy': np.nan, 'error': 'SMILES is None'}
+    
+    try:
+        vina_smiles = VinaSmiles(
+            receptor_pdbqt_file=receptor_pdbqt_file,
+            center=center,
+            box_size=box_size,
+            pH=pH,
+            scorefunction=scorefunction,
+            num_processes=num_processes,
+            verbose=verbose,
+        )
+            
+        energy = vina_smiles(
+            ligand_smiles=smiles,
+            output_file=save_poses_path,
+            exhaustiveness=exhaustiveness,
+            n_poses=n_poses,
+            protonate=protonate,
+        )
+        
+        return {'i': i, 'energy': float(energy), 'error': None}
+    except Exception as e:
+        return {'i': i, 'energy': np.nan, 'error': str(e)}
+
+
+def _unpack_eval_docking_single(args):
+    """Unpacker function for multiprocessing."""
+    return _eval_docking_single(*args)
+
 
 class DockingEvalPipeline:
 
@@ -68,14 +127,21 @@ class DockingEvalPipeline:
         
         pH = self.docking_target_info[self.pdb_id]['pH'] if 'pH' in self.docking_target_info[self.pdb_id] else 7.4
 
+        self.receptor_pdbqt_file = str(path_to_receptor_pdbqt)
+        self.center = self.docking_target_info[self.pdb_id]['center']
+        self.box_size = self.docking_target_info[self.pdb_id]['size']
+        self.pH = pH
+        self.scorefunction = 'vina'
+        self.verbose = verbose
+
         self.vina_smiles = VinaSmiles(
-            receptor_pdbqt_file=path_to_receptor_pdbqt,
-            center=self.docking_target_info[self.pdb_id]['center'],
-            box_size=self.docking_target_info[self.pdb_id]['size'],
-            pH=pH,
-            scorefunction='vina',
+            receptor_pdbqt_file=self.receptor_pdbqt_file,
+            center=self.center,
+            box_size=self.box_size,
+            pH=self.pH,
+            scorefunction=self.scorefunction,
             num_processes=num_processes,
-            verbose=verbose
+            verbose=self.verbose
         )
 
 
@@ -85,7 +151,11 @@ class DockingEvalPipeline:
                  n_poses: int = 1,
                  protonate: bool = False,
                  save_poses_dir_path: Optional[str] = None,
-                 verbose = False
+                 verbose: bool = False,
+                 num_workers: int = 1,
+                 num_processes: int = 4,
+                 *,
+                 mp_context: Literal['spawn', 'forkserver'] = 'spawn'
                  ) -> List[float]:
         """
         Loop through supplied list of SMILES strings, dock, and collect energies.
@@ -98,53 +168,146 @@ class DockingEvalPipeline:
         protonate : bool (default = False) (de-)protonate ligand with OpenBabel at pH=7.4
         save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
         verbose : bool (default = False) show tqdm progress bar for each SMILES.
+        num_workers : int (default = 1) number of parallel worker processes. 
+            Only recommended if `smiles_ls` is > 100 due to start-up overhead of new processes.
+        num_processes : int (default = 4) number of processes each worker uses internally for Vina.
+            Constraint: num_workers * num_processes <= available CPUs
+        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+            'spawn' is recommended for most cases.
 
         Returns
         -------
         List of energies (affinities) in kcal/mol
         """
-        save_poses_path = None
         self.smiles = smiles_ls
-
+        dir_path = None
         if save_poses_dir_path is not None:
             dir_path = Path(save_poses_dir_path)
 
+        # Check buffer first and filter out cached SMILES
         energies = []
-        if verbose:
-            pbar = tqdm(enumerate(smiles_ls), desc=f'Docking {self.pdb_id}', total=len(smiles_ls))
-        else:
-            pbar = enumerate(smiles_ls)
-        for i, smiles in pbar:
+        indices_to_process = []
+        smiles_to_process = []
+        
+        for i, smiles in enumerate(smiles_ls):
             if smiles in self.buffer:
-                self.num_failed += 1
                 self.repeats += 1
-                energies.append(self.buffer[smiles])
-                continue
-            if smiles is None:
-                energies.append(np.nan)
+                energies.append((i, self.buffer[smiles]))
+            elif smiles is None:
+                energies.append((i, np.nan))
                 self.num_failed += 1
-                continue
+            else:
+                indices_to_process.append(i)
+                smiles_to_process.append(smiles)
 
-            if save_poses_dir_path is not None:
-                save_poses_path = dir_path / f'{self.pdb_id}_docked{"_prot" if protonate else ""}_{i}.pdbqt'
-            try:
-                energies.append(
-                    self.vina_smiles(
-                        ligand_smiles=smiles,
-                        output_file=save_poses_path,
-                        exhaustiveness=exhaustiveness,
-                        n_poses=n_poses,
-                        protonate=protonate,
-                        path_to_bin=self.path_to_bin,
-                    )
-                )
-                self.buffer[smiles] = float(energies[-1])
-            except Exception as _:
-                energies.append(np.nan)
-                self.buffer[smiles] = float(energies[-1])
+        available_cpus = multiprocessing.cpu_count() or 1
+        if num_processes > exhaustiveness:
+            num_processes = exhaustiveness
+        if num_workers < 1:
+            num_workers = 1
+        if num_processes < 1:
+            num_processes = 1
+        
+        # Calculate max workers: num_workers * num_processes <= available_cpus
+        max_workers_allowed = max(1, available_cpus // max(1, num_processes))
+        if num_workers > max_workers_allowed:
+            num_workers = max_workers_allowed
 
-        self.energies = np.array(energies)
-        return energies
+        if num_workers > 1 and len(smiles_to_process) > 0:
+            multiprocessing.set_start_method(mp_context, force=True)
+            
+            # Prepare inputs for workers
+            inputs = []
+            for idx, smiles in zip(indices_to_process, smiles_to_process):
+                save_poses_path = None
+                if save_poses_dir_path is not None:
+                    save_poses_path = str(dir_path / f'{self.pdb_id}_docked_{idx}{"_prot" if protonate else ""}.pdbqt')
+                
+                inputs.append((
+                    idx,
+                    smiles,
+                    self.receptor_pdbqt_file,
+                    self.center,
+                    self.box_size,
+                    self.pH,
+                    self.scorefunction,
+                    self.verbose,
+                    num_processes,
+                    exhaustiveness,
+                    n_poses,
+                    protonate,
+                    save_poses_path,
+                ))
+            
+            with multiprocessing.Pool(num_workers) as pool:
+                if verbose:
+                    pbar = tqdm(total=len(smiles_to_process), desc=f'Docking {self.pdb_id}')
+                else:
+                    pbar = None
+
+                results_iter = pool.imap_unordered(_unpack_eval_docking_single, inputs, chunksize=1)
+                
+                pending_results = {idx: None for idx in indices_to_process}
+                
+                for res in results_iter:
+                    idx = res['i']
+                    pending_results[idx] = res
+                    energy = res['energy']
+                    energies.append((idx, energy))
+                    
+                    # Update buffer
+                    smiles_str = smiles_ls[idx]
+                    if smiles_str is not None:
+                        self.buffer[smiles_str] = float(energy)
+                        if np.isnan(energy):
+                            self.num_failed += 1
+                    
+                    if verbose and pbar is not None:
+                        pbar.update(1)
+                
+                if verbose and pbar is not None:
+                    pbar.close()
+                
+                for idx in indices_to_process:
+                    if pending_results[idx] is None:
+                        energies.append((idx, np.nan))
+                        smiles_str = smiles_ls[idx]
+                        if smiles_str is not None:
+                            self.buffer[smiles_str] = float(np.nan)
+                        self.num_failed += 1
+        else:
+            # Single process evaluation
+            if len(smiles_to_process) > 0:
+                if verbose:
+                    pbar = tqdm(enumerate(zip(indices_to_process, smiles_to_process)), 
+                            desc=f'Docking {self.pdb_id}', 
+                            total=len(smiles_to_process))
+                else:
+                    pbar = enumerate(zip(indices_to_process, smiles_to_process))
+                
+                for _, (idx, smiles) in pbar:
+                    save_poses_path = None
+                    if save_poses_dir_path is not None:
+                        save_poses_path = dir_path / f'{self.pdb_id}_docked{"_prot" if protonate else ""}_{idx}.pdbqt'
+                    try:
+                        energy = self.vina_smiles(
+                            ligand_smiles=smiles,
+                            output_file=save_poses_path,
+                            exhaustiveness=exhaustiveness,
+                            n_poses=n_poses,
+                            protonate=protonate,
+                        )
+                        energies.append((idx, float(energy)))
+                        self.buffer[smiles] = float(energy)
+                    except Exception as _:
+                        energies.append((idx, np.nan))
+                        self.buffer[smiles] = float(np.nan)
+                        self.num_failed += 1
+
+        # Sort by original index and extract energies
+        energies.sort(key=lambda x: x[0])
+        self.energies = np.array([e[1] for e in energies])
+        return [e[1] for e in energies]
 
 
     def benchmark(self,
@@ -178,7 +341,6 @@ class DockingEvalPipeline:
             exhaustiveness=exhaustiveness,
             n_poses=n_poses,
             protonate=protonate,
-            path_to_bin=self.path_to_bin,
         )
         return best_energy
 
