@@ -10,9 +10,12 @@ from typing import List, Optional, Dict, Literal, Tuple, Any
 from pathlib import Path
 from tqdm import tqdm
 import multiprocessing
+import pickle
 
 import numpy as np
 import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem
 
 from shepherd_score.evaluations.utils.convert_data import get_smiles_from_atom_pos
 
@@ -94,6 +97,64 @@ def _unpack_eval_docking_single(args):
     return _eval_docking_single(*args)
 
 
+def _eval_relax_single(
+    i: int,
+    mol_pickle: bytes,
+    center: bool | Tuple[float, float, float],
+    max_steps: int | None,
+    save_poses_path: Optional[str],
+) -> Dict[str, Any]:
+    """
+    Evaluate a single mol object for relaxation.
+    
+    This function is designed to be called by multiprocessing workers.
+    It uses the pre-initialized VinaSmiles instance from the worker.
+    """
+    global _worker_vina_smiles
+
+    if mol_pickle is None:
+        return {'i': i, 'energy': np.nan, 'relaxed_mol': None, 'error': 'mol is None'}
+
+    if _worker_vina_smiles is None:
+        return {'i': i, 'energy': np.nan, 'relaxed_mol': None, 'error': 'VinaSmiles not initialized in worker'}
+
+    try:
+        # Unpickle the mol object
+        mol = pickle.loads(mol_pickle)
+        
+        if mol is None:
+            return {'i': i, 'energy': np.nan, 'relaxed_mol': None, 'error': 'mol is None after unpickling'}
+
+        # Reset state before each optimization call
+        _worker_vina_smiles.state = None
+
+        total_energy, _, optimized_mol = _worker_vina_smiles.optimize_ligand(
+            ligand=mol,
+            center=center,
+            max_steps=max_steps,
+            output_file=save_poses_path,
+        )
+
+        # Pickle the optimized mol for return
+        optimized_mol_pickle = None
+        if optimized_mol is not None:
+            optimized_mol_pickle = pickle.dumps(optimized_mol)
+
+        return {
+            'i': i,
+            'energy': float(total_energy),
+            'relaxed_mol': optimized_mol_pickle,
+            'error': None
+        }
+    except Exception as e:
+        return {'i': i, 'energy': np.nan, 'relaxed_mol': None, 'error': str(e)}
+
+
+def _unpack_eval_relax_single(args):
+    """Unpacker function for multiprocessing."""
+    return _eval_relax_single(*args)
+
+
 class DockingEvalPipeline:
 
     def __init__(self,
@@ -130,6 +191,9 @@ class DockingEvalPipeline:
         self.buffer = {}
         self.num_failed = 0
         self.repeats = 0
+        self.buffer_relaxed = {}
+        self.relaxed_mols = []
+        self.relaxed_rmsd = []
 
         if pdb_id not in list(self.docking_target_info.keys()):
             raise ValueError(
@@ -182,7 +246,7 @@ class DockingEvalPipeline:
         smiles_ls : List[str] list of SMILES to dock
         exhaustiveness : int (default = 32) Number of Monte Carlo simulations to run per pose
         n_poses : int (default = 1) Number of poses to save
-        protonate : bool (default = False) (de-)protonate ligand with OpenBabel at pH=7.4
+        protonate : bool (default = False) Use protonation protocol
         save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
         verbose : bool (default = False) show tqdm progress bar for each SMILES.
         num_workers : int (default = 1) number of parallel worker processes. 
@@ -190,7 +254,6 @@ class DockingEvalPipeline:
         num_processes : int (default = 4) number of processes each worker uses internally for Vina.
             Constraint: num_workers * num_processes <= available CPUs
         mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
-            'spawn' is recommended for most cases.
 
         Returns
         -------
@@ -333,6 +396,193 @@ class DockingEvalPipeline:
         return [e[1] for e in energies]
 
 
+    def evaluate_relax(self,
+                       mol_ls: List[Chem.Mol],
+                       center: bool | Tuple[float, float, float] = False,
+                       max_steps: int | None = 10000,
+                       save_poses_dir_path: Optional[str] = None,
+                       verbose: bool = False,
+                       num_workers: int = 1,
+                       *,
+                       mp_context: Literal['spawn', 'forkserver'] = 'spawn'
+                       ) -> List[float]:
+        """
+        Loop through supplied list of mol objects, optimize, and collect energies.
+
+        Arguments
+        ---------
+        mol_ls : List[Chem.Mol] list of rdkit mol objects to relax
+        center : bool | Tuple[float, float, float] (default = False)
+            If a tuple, centers to those coordinates.
+            If True, centers the ligand to the receptor's center.
+            If False, does not translate the ligand from its initial conformation.
+        max_steps : int | None (default = 10000) Maximum number of steps to take in the optimization.
+            If None, uses the default value of 10000.
+        save_poses_dir_path : Optional[str] (default = None) Path to directory to save optimized poses.
+        verbose : bool (default = False) show tqdm progress bar for each mol.
+        num_workers : int (default = 1) number of parallel worker processes. 
+            Only recommended if `mol_ls` is > 100 due to start-up overhead of new processes.
+        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+
+        Returns
+        -------
+        List of energies (affinities) in kcal/mol
+        """
+        dir_path = None
+        if save_poses_dir_path is not None:
+            dir_path = Path(save_poses_dir_path)
+
+        # Process mol objects
+        energies = []
+        relaxed_mols = []
+        indices_to_process = []
+        mols_to_process = []
+
+        for i, mol in enumerate(mol_ls):
+            if mol is None:
+                energies.append((i, np.nan))
+                relaxed_mols.append((i, None))
+                self.num_failed += 1
+            else:
+                indices_to_process.append(i)
+                mols_to_process.append(mol)
+            self.buffer_relaxed[Chem.MolToSmiles(Chem.RemoveHs(mol))] = {'energy': np.nan, 'relaxed_mol': None, 'rmsd': np.nan}
+
+        available_cpus = multiprocessing.cpu_count() or 1
+        if num_workers < 1:
+            num_workers = 1
+
+        # Calculate max workers: num_workers * num_processes <= available_cpus
+        max_workers_allowed = max(1, available_cpus)
+        if num_workers > max_workers_allowed:
+            num_workers = max_workers_allowed
+
+        if num_workers > 1 and len(mols_to_process) > 0:
+            multiprocessing.set_start_method(mp_context, force=True)
+
+            # Prepare inputs for workers (pickle mol objects for multiprocessing)
+            inputs = []
+            for idx, mol in zip(indices_to_process, mols_to_process):
+                save_poses_path = None
+                if save_poses_dir_path is not None:
+                    save_poses_path = str(dir_path / f'{self.pdb_id}_relaxed_{idx}.pdbqt')
+
+                # Pickle the mol for multiprocessing
+                mol_pickle = pickle.dumps(mol)
+
+                inputs.append((
+                    idx,
+                    mol_pickle,
+                    center,
+                    max_steps,
+                    save_poses_path,
+                ))
+
+            # Initialize VinaSmiles once per worker using initializer
+            with multiprocessing.Pool(
+                num_workers,
+                initializer=_init_worker_vina,
+                initargs=(
+                    self.receptor_pdbqt_file,
+                    self.center,
+                    self.box_size,
+                    self.pH,
+                    self.scorefunction,
+                    1, # num processes = 1 since only one process is used for relaxation
+                    self.verbose,
+                )
+            ) as pool:
+                if verbose:
+                    pbar = tqdm(total=len(mols_to_process), desc=f'Relaxing {self.pdb_id}')
+                else:
+                    pbar = None
+
+                results_iter = pool.imap_unordered(_unpack_eval_relax_single, inputs, chunksize=1)
+
+                pending_results = {idx: None for idx in indices_to_process}
+
+                for res in results_iter:
+                    idx = res['i']
+                    pending_results[idx] = res
+                    energy = res['energy']
+                    energies.append((idx, energy))
+                    smiles_str = Chem.MolToSmiles(Chem.RemoveHs(mols_to_process[idx]))
+                    if smiles_str is not None:
+                        self.buffer_relaxed[smiles_str]['energy'] = float(energy)
+                        self.buffer_relaxed[smiles_str]['relaxed_mol'] = mols_to_process[idx]
+
+                    # Unpickle the relaxed mol
+                    relaxed_mol = None
+                    if res['relaxed_mol'] is not None:
+                        try:
+                            relaxed_mol = pickle.loads(res['relaxed_mol'])
+                        except Exception as _:
+                            relaxed_mol = None
+                    relaxed_mols.append((idx, relaxed_mol))
+                    smiles_str = Chem.MolToSmiles(Chem.RemoveHs(mols_to_process[idx]))
+                    if smiles_str is not None:
+                        self.buffer_relaxed[smiles_str]['energy'] = float(energy)
+                        self.buffer_relaxed[smiles_str]['relaxed_mol'] = relaxed_mol if relaxed_mol is not None else None
+                        self.buffer_relaxed[smiles_str]['rmsd'] = AllChem.CalcRMS(
+                            self.vina_smiles._center_ligand(mols_to_process[idx], self.center),
+                            relaxed_mol
+                        )
+                    if np.isnan(energy):
+                        self.num_failed += 1
+
+                    if verbose and pbar is not None:
+                        pbar.update(1)
+
+                if verbose and pbar is not None:
+                    pbar.close()
+
+                for idx in indices_to_process:
+                    if pending_results[idx] is None:
+                        energies.append((idx, np.nan))
+                        relaxed_mols.append((idx, None))
+                        self.num_failed += 1
+        else:
+            # Single process evaluation
+            if len(mols_to_process) > 0:
+                if verbose:
+                    pbar = tqdm(enumerate(zip(indices_to_process, mols_to_process)), 
+                            desc=f'Relaxing {self.pdb_id}', 
+                            total=len(mols_to_process))
+                else:
+                    pbar = enumerate(zip(indices_to_process, mols_to_process))
+                
+                for _, (idx, mol) in pbar:
+                    save_poses_path = None
+                    if save_poses_dir_path is not None:
+                        save_poses_path = dir_path / f'{self.pdb_id}_relaxed_{idx}.pdbqt'
+                    try:
+                        total_energy, _, optimized_mol = self.vina_smiles.optimize_ligand(
+                            ligand=mol,
+                            center=center,
+                            max_steps=max_steps,
+                            output_file=save_poses_path,
+                        )
+                        energies.append((idx, float(total_energy)))
+                        relaxed_mols.append((idx, optimized_mol))
+                    except Exception as _:
+                        energies.append((idx, np.nan))
+                        relaxed_mols.append((idx, None))
+                        self.num_failed += 1
+                    smiles_str = Chem.MolToSmiles(Chem.RemoveHs(mol))
+                    if smiles_str is not None:
+                        self.buffer_relaxed[smiles_str]['energy'] = float(total_energy)
+                        self.buffer_relaxed[smiles_str]['relaxed_mol'] = optimized_mol if optimized_mol is not None else None
+                        self.buffer_relaxed[smiles_str]['rmsd'] = AllChem.CalcRMS(
+                            self.vina_smiles._center_ligand(mol, self.center),
+                            optimized_mol
+                        )
+
+        # Sort by original index and extract energies and relaxed mols
+        energies.sort(key=lambda x: x[0])
+        relaxed_mols.sort(key=lambda x: x[0])
+        return np.array([e[1] for e in energies])
+
+
     def benchmark(self,
                   exhaustiveness: int = 32,
                   n_poses: int = 5,
@@ -372,10 +622,6 @@ class DockingEvalPipeline:
         """
         Convert the attributes of generated smiles and the energies to a pd.DataFrame
 
-        Arguments
-        ---------
-        self
-
         Returns
         -------
         pd.DataFrame : attributes for each evaluated sample
@@ -385,6 +631,16 @@ class DockingEvalPipeline:
 
         return series_global
 
+    def to_pandas_relaxed(self) -> pd.DataFrame:
+        """
+        Convert the attributes of relaxed mols and the energies to a pd.DataFrame
+
+        Returns
+        -------
+        pd.DataFrame : attributes for each relaxed sample
+        """
+        df_relaxed = pd.DataFrame(self.buffer_relaxed)
+        return df_relaxed
 
 def run_docking_benchmark(save_dir_path: str,
                           pdb_id: str,
