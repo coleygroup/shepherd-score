@@ -19,6 +19,7 @@ from tqdm import tqdm
 import uuid
 from typing import Optional, List
 import contextlib
+import multiprocessing
 
 import rdkit
 import rdkit.Chem
@@ -571,7 +572,7 @@ def optimize_conformer_ensemble_with_xtb(conformers: List[rdkit.Chem.Mol],
         num_processes: number of CPU cores used per XTB optimization.
         num_workers: number of parallel workers (processes) to distribute conformers across.
             Disclaimer: ensure num_workers * num_processes <= available CPUs to avoid oversubscription.
-        charge: molecular charge.
+        charge: molecular charge. RDKit will be used to compute the formal charge if len(conformers) > 1
         temp_dir: temporary directory for XTB I/O.
         verbose: show a simple progress bar in single-process mode.
 
@@ -611,14 +612,13 @@ def optimize_conformer_ensemble_with_xtb(conformers: List[rdkit.Chem.Mol],
         return conformers_opt, energies_opt, charges_opt
 
     # Parallel
-    import multiprocessing as mp
-    mp.set_start_method('spawn', force=True)
+    ctx = multiprocessing.get_context('spawn')
 
     args = [
-        (conf, solvent, num_processes, charge, temp_dir) for conf in conformers
+        (conf, solvent, num_processes, rdkit.Chem.GetFormalCharge(conf), temp_dir) for conf in conformers
     ]
 
-    with mp.Pool(processes=num_workers) as pool:
+    with ctx.Pool(processes=num_workers) as pool:
         iterator = pool.imap(_optimize_conformer_worker, args)
         if verbose:
             iterator = tqdm(iterator, total=len(args), desc='XTB opt')
