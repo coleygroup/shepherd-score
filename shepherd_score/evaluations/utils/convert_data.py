@@ -2,7 +2,6 @@
 Helper functions to convert different data types.
 """
 
-import os
 from typing import Union, Tuple, List
 from pathlib import Path
 
@@ -46,6 +45,48 @@ def write_xyz_file(atomic_numbers: np.ndarray,
     return xyz
 
 
+def write_xyz_file_with_dummy(
+    atomic_numbers: np.ndarray,
+    positions: np.ndarray,
+    path_to_file: Union[str, None] = None
+    ) -> Tuple[str, Union[np.ndarray, None]]:
+    """
+    Writes an xyz file of an atomistic structure, given np.ndarray of atomic numbers and coordinates.
+    Accounts for the presence of dummy atoms.
+    
+    Arguments
+    ---------
+    atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
+    positions : np.ndarray of shape (N,3) containing atomic coordinates
+    path_to_file : str specifying file path -- e.g. path_to_file = 'examples/molecule.xyz'. If None, then no output file is written.
+    
+    Returns
+    -------
+    Tuple
+        xyz : str : xyz block
+        dummy_atom_pos : np.ndarray : positions of dummy atoms
+    """
+    real_atom_inds = np.where(atomic_numbers != 0)[0]
+    N = len(real_atom_inds)
+
+    xyz = ''
+    xyz += f'{N}\n\n'
+    for i in real_atom_inds:
+        a = int(atomic_numbers[i])
+        p = positions[i]
+        xyz+= f'{rdkit.Chem.Atom(a).GetSymbol()} {p[0]:>15.8f} {p[1]:>15.8f} {p[2]:>15.8f}\n'
+    xyz+= '\n'
+
+    if path_to_file is not None:
+        with open(f'{path_to_file}', 'w') as f:
+            f.write(xyz)
+    
+    dummy_atom_pos = None
+    if len(atomic_numbers) - len(real_atom_inds) > 0:
+        dummy_atom_pos = positions[np.where(atomic_numbers == 0)[0]]
+    return xyz, dummy_atom_pos
+
+
 def get_xyz_content(atomic_numbers: np.ndarray,
                     positions: np.ndarray
                     ) -> str:
@@ -54,6 +95,28 @@ def get_xyz_content(atomic_numbers: np.ndarray,
     """
     xyz = write_xyz_file(atomic_numbers, positions, path_to_file=None)
     return xyz
+
+
+def get_xyz_content_with_dummy(
+    atomic_numbers: np.ndarray,
+    positions: np.ndarray
+    ) -> Tuple[str, Union[np.ndarray, None]]:
+    """
+    Get the xyz block of an atomistic structure and remove dummy atoms from the xyz block.
+
+    Arguments
+    ---------
+    atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
+    positions : np.ndarray of shape (N,3) containing atomic coordinates
+
+    Returns
+    -------
+    Tuple
+        xyz : str : xyz block (without dummy atoms)
+        dummy_atom_pos : np.ndarray : positions of dummy atoms
+    """
+    xyz, dummy_atom_pos = write_xyz_file_with_dummy(atomic_numbers, positions, path_to_file=None)
+    return xyz, dummy_atom_pos
 
 
 def extract_mol_from_xyz_block(xyz_block: str,
@@ -140,7 +203,7 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
     for charge in [0, 1, -1, 2, -2]:
         try:
             mol = extract_mol_from_xyz_block(xyz_block=xyz_block, charge=charge)
-        except Exception as e:
+        except Exception as _:
             mol = None
 
         if mol is not None:

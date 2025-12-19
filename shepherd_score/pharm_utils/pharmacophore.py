@@ -10,8 +10,6 @@ Code from rdkit:
 """
 
 import os
-import sys
-sys.path.append('.')
 from copy import deepcopy
 import math
 from typing import List, Tuple, Dict, Union
@@ -41,7 +39,8 @@ feature_colors = {
   'Aromatic': (1, .8, .2),
   'LumpedHydrophobe': (.5, .25, 0),
   'Hydrophobe': (.5, .25, 0),
-  'Halogen': (.13, .55, .13)
+  'Halogen': (.13, .55, .13),
+  'Dummy': (0., .4, .55)
 }
 
 # Below is used to get hydrophobic groups

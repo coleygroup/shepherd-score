@@ -21,7 +21,7 @@ from rdkit.Chem.Draw import rdMolDraw2D
 
 
 from shepherd_score.pharm_utils.pharmacophore import feature_colors, get_pharmacophores_dict, get_pharmacophores
-from shepherd_score.evaluations.utils.convert_data import get_xyz_content
+from shepherd_score.evaluations.utils.convert_data import get_xyz_content_with_dummy
 from shepherd_score.score.constants import P_TYPES
 
 if TYPE_CHECKING:
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
 P_IND2TYPES = {i : p for i, p in enumerate(P_TYPES)}
-from shepherd_score.container import Molecule
 
 
 def __draw_arrow(view, color, anchor_pos, rel_unit_vec, flip: bool = False, opacity: float = 1.0):
@@ -60,11 +59,14 @@ def draw(mol: Union[Chem.Mol, str],
          pharm_vecs: Union[np.ndarray, None] = None,
          point_cloud = None,
          esp = None,
+         dummy_atom_pos = None,
+         ev_pos = None,
+         ev_vecs = None,
          add_SAS = False,
          view = None,
          removeHs = False,
          opacity = 1.0,
-         opacity_features = 1.0,
+         opacity_features = 0.9,
          color_scheme: Optional[str] = None,
          custom_carbon_color: Optional[str] = None,
          width = 800,
@@ -176,7 +178,7 @@ def draw(mol: Union[Chem.Mol, str],
             clr = feature_colors.get(fam, (.5,.5,.5))
             view.addSphere({'center':{keys[k]: float(pharm_ancs[i][k]) for k in range(3)},
                             'radius':.5,'color':to_hex(clr), 'opacity': opacity_features})
-            if fam not in ('Aromatic', 'Donor', 'Acceptor', 'Halogen'):
+            if fam not in ('Aromatic', 'Donor', 'Acceptor', 'Halogen', 'Dummy'):
                 continue
 
             vec = pharm_vecs[i]
@@ -184,6 +186,19 @@ def draw(mol: Union[Chem.Mol, str],
 
             if fam == 'Aromatic':
                 __draw_arrow(view, clr, pharm_ancs[i], vec, flip=True, opacity=opacity_features)
+    
+    if dummy_atom_pos is not None:
+        for i, pos in enumerate(dummy_atom_pos):
+            clr = (.8, .6, 1.)
+            view.addSphere({'center':{keys[k]: float(pos[k]) for k in range(3)},
+                            'radius':.45,'color':to_hex(clr), 'opacity': 0.9})
+
+    if ev_pos is not None:
+        for i, pos in enumerate(ev_pos):
+            clr = (0., 0., 0.)
+            if ev_vecs is not None:
+                vec = ev_vecs[i]
+                __draw_arrow(view, clr, pos, vec, flip=False, opacity=0.9)
 
     if point_cloud is not None:
         clr = np.zeros(3)
@@ -204,6 +219,32 @@ def draw(mol: Union[Chem.Mol, str],
     view.zoomTo()
     # return view.show() # view.show() to save memory
     return view
+
+
+def _process_generated_sample(
+        generated_sample: dict,
+        model_type: Literal['all', 'x2', 'x3', 'x4'] = 'all'
+    ) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+
+    if 'x1' not in generated_sample or 'atoms' not in generated_sample['x1'] or 'positions' not in generated_sample['x1']:
+        raise ValueError('Generated sample does not contain atoms and positions in expected dict.')
+    
+    if model_type not in ['all', 'x2', 'x3', 'x4']:
+        raise ValueError(f'Invalid model type: {model_type}')
+    
+    xyz_block, dummy_atom_pos = get_xyz_content_with_dummy(generated_sample['x1']['atoms'], generated_sample['x1']['positions'])
+
+    surf_pos = generated_sample['x3']['positions'] if model_type in ['all', 'x3'] else None
+    if model_type == 'x2':
+        surf_pos = generated_sample['x2']['positions']
+    
+    surf_esp = generated_sample['x3']['charges'] if model_type in ['all', 'x3'] else None
+
+    pharm_types = generated_sample['x4']['types'] if model_type in ['all', 'x4'] else None
+    pharm_ancs = generated_sample['x4']['positions'] if model_type in ['all', 'x4'] else None
+    pharm_vecs = generated_sample['x4']['directions'] if model_type in ['all', 'x4'] else None
+
+    return xyz_block, dummy_atom_pos, surf_pos, surf_esp, pharm_types, pharm_ancs, pharm_vecs
 
 
 def draw_sample(
@@ -263,12 +304,8 @@ def draw_sample(
     height : int (default: 400)
         The height of the view.
     """
-    if 'x1' not in generated_sample or 'atoms' not in generated_sample['x1'] or 'positions' not in generated_sample['x1']:
-        raise ValueError('Generated sample does not contain atoms and positions in expected dict.')
+    xyz_block, dummy_atom_pos, surf_pos, surf_esp, pharm_types, pharm_ancs, pharm_vecs = _process_generated_sample(generated_sample, model_type)
 
-    if model_type not in ['all', 'x2', 'x3', 'x4']:
-        raise ValueError(f'Invalid model type: {model_type}')
-    
     if view is None:
         view = py3Dmol.view(width=width, height=height)
         view.removeAllModels()
@@ -278,20 +315,6 @@ def draw_sample(
         view.addModel(mb, 'sdf')
         view.setStyle({'model': -1}, {'stick': {'opacity': opacity}})
 
-    xyz_block = get_xyz_content(generated_sample['x1']['atoms'], generated_sample['x1']['positions'])
-    if xyz_block is None:
-        return view
-
-    surf_pos = generated_sample['x3']['positions'] if model_type in ['all', 'x3'] else None
-    if model_type == 'x2':
-        surf_pos = generated_sample['x2']['positions']
-    
-    surf_esp = generated_sample['x3']['charges'] if model_type in ['all', 'x3'] else None
-
-    pharm_types = generated_sample['x4']['types'] if model_type in ['all', 'x4'] else None
-    pharm_ancs = generated_sample['x4']['positions'] if model_type in ['all', 'x4'] else None
-    pharm_vecs = generated_sample['x4']['directions'] if model_type in ['all', 'x4'] else None
-
     view = draw(xyz_block,
                 feats={},
                 pharm_types=pharm_types if not only_atoms else None,
@@ -299,6 +322,7 @@ def draw_sample(
                 pharm_vecs=pharm_vecs if not only_atoms else None,
                 point_cloud=surf_pos if not only_atoms else None,
                 esp=surf_esp if not only_atoms else None,
+                dummy_atom_pos=dummy_atom_pos,
                 view=view,
                 color_scheme=color_scheme,
                 custom_carbon_color=custom_carbon_color if color_scheme is None else None)
@@ -307,6 +331,7 @@ def draw_sample(
 
 
 def draw_molecule(molecule: Molecule,
+                  dummy_atom_pos = None,
                   add_SAS = False,
                   view = None,
                   removeHs = False,
@@ -323,6 +348,7 @@ def draw_molecule(molecule: Molecule,
                 pharm_vecs=molecule.pharm_vecs,
                 point_cloud=molecule.surf_pos if not no_surface_points else None,
                 esp=molecule.surf_esp if not no_surface_points else None,
+                dummy_atom_pos=dummy_atom_pos,
                 add_SAS=add_SAS,
                 view=view,
                 width=width,
@@ -348,12 +374,17 @@ def draw_pharmacophores(mol, view=None, width=800, height=400, opacity=1.0, opac
          opacity_features=opacity_features)
 
 
-def create_pharmacophore_file_for_chimera(mol: Chem.Mol,
-                                          id: Union[str, int],
-                                          save_dir: str
-                                          ) -> None:
+def chimera_from_mol(mol: Chem.Mol,
+                     mol_id: Union[str, int],
+                     surf_pos = None,
+                     surf_esp = None,
+                     ev_pos = None,
+                     ev_vecs = None,
+                     save_dir: str = './',
+                     verbose: bool = True,
+                     ) -> None:
     """
-    Create SDF file for atoms (x1_{id}.sdf) and BILD file for pharmacophores (x4_{id}.bild).
+    Create SDF file for atoms (x1_{mol_id}.sdf) and BILD file for pharmacophores (x4_{mol_id}.bild).
     Drag and drop into ChimeraX to visualize.
     """
     save_dir_ = Path(save_dir)
@@ -362,22 +393,49 @@ def create_pharmacophore_file_for_chimera(mol: Chem.Mol,
 
     pharm_types, pharm_pos, pharm_direction = get_pharmacophores(
         mol, 
-        multi_vector = True, 
+        multi_vector = False, 
         check_access = False,
     )
 
+    if ev_pos is not None and ev_vecs is not None:
+        pharm_pos = np.concatenate([ev_pos, pharm_pos], axis=0)
+        pharm_direction = np.concatenate([ev_vecs, pharm_direction], axis=0)
+        pharm_types = np.concatenate([np.zeros((len(ev_pos)), dtype=int) + 10, pharm_types], axis=0)
+
+    if surf_pos is not None and surf_esp is not None:
+        surf_bild = _chimera_shape_esp_file(surf_pos, surf_esp)
+        with open(save_dir_ / f'{mol_id}_x3.bild', 'w') as f:
+            f.write(surf_bild)
+        if verbose:
+            print(f'Wrote ESP file to {save_dir_ / f"{mol_id}_x3.bild"}')
+
     pharm_types = pharm_types + 1 # Accomodate virtual node at idx=0
 
+    bild = _chimera_pharmacophore_file(pharm_types, pharm_pos, pharm_direction)
+    with open(save_dir_ / f'{mol_id}_x4.bild', 'w') as f:
+        f.write(bild)
+    if verbose:
+        print(f'Wrote pharmacophore file to {save_dir_ / f"{mol_id}_x4.bild"}')
+
+    Chem.MolToMolFile(mol, save_dir_ / f'{mol_id}_x1.sdf')
+    if verbose:
+        print(f'Wrote mol file to {save_dir_ / f"{mol_id}_x1.sdf"}')
+
+
+def _chimera_pharmacophore_file(pharm_types: np.ndarray, pharm_pos: np.ndarray, pharm_direction: np.ndarray) -> str:
     pharmacophore_colors = {
         0: (None, (0,0,0), 0.0, 0.0), # virtual node type
         1: ('Acceptor', (0.62,0.03,0.35), 0.3, 0.5),
         2: ('Donor', (0,0.55,0.55), 0.3, 0.5),
-        3: ('Aromatic', (1.,.1,.0), 0.5, 0.5),
+        3: ('Aromatic', (.85,.5,.0), 0.5, 0.5),
         4: ('Hydrophobe', (0.2,0.2,0.2), 0.5, 0.5),
         5: ('Halogen', (0.,1.,0), 0.5, 0.5),
-        6: ('Cation', (0,0,1.), 0.1, 0.5),
-        7: ('Anion', (1.,0,0), 0.1, 0.5),
+        6: ('Cation', (0,0,1.), 0.5, 0.5),
+        7: ('Anion', (1.,0,0), 0.5, 0.5),
         8: ('ZnBinder', (1.,.5,.5), 0.5, 0.5),
+        9: ('Dummy', feature_colors['Dummy'], 0.5, 0.5),
+        10: ('Dummy atom', (0.8, 0.6, 1.), 0.5, 0.5),
+        11: ('Exit vector', (0., 0., 0.), 0.5, 0.5),
     }
 
     bild = ''
@@ -389,15 +447,91 @@ def create_pharmacophore_file_for_chimera(mol: Chem.Mol,
         
         bild += f'.color {pharmacophore_colors[pharm_type][1][0]} {pharmacophore_colors[pharm_type][1][1]} {pharmacophore_colors[pharm_type][1][2]}\n'
         bild += f'.transparency {pharmacophore_colors[pharm_type][3]}\n'
-        if pharm_name not in ['Aromatic', 'Acceptor', 'Donor', 'Halogen']: 
+        if pharm_name not in ['Aromatic', 'Acceptor', 'Donor', 'Halogen', 'Exit vector']: 
             bild += f'.sphere {p[0]} {p[1]} {p[2]} {pharmacophore_colors[pharm_type][2]}\n'
         if np.linalg.norm(v) > 0.0:
             bild += f'.arrow {p[0]} {p[1]} {p[2]} {p[0] + v[0]} {p[1] + v[1]} {p[2] + v[2]} 0.1 0.2\n'
-    # write pharmacophores
-    with open(save_dir_ / f'x4_{id}.bild', 'w') as f:
-        f.write(bild)
-    # write mol
-    Chem.MolToMolFile(mol, save_dir_ / f'x1_{id}.sdf')
+        if pharm_name == 'Aromatic':
+            bild += f'.arrow {p[0]} {p[1]} {p[2]} {p[0] - v[0]} {p[1] - v[1]} {p[2] - v[2]} 0.1 0.2\n'
+    return bild
+
+
+def _chimera_shape_esp_file(surf_pos: np.ndarray,
+                            surf_esp: np.ndarray,
+                            norm_factor: float = 2.0,
+                            ) -> str:
+    esp = surf_esp * 4.0
+    esp_pos = surf_pos
+
+    esp_colors = np.zeros((len(esp), 3))
+    esp_colors[:,2] = np.where(esp < 0, 0, esp/norm_factor).squeeze()
+    esp_colors[:,0] = np.where(esp >= 0, 0, -esp/norm_factor).squeeze()
+
+    bild = ''
+    for i in range(len(esp_pos)):
+        esp_color = esp_colors[i]
+        p = esp_pos[i]
+        bild += f'.color {esp_color[0]} {esp_color[1]} {esp_color[2]}\n'
+        if (esp[i] ** 2.0) ** 0.5 < 0.5:
+            bild += f'.transparency {0.9}\n'
+        else:
+            bild += f'.transparency {0.0}\n'
+        bild += f'.sphere {p[0]} {p[1]} {p[2]} 0.05\n'
+
+    return bild
+
+
+def chimera_from_sample(generated_sample: dict,
+                        mol_id: str | int,
+                        save_dir: str,
+                        model_type: Literal['all', 'x2', 'x3', 'x4'] = 'all',
+                        esp_norm_factor: float = 2.0,
+                        verbose: bool = True,
+                        ) -> None:
+    """
+    Create SDF file for atoms (x1_{mol_id}.sdf) and BILD file for pharmacophores (x4_{mol_id}.bild).
+    Drag and drop into ChimeraX to visualize.
+    """
+    path_ = Path(save_dir)
+    if not path_.is_dir():
+        path_.mkdir(parents=True, exist_ok=True)
+
+    xyz_block, dummy_atom_pos, surf_pos, surf_esp, pharm_types, pharm_ancs, pharm_vecs = _process_generated_sample(generated_sample, model_type)
+
+    if xyz_block is not None:
+        with open(path_ / f'{mol_id}_x1.xyz', 'w') as f:
+            f.write(xyz_block)
+        if verbose:
+            print(f'Wrote xyz file to {path_ / f"{mol_id}_x1.xyz"}')
+
+    if dummy_atom_pos is not None:
+        if pharm_ancs is not None:
+            pharm_ancs = np.concatenate([dummy_atom_pos, pharm_ancs], axis=0)
+        else:
+            pharm_ancs = dummy_atom_pos
+        if pharm_vecs is not None:
+            pharm_vecs = np.concatenate([np.zeros((len(dummy_atom_pos), 3)), pharm_vecs], axis=0)
+        else:
+            pharm_vecs = np.zeros((len(dummy_atom_pos), 3))
+        if pharm_types is not None:
+            pharm_types = np.concatenate([np.zeros((len(dummy_atom_pos))) + 9, pharm_types], axis=0)
+        else:
+            pharm_types = np.zeros((len(dummy_atom_pos))) + 9
+
+    if surf_pos is not None and surf_esp is not None:
+        esp_bild = _chimera_shape_esp_file(surf_pos, surf_esp, norm_factor=esp_norm_factor)
+        with open(path_ / f'{mol_id}_x3.bild', 'w') as f:
+            f.write(esp_bild)
+        if verbose:
+            print(f'Wrote ESP file to {path_ / f"{mol_id}_x3.bild"}')
+
+    if pharm_types is not None and pharm_ancs is not None and pharm_vecs is not None:
+        pharm_types = pharm_types + 1 # Accomodate virtual node at idx=0
+        pharm_bild = _chimera_pharmacophore_file(pharm_types, pharm_ancs, pharm_vecs)
+        with open(path_ / f'{mol_id}_x4.bild', 'w') as f:
+            f.write(pharm_bild)
+        if verbose:
+            print(f'Wrote pharmacophore file to {path_ / f"{mol_id}_x4.bild"}')
 
 
 def draw_2d_valid(ref_mol: Chem.Mol,

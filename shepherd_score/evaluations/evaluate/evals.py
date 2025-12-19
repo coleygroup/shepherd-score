@@ -4,11 +4,9 @@ Evaluation pipeline classes for generated molecules.
 
 import sys
 import os
-from typing import Union, List, Tuple, Optional
+from typing import Tuple, Optional
 from pathlib import Path
-from tqdm import tqdm
 from copy import deepcopy
-import itertools
 from importlib.metadata import distributions
 
 import numpy as np
@@ -27,6 +25,7 @@ from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
+from shepherd_score.score.constants import P_TYPES
 
 from shepherd_score.conformer_generation import optimize_conformer_with_xtb_from_xyz_block, single_point_xtb_from_xyz
 
@@ -41,6 +40,26 @@ morgan_fp_gen = rdFingerprintGenerator.GetMorganGenerator(radius=3, includeChira
 TMPDIR = Path('./')
 if 'TMPDIR' in os.environ:
     TMPDIR = Path(os.environ['TMPDIR'])
+
+
+def _clean_dummy_atom_arrays(
+    atomic_numbers: np.ndarray, positions: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Clean dummy atoms from the molecule.
+    """
+    non_dummy_inds = np.where(atomic_numbers != 0)[0]
+    return atomic_numbers[non_dummy_inds], positions[non_dummy_inds]
+
+
+def _clean_dummy_pharm_arrays(
+    pharm_types: np.ndarray, pharm_ancs: np.ndarray, pharm_vecs: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Clean dummy pharmacophores from the molecule.
+    """
+    non_dummy_inds = np.where(pharm_types != P_TYPES.index('Dummy'))[0]
+    return pharm_types[non_dummy_inds], pharm_ancs[non_dummy_inds], pharm_vecs[non_dummy_inds]
 
 
 class ConfEval:
@@ -107,6 +126,7 @@ class ConfEval:
         self.rmsd = None
 
         # 1. Converts coords + atom_ids -> xyz block
+        atoms, positions = _clean_dummy_atom_arrays(atoms, positions)
         # 2. Get mol from xyz block
         self.mol, self.charge, self.xyz_block = get_mol_from_atom_pos(atoms=atoms, positions=positions)
 
@@ -281,6 +301,7 @@ class ConsistencyEval(ConfEval):
                 raise ValueError(
                     f'Provided pharmacophore features do not match dimensions: pharm_types {pharm_types.shape}, pharm_ancs {pharm_ancs.shape}, pharm_vecs {pharm_vecs.shape}'
                 )
+            pharm_types, pharm_ancs, pharm_vecs = _clean_dummy_pharm_arrays(pharm_types, pharm_ancs, pharm_vecs)
         else:
             pharm_types, pharm_ancs, pharm_vecs = None, None, None
 

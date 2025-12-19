@@ -17,7 +17,7 @@ COULOMB_SCALING = 1e4/(4*55.263*np.pi) # eV*A/e^2
 LAM_SCALING = COULOMB_SCALING**2
 
 ### Pharmacophores
-P_TYPES = ('Acceptor', 'Donor', 'Aromatic', 'Hydrophobe', 'Halogen', 'Cation', 'Anion', 'ZnBinder')
+P_TYPES = ('Acceptor', 'Donor', 'Aromatic', 'Hydrophobe', 'Halogen', 'Cation', 'Anion', 'ZnBinder', 'Dummy')
 
 # Based on Pharao's parameters
 # https://github.com/gertthijs/pharao/blob/e7edc526cbfc81b3159b3d5c80e0427514118a64/include/pharmacophore.h#L104
@@ -29,5 +29,6 @@ P_ALPHAS = {
     'cation': 1.0,
     'anion': 1.0,
     'znbinder': 1.0,
-    'halogen': 1.0
+    'halogen': 1.0,
+    'dummy': 1.0
 }
