@@ -5,7 +5,7 @@ Evaluation pipeline classes for generated molecules.
 import os
 import logging
 import traceback
-from typing import Union, List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
 
 import itertools
@@ -13,7 +13,7 @@ import itertools
 import numpy as np
 from rdkit import Chem
 
-from shepherd_score.score.constants import ALPHA, LAM_SCALING
+from shepherd_score.score.constants import ALPHA, LAM_SCALING  # noqa: F401
 
 from shepherd_score.container import Molecule, MoleculePair
 

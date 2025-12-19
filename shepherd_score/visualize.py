@@ -1,7 +1,8 @@
 """
 Visualize pharmacophores and exit vectors with py3dmol.
 """
-from typing import Union, List, Literal, Optional
+from __future__ import annotations
+from typing import Union, List, Literal, Optional, TYPE_CHECKING
 from pathlib import Path
 from copy import deepcopy
 import time
@@ -22,6 +23,10 @@ from rdkit.Chem.Draw import rdMolDraw2D
 from shepherd_score.pharm_utils.pharmacophore import feature_colors, get_pharmacophores_dict, get_pharmacophores
 from shepherd_score.evaluations.utils.convert_data import get_xyz_content
 from shepherd_score.score.constants import P_TYPES
+
+if TYPE_CHECKING:
+    from shepherd_score.container import Molecule
+
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
 P_IND2TYPES = {i : p for i, p in enumerate(P_TYPES)}
 from shepherd_score.container import Molecule

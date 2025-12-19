@@ -23,7 +23,6 @@ else:
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
-from rdkit.DataStructs import TanimotoSimilarity
 
 from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
 
@@ -119,7 +118,7 @@ class ConfEval:
                                                                           num_cores=num_processes,
                                                                           temp_dir=TMPDIR)
             self.partial_charges = np.array(self.partial_charges)
-        except Exception as e:
+        except Exception as _:
             pass
         self.is_valid = self.mol is not None and self.partial_charges is not None
         if self.is_valid:
@@ -139,7 +138,7 @@ class ConfEval:
             # 5. Check if relaxed_structure is valid
             self.mol_post_opt = extract_mol_from_xyz_block(xyz_block=self.xyz_block_post_opt,
                                                            charge=self.charge)
-        except Exception as e:
+        except Exception as _:
             pass
 
         self.is_valid_post_opt = self.mol_post_opt is not None and self.partial_charges_post_opt is not None
@@ -292,7 +291,7 @@ class ConsistencyEval(ConfEval):
             print('WARNING: Generated pharmacophore features provided, but `pharm_multi_vector` is None.')
             print('         Pharmacophore similarity not computed.')
         if not isinstance(surf_points, np.ndarray) and not isinstance(surf_esp, np.ndarray) and not has_pharm_features:
-            raise ValueError(f'Must provide at least one of the generated representations: surface, electrostatics, or pharmacophores.')
+            raise ValueError('Must provide at least one of the generated representations: surface, electrostatics, or pharmacophores.')
         
         # Scoring parameters
         self.num_surf_points = len(surf_points) if surf_points is not None else None
@@ -410,7 +409,7 @@ class ConsistencyEval(ConfEval):
         -------
         float : Surface similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_surf(
+        _ = mp_ref_and_relaxed.align_with_surf(
             self.alpha,
             num_repeats=1,
             trans_init=False,
@@ -428,7 +427,7 @@ class ConsistencyEval(ConfEval):
         -------
         float : ESP similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_esp(
+        _ = mp_ref_and_relaxed.align_with_esp(
             self.alpha,
             lam=self.lam,
             num_repeats=1,
@@ -655,7 +654,7 @@ class ConditionalEval(ConfEval):
         -------
         float : Surface similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_surf(
+        _ = mp_ref_and_relaxed.align_with_surf(
             self.alpha,
             num_repeats=1,
             trans_init=False,
@@ -674,7 +673,7 @@ class ConditionalEval(ConfEval):
         -------
         float : ESP similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_esp(
+        _ = mp_ref_and_relaxed.align_with_esp(
             self.alpha,
             lam=self.lam,
             num_repeats=1,

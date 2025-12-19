@@ -116,7 +116,7 @@ def sample_molecular_surface_with_radius(centers: np.ndarray,
         Array containing the coordinates of each point sampled from each atom.
     """
     # get surface radius based on vdW radii, cutoff
-    cutoff = 1.4
+    # cutoff = 1.4
     if num_samples_per_atom > 50:
         raise ValueError('Do not set num_samples_per_atom to be larger than 50 for performance\
                          issues. The number is squared internally.')
@@ -170,7 +170,7 @@ def sample_molecular_surface_with_radius_fibonacci(centers: np.ndarray,
         Array containing the coordinates of each point sampled from each atom.
     """
     # get surface radius based on vdW radii, cutoff
-    cutoff = 1.4
+    # cutoff = 1.4
     if num_samples_per_atom > 50:
         raise ValueError('Do not set num_samples_per_atom to be larger than 50 for performance\
                          issues. The number is squared internally.')
@@ -555,7 +555,7 @@ def get_electrostatics(mol: Chem.Mol, points: np.ndarray) -> np.ndarray:
     try:
         mol.GetConformer()
     except ValueError as e:
-        raise ValueError(f"Provided rdkit.Chem.Mol object did not have conformer embedded.", e)
+        raise ValueError("Provided rdkit.Chem.Mol object did not have conformer embedded.", e)
 
     molec_props = Chem.AllChem.MMFFGetMoleculeProperties(mol)
     if molec_props:
@@ -675,7 +675,7 @@ def get_molecular_volume(centers: np.ndarray, radii: np.ndarray, num_samples: in
     if num_samples_per_atom > 20:
         raise ValueError('Do not set num_samples_per_atom to be larger than 20 for performance\
                          issues. The number is cubed internally.')
-    cutoff = 1.4
+    # cutoff = 1.4
     # radii = cutoff * (radii / 1.7)
     num_samples_per_atom = np.ceil((num_samples_per_atom * (radii / 1.7))**3)
 

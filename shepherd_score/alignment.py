@@ -3,7 +3,7 @@ Alignment algorithms using Torch-based scoring functions.
 Torch based functions can perform on batches as well as single instances.
 """
 from copy import deepcopy
-from typing import Union, List, Tuple
+from typing import Union, Tuple
 import torch
 import torch.nn.functional as F
 from torch import optim

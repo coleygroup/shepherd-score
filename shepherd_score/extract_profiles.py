@@ -2,13 +2,13 @@
 Convenience module to hold functions used to extract interaction profiles.
 """
 import numpy as np
-import open3d
+import open3d  # noqa: F401
 from rdkit import Chem
 
 from shepherd_score.score.constants import COULOMB_SCALING
-from shepherd_score.generate_point_cloud import get_molecular_surface, get_atomic_vdw_radii
-from shepherd_score.pharm_utils.pharmacophore import get_pharmacophores, get_pharmacophores_dict
-from shepherd_score.evaluations.utils.convert_data import get_mol_from_atom_pos, get_xyz_content
+from shepherd_score.generate_point_cloud import get_molecular_surface, get_atomic_vdw_radii  # noqa: F401
+from shepherd_score.pharm_utils.pharmacophore import get_pharmacophores, get_pharmacophores_dict  # noqa: F401
+from shepherd_score.evaluations.utils.convert_data import get_mol_from_atom_pos, get_xyz_content  # noqa: F401
 
 def get_electrostatic_potential(mol: Chem.Mol,
                                 partial_charges: np.ndarray,

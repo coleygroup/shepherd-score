@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 import numpy as np
 from rdkit import Chem
-import open3d # imported because sometimes order matters
+import open3d # noqa: F401 (imported because sometimes order matters)
 import torch
 
 from shepherd_score.container import Molecule, MoleculePair
@@ -95,7 +95,7 @@ class GeneralObjective:
             raise ValueError(f'Please enter a valid key for `rep`. "{rep}" was given')
 
         if self.representation in ('shape', 'esp') and self.num_points is None and not self.use_vol:
-            raise ValueError(f'Either `use_vol` must be True or `num_points` must be supplied for surface point cloud.')
+            raise ValueError('Either `use_vol` must be True or `num_points` must be supplied for surface point cloud.')
         if self.representation == 'pharm' and self.pharm_multi_vector is None:
             raise ValueError(f'`pharm_multi_vector` must be supplied for surface point cloud. {pharm_multi_vector} was given.')
 
@@ -119,7 +119,7 @@ class GeneralObjective:
             try:
                 ref_mol.GetConformer()
                 has_conformer = True
-            except:
+            except Exception as _:
                 has_conformer = False
 
             if not has_conformer:
@@ -387,7 +387,7 @@ class GeneralObjective:
                                              num_conformers=num_conformers,
                                              trans_init=trans_init,
                                              use_jax=use_jax))
-                except:
+                except Exception as _:
                     scores.append(-1.)
 
             self.buffer[smi] = scores[-1] # store {smiles : score}
@@ -654,7 +654,7 @@ class Objective:
             try:
                 # Canonicalize smiles
                 smi = Chem.CanonSmiles(smi)
-            except:
+            except Exception as _:
                 # if not a valid smiles skip
                 scores.append(-1.)
                 self.buffer[smi] = {'esp': None,
@@ -673,7 +673,7 @@ class Objective:
                         use_jax=use_jax
                     )
                     scores.append(esp_score + pharm_score)
-                except:
+                except Exception as _:
                     scores.append(-1.)
                     esp_score = None
                     pharm_score = None

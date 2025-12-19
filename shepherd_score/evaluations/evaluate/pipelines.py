@@ -22,21 +22,20 @@ else:
     from SA_Score import sascorer
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
-from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 from rdkit.DataStructs import TanimotoSimilarity
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
+from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos   # noqa: F401
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 
-from shepherd_score.container import Molecule, MoleculePair
+from shepherd_score.container import Molecule, MoleculePair  # noqa: F401
 from shepherd_score.score.gaussian_overlap_np import get_overlap_np
 from shepherd_score.score.electrostatic_scoring_np import get_overlap_esp_np
 from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
 
 from shepherd_score.conformer_generation import set_thread_limits
 
-from shepherd_score.evaluations.evaluate.evals import ConfEval, ConsistencyEval, ConditionalEval
+from shepherd_score.evaluations.evaluate.evals import ConfEval, ConsistencyEval, ConditionalEval  # noqa: F401
 from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_unconditional_single, _create_failed_result
 from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_conditional_single, _create_conditional_failed_result
 from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_consistency_single, _create_consistency_failed_result

@@ -22,11 +22,12 @@ from scipy.spatial import distance, Delaunay
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
-PT = Chem.GetPeriodicTable()
 
 # pharmacophores
-from .pharmvec import GetDonorFeatVects, GetAcceptorFeatVects, GetAromaticFeatVects, GetHalogenFeatVects
+from shepherd_score.pharm_utils.pharmvec import GetDonorFeatVects, GetAcceptorFeatVects, GetAromaticFeatVects, GetHalogenFeatVects
 from shepherd_score.score.constants import P_TYPES
+
+PT = Chem.GetPeriodicTable()
 
 feature_colors = {
   'Donor': (0, 1, 1),
@@ -112,12 +113,12 @@ def __euclid(xyz0, xyz1):
     dz = z0 - z1
     return math.sqrt(dx*dx + dy*dy + dz*dz)
 
-def __average(l):
+def __average(vecs):
     sum_x = 0.0
     sum_y = 0.0
     sum_z = 0.0
-    n = float(len(l))
-    for (x, y, z) in l:
+    n = float(len(vecs))
+    for (x, y, z) in vecs:
         sum_x += x
         sum_y += y
         sum_z += z
