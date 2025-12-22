@@ -70,12 +70,12 @@ An example environment can be found at `environment.yml`, however, this package 
 
 #### Minimum requirements for interaction profile extraction, scoring/alignment, and evaluations
 ```
-python>=3.8,<3.12
-pytorch>=1.12
+python>=3.8
+torch>=1.12
 open3d>=0.18
 rdkit>=2023.03 (newest available is recommended)
 ```
-<sup>[NOTE] If using `pytorch<=2.4` sure that mkl is `==2024.0` with conda since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
+<sup>[NOTE] If using `torch<=2.4` sure that mkl is `==2024.0` with conda since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
 
 #### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there and add the optional packages listed below, if needed.
 
@@ -87,9 +87,7 @@ vina==1.2.5
 molscrub
 openbabel
 prolif>=2.0.3
-mdanalysis>=2.2.0
 biopython>=1.84
-prody
 ```
 You can pip install the python bindings for Autodock Vina for the python interface. However, this also requires an installation of the executable of Autodock Vina v1.2.5: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/).
 
