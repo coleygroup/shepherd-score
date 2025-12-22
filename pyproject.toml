@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shepherd-score"
-version = "1.1.4"
+version = "1.1.5"
 description = "3D scoring functions used for evaluation of ShEPhERD"
 readme = "README.md"
-requires-python = ">=3.8,<3.12"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Abeywardane", email = "kento@mit.edu"}

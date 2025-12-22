@@ -28,7 +28,9 @@ The formulation of the interaction profile representation, scoring, alignment, a
 │   ├── evaluations/                        # Evaluation suite
 │   │   ├── pdbs/                           # PDBQT files used in *ShEPhERD* manuscript
 │   │   ├── utils/                          # Converting data types and others
-│   │   ├── docking.py                      # Docking evaluations
+│   │   ├── docking
+│   │   │   ├── docking.py                  # Docking classes
+│   │   │   └── pipelines.py                # Docking evaluation pipelines
 │   │   └── evaluate/                       # Generated conformer evaluation pipelines
 │   │       ├── evals.py                    # Individual evaluation classes
 │   │       └── pipelines.py                # Evaluation pipeline classes
@@ -78,10 +80,16 @@ rdkit>=2023.03 (newest available is recommended)
 #### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there and add the optional packages listed below, if needed.
 
 
-#### Optional software necessary for docking evaluation
+#### Software necessary for docking evaluation (optional)
 ```
 meeko
 vina==1.2.5
+molscrub
+openbabel
+prolif>=2.0.3
+mdanalysis>=2.2.0
+biopython>=1.84
+prody
 ```
 You can pip install the python bindings for Autodock Vina for the python interface. However, this also requires an installation of the executable of Autodock Vina v1.2.5: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/).
 
@@ -90,9 +98,6 @@ You can pip install the python bindings for Autodock Vina for the python interfa
 jax==0.4.26
 jaxlib==0.4.26+cuda12.cudnn89
 optax==0.2.2
-biopython>=1.84
-prolif>=2.0.3
-mdanalysis>=2.2.0
 scikit-learn>=1.3
 ```
 
