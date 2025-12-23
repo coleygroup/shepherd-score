@@ -4,7 +4,6 @@ Assumes the NumPy implementation is ground truth.
 
 Particularly for the batching functionality that complicates the pytorch implementation.
 """
-
 import pytest
 import torch
 import numpy as np
@@ -12,6 +11,7 @@ from scipy.spatial import distance
 import torch.nn.functional as F
 from shepherd_score.score import gaussian_overlap as go
 from shepherd_score.score import gaussian_overlap_np as go_np
+from .utils import _configure_jax_platform
 
 # Helper function for NumPy vector normalization (for 2D arrays)
 def _normalize_np_vectors_2d(vectors_np):
@@ -281,32 +281,26 @@ class TestGaussianOverlapTorch:
         actual = go.VAB_2nd_order_cosine_mask_batch(cdist_21_torch, vmm_21_torch, alpha, allow_antiparallel, m1_torch_b, m2_torch_b)
         np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5, atol=1e-7)
 
-# Try to import JAX and skip tests if not available
-import os
-# Configure JAX platform before import to avoid GPU errors
-def _configure_jax_platform():
-    """Configure JAX platform based on GPU availability."""
-    try:
-        # Try to detect GPU through other means first
-        import subprocess
-        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-        gpu_detected = result.returncode == 0
-    except (FileNotFoundError, subprocess.SubprocessError):
-        gpu_detected = False
+# Attempt to import JAX and related modules
+JAX_AVAILABLE = False
+jax = None
+jnp = None
+go_jax = None
 
-    if not gpu_detected:
-        # Force JAX to use CPU only if no GPU detected
-        os.environ['JAX_PLATFORMS'] = 'cpu'
+try:
+    # Configure JAX platform before import to avoid GPU initialization errors
+    _gpu_detected = _configure_jax_platform()
+    
+    import jax
+    import jax.numpy as jnp
+    from shepherd_score.score import gaussian_overlap_jax as go_jax
+    
+    JAX_AVAILABLE = True
+except ImportError:
+    # JAX not available - all tests in JAX test classes will be skipped
+    pass
 
-    return gpu_detected
-
-# Pre-configure JAX platform
-_gpu_detected_early = _configure_jax_platform()
-
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
-go_jax = pytest.importorskip("shepherd_score.score.gaussian_overlap_jax")
-
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 @pytest.mark.jax
 class TestGaussianOverlapJAX:
     def test_get_overlap_jax(self):
@@ -452,6 +446,7 @@ class TestGaussianOverlapJAX:
 ####################### JAX VMAP Batch Tests ##############################
 #############################################################################
 
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 @pytest.mark.jax
 class TestGaussianOverlapJAXBatched:
     def test_get_overlap_jax_vmap_batch(self):

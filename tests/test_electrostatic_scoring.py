@@ -11,33 +11,26 @@ import numpy as np
 from shepherd_score.score import electrostatic_scoring as es
 from shepherd_score.score import electrostatic_scoring_np as es_np
 from shepherd_score.score.constants import LAM_SCALING # For default lam values
-from shepherd_score.score.gaussian_overlap_np import get_overlap_np # For esp_combo_score ground truth
+from .utils import _configure_jax_platform
 
-# Try to import JAX and skip tests if not available
-import os
-# Configure JAX platform before import to avoid GPU errors
-def _configure_jax_platform():
-    """Configure JAX platform based on GPU availability."""
-    try:
-        # Try to detect GPU through other means first
-        import subprocess
-        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-        gpu_detected = result.returncode == 0
-    except (FileNotFoundError, subprocess.SubprocessError):
-        gpu_detected = False
+# Attempt to import JAX and related modules
+JAX_AVAILABLE = False
+jax = None
+jnp = None
+es_jax = None
+
+try:
+    # Configure JAX platform before import to avoid GPU initialization errors
+    _gpu_detected = _configure_jax_platform()
     
-    if not gpu_detected:
-        # Force JAX to use CPU only if no GPU detected
-        os.environ['JAX_PLATFORMS'] = 'cpu'
+    import jax
+    import jax.numpy as jnp
+    from shepherd_score.score import electrostatic_scoring_jax as es_jax
     
-    return gpu_detected
-
-# Pre-configure JAX platform
-_gpu_detected_early = _configure_jax_platform()
-
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
-es_jax = pytest.importorskip("shepherd_score.score.electrostatic_scoring_jax")
+    JAX_AVAILABLE = True
+except ImportError:
+    # JAX not available - all tests in JAX test classes will be skipped
+    pass
 
 
 # Helper function to generate random electrostatic data
@@ -92,20 +85,36 @@ def _generate_electrostatic_data(batch_size=None,
     radii_2_torch = torch.from_numpy(radii_2_np)
 
     # JAX arrays
-    centers_1_jnp = jnp.array(centers_1_np)
-    centers_2_jnp = jnp.array(centers_2_np)
-    charges_overlap_1_jnp = jnp.array(charges_overlap_1_np)
-    charges_overlap_2_jnp = jnp.array(charges_overlap_2_np)
-    centers_w_H_1_jnp = jnp.array(centers_w_H_1_np)
-    centers_w_H_2_jnp = jnp.array(centers_w_H_2_np)
-    partial_charges_1_jnp = jnp.array(partial_charges_1_np)
-    partial_charges_2_jnp = jnp.array(partial_charges_2_np)
-    points_1_jnp = jnp.array(points_1_np)
-    points_2_jnp = jnp.array(points_2_np)
-    point_charges_1_jnp = jnp.array(point_charges_1_np)
-    point_charges_2_jnp = jnp.array(point_charges_2_np)
-    radii_1_jnp = jnp.array(radii_1_np)
-    radii_2_jnp = jnp.array(radii_2_np)
+    if JAX_AVAILABLE:
+        centers_1_jnp = jnp.array(centers_1_np)
+        centers_2_jnp = jnp.array(centers_2_np)
+        charges_overlap_1_jnp = jnp.array(charges_overlap_1_np)
+        charges_overlap_2_jnp = jnp.array(charges_overlap_2_np)
+        centers_w_H_1_jnp = jnp.array(centers_w_H_1_np)
+        centers_w_H_2_jnp = jnp.array(centers_w_H_2_np)
+        partial_charges_1_jnp = jnp.array(partial_charges_1_np)
+        partial_charges_2_jnp = jnp.array(partial_charges_2_np)
+        points_1_jnp = jnp.array(points_1_np)
+        points_2_jnp = jnp.array(points_2_np)
+        point_charges_1_jnp = jnp.array(point_charges_1_np)
+        point_charges_2_jnp = jnp.array(point_charges_2_np)
+        radii_1_jnp = jnp.array(radii_1_np)
+        radii_2_jnp = jnp.array(radii_2_np)
+    else:
+        centers_1_jnp = None
+        centers_2_jnp = None
+        charges_overlap_1_jnp = None
+        charges_overlap_2_jnp = None
+        centers_w_H_1_jnp = None
+        centers_w_H_2_jnp = None
+        partial_charges_1_jnp = None
+        partial_charges_2_jnp = None
+        points_1_jnp = None
+        points_2_jnp = None
+        point_charges_1_jnp = None
+        point_charges_2_jnp = None
+        radii_1_jnp = None
+        radii_2_jnp = None
 
     return (centers_1_np, centers_2_np, charges_overlap_1_np, charges_overlap_2_np,
             centers_w_H_1_np, centers_w_H_2_np, partial_charges_1_np, partial_charges_2_np,
@@ -440,6 +449,7 @@ class TestElectrostaticScoringTorch:
         np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
 
 # Placeholder for JAX tests
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 @pytest.mark.jax
 class TestElectrostaticScoringJAX:
     def test_VAB_2nd_order_esp_jax(self):
@@ -534,6 +544,7 @@ class TestElectrostaticScoringJAX:
                                            alpha, lam_comp, probe_radius, esp_weight)
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5)
 
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 @pytest.mark.jax
 class TestElectrostaticScoringJAXBatched:
     def test_VAB_2nd_order_esp_jax_vmap_batch(self):

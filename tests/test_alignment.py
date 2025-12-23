@@ -1,46 +1,47 @@
 """
 Tests for alignment function consistency between PyTorch and Jax.
 """
-import os
 import pytest
 import torch
 import numpy as np
-import jax.numpy as jnp
-
 from shepherd_score.alignment import (
     optimize_ROCS_overlay,
     optimize_ROCS_esp_overlay,
     optimize_esp_combo_score_overlay,
     optimize_pharm_overlay,
 )
-from shepherd_score.alignment_jax import (
-    optimize_ROCS_overlay_jax,
-    optimize_ROCS_esp_overlay_jax,
-    optimize_esp_combo_score_overlay_jax,
-    optimize_pharm_overlay_jax,
-)
-from shepherd_score.alignment_jax import convert_to_jnp_array
 from shepherd_score.score.constants import P_TYPES
+from .utils import _configure_jax_platform
 
-# Configure JAX platform before import to avoid GPU errors
-def _configure_jax_platform():
-    """Configure JAX platform based on GPU availability."""
-    try:
-        # Try to detect GPU through other means first
-        import subprocess
-        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-        gpu_detected = result.returncode == 0
-    except (FileNotFoundError, subprocess.SubprocessError):
-        gpu_detected = False
-    
-    if not gpu_detected:
-        # Force JAX to use CPU only if no GPU detected
-        os.environ['JAX_PLATFORMS'] = 'cpu'
-    
-    return gpu_detected
+# Attempt to import JAX and related modules
+JAX_AVAILABLE = False
+jnp = None
+optimize_ROCS_overlay_jax = None
+optimize_ROCS_esp_overlay_jax = None
+optimize_esp_combo_score_overlay_jax = None
+optimize_pharm_overlay_jax = None
+convert_to_jnp_array = None
 
-# Pre-configure JAX platform
-_gpu_detected_early = _configure_jax_platform()
+try:
+    # Configure JAX platform before import to avoid GPU initialization errors
+    _gpu_detected = _configure_jax_platform()
+    
+    import jax.numpy as jnp
+    from shepherd_score.alignment_jax import (
+        optimize_ROCS_overlay_jax,
+        optimize_ROCS_esp_overlay_jax,
+        optimize_esp_combo_score_overlay_jax,
+        optimize_pharm_overlay_jax,
+        convert_to_jnp_array,
+    )
+    
+    JAX_AVAILABLE = True
+except ImportError:
+    # JAX not available - all tests will be skipped since they require JAX for comparison
+    pass
+
+# Skip all tests in this module if JAX is not available
+pytestmark = pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed - required for PyTorch/JAX consistency tests")
 
 # Helper to convert JAX output to torch for comparison
 def jax_outputs_to_torch(aligned_points_jax, transform_jax, score_jax):
