@@ -14,10 +14,10 @@ import pandas as pd
 from rdkit import Chem
 
 if any(d.metadata["Name"] == 'rdkit' for d in distributions()):
-    from rdkit.Contrib.SA_Score import sascorer
+    from rdkit.Contrib.SA_Score import sascorer # type: ignore
 else:
     sys.path.append(os.path.join(os.environ['CONDA_PREFIX'],'share','RDKit','Contrib'))
-    from SA_Score import sascorer
+    from SA_Score import sascorer # type: ignore
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
@@ -138,7 +138,7 @@ class ConfEval:
                                                                           num_cores=num_processes,
                                                                           temp_dir=TMPDIR)
             self.partial_charges = np.array(self.partial_charges)
-        except Exception as _:
+        except Exception:
             pass
         self.is_valid = self.mol is not None and self.partial_charges is not None
         if self.is_valid:
@@ -158,7 +158,7 @@ class ConfEval:
             # 5. Check if relaxed_structure is valid
             self.mol_post_opt = extract_mol_from_xyz_block(xyz_block=self.xyz_block_post_opt,
                                                            charge=self.charge)
-        except Exception as _:
+        except Exception:
             pass
 
         self.is_valid_post_opt = self.mol_post_opt is not None and self.partial_charges_post_opt is not None

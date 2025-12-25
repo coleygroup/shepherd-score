@@ -6,7 +6,7 @@ Requires Biopython, ProLIF, MDAnalysis.
 """
 
 from pathlib import Path
-from typing import Union, Tuple
+from typing import Tuple
 
 import numpy as np
 from Bio.PDB import PDBParser, PDBIO

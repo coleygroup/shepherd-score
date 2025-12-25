@@ -12,6 +12,7 @@ import os
 from typing import List, Literal
 from rdkit import Chem
 
+# From ZINC22 build pipeline
 BAD_CHARGES = [
     '[C-]',
     '[CH-]',

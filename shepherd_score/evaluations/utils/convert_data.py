@@ -203,7 +203,7 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
     for charge in [0, 1, -1, 2, -2]:
         try:
             mol = extract_mol_from_xyz_block(xyz_block=xyz_block, charge=charge)
-        except Exception as _:
+        except Exception:
             mol = None
 
         if mol is not None:

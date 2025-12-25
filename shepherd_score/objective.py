@@ -119,7 +119,7 @@ class GeneralObjective:
             try:
                 ref_mol.GetConformer()
                 has_conformer = True
-            except Exception as _:
+            except Exception:
                 has_conformer = False
 
             if not has_conformer:
@@ -387,7 +387,7 @@ class GeneralObjective:
                                              num_conformers=num_conformers,
                                              trans_init=trans_init,
                                              use_jax=use_jax))
-                except Exception as _:
+                except Exception:
                     scores.append(-1.)
 
             self.buffer[smi] = scores[-1] # store {smiles : score}
@@ -654,7 +654,7 @@ class Objective:
             try:
                 # Canonicalize smiles
                 smi = Chem.CanonSmiles(smi)
-            except Exception as _:
+            except Exception:
                 # if not a valid smiles skip
                 scores.append(-1.)
                 self.buffer[smi] = {'esp': None,
@@ -673,7 +673,7 @@ class Objective:
                         use_jax=use_jax
                     )
                     scores.append(esp_score + pharm_score)
-                except Exception as _:
+                except Exception:
                     scores.append(-1.)
                     esp_score = None
                     pharm_score = None

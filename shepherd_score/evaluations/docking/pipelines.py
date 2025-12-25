@@ -225,7 +225,6 @@ class DockingEvalPipeline:
             verbose=self.verbose
         )
 
-
     def evaluate(self,
                  smiles_ls: List[str],
                  exhaustiveness: int = 32,
@@ -385,7 +384,8 @@ class DockingEvalPipeline:
                         )
                         energies.append((idx, float(energy)))
                         self.buffer[smiles] = float(energy)
-                    except Exception as _:
+
+                    except Exception:
                         energies.append((idx, np.nan))
                         self.buffer[smiles] = float(np.nan)
                         self.num_failed += 1
@@ -394,7 +394,6 @@ class DockingEvalPipeline:
         energies.sort(key=lambda x: x[0])
         self.energies = np.array([e[1] for e in energies])
         return [e[1] for e in energies]
-
 
     def evaluate_relax(self,
                        mol_ls: List[Chem.Mol],
@@ -421,7 +420,6 @@ class DockingEvalPipeline:
         save_poses_dir_path : Optional[str] (default = None) Path to directory to save optimized poses.
         verbose : bool (default = False) show tqdm progress bar for each mol.
         num_workers : int (default = 1) number of parallel worker processes. 
-            Only recommended if `mol_ls` is > 100 due to start-up overhead of new processes.
         mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
 
         Returns
@@ -516,7 +514,7 @@ class DockingEvalPipeline:
                     if res['relaxed_mol'] is not None:
                         try:
                             relaxed_mol = pickle.loads(res['relaxed_mol'])
-                        except Exception as _:
+                        except Exception:
                             relaxed_mol = None
                     relaxed_mols.append((idx, relaxed_mol))
                     smiles_str = Chem.MolToSmiles(Chem.RemoveHs(mols_to_process[idx]))
@@ -564,10 +562,11 @@ class DockingEvalPipeline:
                         )
                         energies.append((idx, float(total_energy)))
                         relaxed_mols.append((idx, optimized_mol))
-                    except Exception as _:
+                    except Exception:
                         energies.append((idx, np.nan))
                         relaxed_mols.append((idx, None))
                         self.num_failed += 1
+
                     smiles_str = Chem.MolToSmiles(Chem.RemoveHs(mol))
                     if smiles_str is not None:
                         self.buffer_relaxed[smiles_str]['energy'] = float(total_energy)
@@ -581,7 +580,6 @@ class DockingEvalPipeline:
         energies.sort(key=lambda x: x[0])
         relaxed_mols.sort(key=lambda x: x[0])
         return np.array([e[1] for e in energies])
-
 
     def benchmark(self,
                   exhaustiveness: int = 32,
@@ -617,7 +615,6 @@ class DockingEvalPipeline:
         )
         return best_energy
 
-
     def to_pandas(self) -> pd.DataFrame:
         """
         Convert the attributes of generated smiles and the energies to a pd.DataFrame
@@ -641,6 +638,7 @@ class DockingEvalPipeline:
         """
         df_relaxed = pd.DataFrame(self.buffer_relaxed)
         return df_relaxed
+
 
 def run_docking_benchmark(save_dir_path: str,
                           pdb_id: str,
@@ -721,7 +719,6 @@ def run_docking_evaluation(atoms: List[np.ndarray],
     save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
     verbose : bool (default = True) show tqdm progress bar for each SMILES.
     num_workers : int (default = 1) number of parallel worker processes. 
-        Only recommended if `smiles_list` is > 100 due to start-up overhead of new processes.
     mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
 
     Returns
@@ -785,7 +782,6 @@ def run_docking_evaluation_from_smiles(smiles: List[str],
     save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
     verbose : bool (default = True) show tqdm progress bar for each SMILES.
     num_workers : int (default = 1) number of parallel worker processes. 
-        Only recommended if `smiles` is > 100 due to start-up overhead of new processes.
     mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
 
     Returns

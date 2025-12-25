@@ -5,8 +5,7 @@ Requires:
 - xtb installation 
     - command-line access
     - https://xtb-docs.readthedocs.io/en/latest/setup.html
-        - conda config --add channels conda-forge
-        - conda install xtb
+    - install from source (not conda)
 """
 import os
 from copy import deepcopy
@@ -21,11 +20,9 @@ from typing import Optional, List
 import contextlib
 import multiprocessing
 
-import rdkit
-import rdkit.Chem
-import rdkit.Chem.AllChem
+from rdkit import Chem
+from rdkit.Chem import AllChem
 from rdkit.Geometry import Point3D
-from rdkit.Chem import rdDistGeom
 from rdkit.Chem import rdMolAlign
 from rdkit.ML.Cluster import Butina
 
@@ -53,7 +50,7 @@ def set_thread_limits(num_threads: int):
                 os.environ[var] = val
 
 
-def update_mol_coordinates(mol: rdkit.Chem.Mol, coordinates) -> rdkit.Chem.Mol:
+def update_mol_coordinates(mol: Chem.Mol, coordinates) -> Chem.Mol:
     """
     Updates the coordinates of a 3D RDKit mol object with a new set of coordinates
     
@@ -82,7 +79,7 @@ def read_multi_xyz_file(file_dir: str):
         all_coordinates -- list of lists containing the coordinates of each structure in the xyz file
         all_elements -- list of lists containing the element types of each atom in each structure
     """
-    atom_types = [rdkit.Chem.GetPeriodicTable().GetElementSymbol(i) for i in range(1, 119)]
+    atom_types = [Chem.GetPeriodicTable().GetElementSymbol(i) for i in range(1, 119)]
     with open(file_dir, 'r') as file:
         lines = file.readlines()
         all_coordinates = []
@@ -118,7 +115,7 @@ def read_multi_xyz_file(file_dir: str):
     return all_coordinates, all_elements
 
 
-def embed_conformer(mol: rdkit.Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
+def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
     """
     Embeds a mol object into a 3D RDKit mol object with ETKDG (and optional MMFF94)
 
@@ -131,13 +128,13 @@ def embed_conformer(mol: rdkit.Chem.Mol, attempts: int=50, MMFF_optimize: bool=F
         mol -- RDKit mol object with 3D coordinates
     """
     try:
-        mol = rdkit.Chem.AddHs(mol)
-        rdkit.Chem.AllChem.EmbedMolecule(mol, maxAttempts = attempts)
+        mol = Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol, maxAttempts = attempts)
         if MMFF_optimize:
-            rdkit.Chem.AllChem.MMFFOptimizeMolecule(mol)
+            AllChem.MMFFOptimizeMolecule(mol)
 
         mol.GetConformer() # test whether conformer generation succeeded
-    except Exception as e:
+    except Exception:
         return None
 
     return mol
@@ -156,7 +153,7 @@ def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: 
         mol -- RDKit mol object with 3D coordinates
     """
     try:
-        mol = rdkit.Chem.MolFromSmiles(smiles)
+        mol = Chem.MolFromSmiles(smiles)
     except Exception as e:
         print('Error in SMILES string when embedding molecule:', e)
         return None
@@ -176,13 +173,13 @@ def conf_to_mol(mol, conf_id):
         new_mol -- mol object with only 1 conformer (the selected conformer)
     """
     conf = mol.GetConformer(conf_id)
-    new_mol = rdkit.Chem.Mol(mol)
+    new_mol = Chem.Mol(mol)
     new_mol.RemoveAllConformers()
-    new_mol.AddConformer(rdkit.Chem.Conformer(conf))
+    new_mol.AddConformer(Chem.Conformer(conf))
     return new_mol
 
 
-def generate_conformer_ensemble(mol_3d: rdkit.Chem.Mol,
+def generate_conformer_ensemble(mol_3d: Chem.Mol,
                                 num_confs: int=100,
                                 num_threads: int = 4,
                                 threshold: float = 0.25,
@@ -203,7 +200,7 @@ def generate_conformer_ensemble(mol_3d: rdkit.Chem.Mol,
     """
     mol_3d = deepcopy(mol_3d)
 
-    cids = rdkit.Chem.AllChem.EmbedMultipleConfs(
+    cids = AllChem.EmbedMultipleConfs(
         mol_3d,
         clearConfs=True,
         numConfs=num_confs,
@@ -214,7 +211,7 @@ def generate_conformer_ensemble(mol_3d: rdkit.Chem.Mol,
 
     if num_opt_steps > 0:
         for cid in cids:
-            rdkit.Chem.AllChem.MMFFOptimizeMolecule(
+            AllChem.MMFFOptimizeMolecule(
                 mol_3d,
                 confId=cid,
                 mmffVariant='MMFF94',
@@ -241,8 +238,8 @@ def cluster_conformers_butina(conformers, threshold: float = 0.2, num_max_confor
     dists = []
     for i, conformer_i in enumerate(conformers):
         for j in range(i):
-            mol_i = rdkit.Chem.RemoveHs(deepcopy(conformer_i))
-            mol_j = rdkit.Chem.RemoveHs(deepcopy(conformers[j]))
+            mol_i = Chem.RemoveHs(deepcopy(conformer_i))
+            mol_j = Chem.RemoveHs(deepcopy(conformers[j]))
             dists.append(rdMolAlign.GetBestRMS(mol_i, mol_j))
 
     clusts = Butina.ClusterData(dists, len(conformers), threshold, isDistData=True, reordering=True)
@@ -258,7 +255,7 @@ def cluster_conformers_butina(conformers, threshold: float = 0.2, num_max_confor
     return select_confs
 
 
-def optimize_conformer_with_xtb(conformer: rdkit.Chem.Mol,
+def optimize_conformer_with_xtb(conformer: Chem.Mol,
                                 solvent: Optional[str] = None,
                                 num_cores: int = 1,
                                 charge: int = 0,
@@ -290,7 +287,7 @@ def optimize_conformer_with_xtb(conformer: rdkit.Chem.Mol,
             out_dir.mkdir(exist_ok=True)
 
             input_file = 'input_mol.xyz'
-            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, str(out_dir/input_file))
+            Chem.rdmolfiles.MolToXYZFile(mol, str(out_dir/input_file))
 
             if solvent is not None:
                 subprocess.check_call(
@@ -414,7 +411,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
         return (xtb_xyz_block, energy, charges)
 
 
-def charges_from_single_point_conformer_with_xtb(conformer: rdkit.Chem.Mol,
+def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                                                  solvent: Optional[str] = None,
                                                  num_cores: int = 1,
                                                  charge: int = 0,
@@ -448,7 +445,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: rdkit.Chem.Mol,
             out_dir.mkdir(exist_ok=True)
 
             input_file = 'input_mol.xyz'
-            rdkit.Chem.rdmolfiles.MolToXYZFile(mol, str(out_dir/input_file))
+            Chem.rdmolfiles.MolToXYZFile(mol, str(out_dir/input_file))
 
             if solvent is not None:
                 subprocess.check_call(
@@ -555,7 +552,7 @@ def _optimize_conformer_worker(params):
     """Worker function for multiprocessing - must be at module level for pickling"""
     return optimize_conformer_with_xtb(*params)
 
-def optimize_conformer_ensemble_with_xtb(conformers: List[rdkit.Chem.Mol],
+def optimize_conformer_ensemble_with_xtb(conformers: List[Chem.Mol],
                                        solvent: Optional[str] = None,
                                        num_processes: int = 1,
                                        num_workers: int = 1,
@@ -615,7 +612,7 @@ def optimize_conformer_ensemble_with_xtb(conformers: List[rdkit.Chem.Mol],
     ctx = multiprocessing.get_context('spawn')
 
     args = [
-        (conf, solvent, num_processes, rdkit.Chem.GetFormalCharge(conf), temp_dir) for conf in conformers
+        (conf, solvent, num_processes, Chem.GetFormalCharge(conf), temp_dir) for conf in conformers
     ]
 
     with ctx.Pool(processes=num_workers) as pool:
