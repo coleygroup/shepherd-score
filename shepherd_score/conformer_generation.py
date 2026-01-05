@@ -26,6 +26,11 @@ from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign
 from rdkit.ML.Cluster import Butina # type: ignore
 
+TMPDIR = os.environ.get('TMPDIR', '')
+if TMPDIR == '' and Path('/tmp').is_dir():
+    TMPDIR = '/tmp'
+TMPDIR = Path(TMPDIR)
+
 
 @contextlib.contextmanager
 def set_thread_limits(num_threads: int):
@@ -259,7 +264,7 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                                 solvent: Optional[str] = None,
                                 num_cores: int = 1,
                                 charge: int = 0,
-                                temp_dir: str = ''):
+                                temp_dir: str | Path = TMPDIR):
     """
     Uses external calls to GFN2-XTB (command line) to optimize a conformer geometry
     
@@ -269,7 +274,8 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
             Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
         num_cores -- number of cpu cores to be used in the xtb geometry optimization
         charge -- int of the molecular charge
-        temp_dir -- str temporary directory for I/O
+        temp_dir -- str or Path temporary directory for I/O
+            Default is the system temporary directory.
     
     Returns: 
         (xtb_mol, energy, charges) -- tuple of optimized RDKit mol object, xtb energy (in Hartrees)
@@ -283,6 +289,8 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
         out_dir = Path(f'temp_xtb_opt_{rand}/')
         try:
             if temp_dir != '':
+                if isinstance(temp_dir, str):
+                    temp_dir = Path(temp_dir)
                 out_dir = temp_dir / out_dir
             out_dir.mkdir(exist_ok=True)
 
@@ -336,7 +344,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                                                solvent: Optional[str] = None,
                                                num_cores: int = 1,
                                                charge: int = 0,
-                                               temp_dir: str = ''):
+                                               temp_dir: str | Path = TMPDIR):
     """
     Uses external calls to GFN2-XTB (command line) to optimize an set of coordinates provided
     as an xyz block.
@@ -347,7 +355,8 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
             Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
         num_cores -- number of cpu cores to be used in the xtb geometry optimization
         charge -- int of the molecular charge
-        temp_dir -- str temporary directory for I/O
+        temp_dir -- str or Path temporary directory for I/O
+            Default is the system temporary directory.
     
     Returns: 
         (xtb_mol, energy, charges) -- tuple of optimized RDKit mol object, xtb energy (in Hartrees)
@@ -359,6 +368,8 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
         out_dir = Path(f'temp_xtb_opt_{rand}/')
         try:
             if temp_dir != '':
+                if isinstance(temp_dir, str):
+                    temp_dir = Path(temp_dir)
                 out_dir = temp_dir / out_dir
             out_dir.mkdir(exist_ok=True)
 
@@ -415,7 +426,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                                                  solvent: Optional[str] = None,
                                                  num_cores: int = 1,
                                                  charge: int = 0,
-                                                 temp_dir: str = ''
+                                                 temp_dir: str | Path = TMPDIR
                                                  ):
     """
     Uses external calls to GFN2-XTB (command line) to compute the atomic partial charges from
@@ -427,7 +438,8 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
             Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
         num_cores -- number of cpu cores to be used in the xtb geometry optimization
         charge -- int of the molecular charge
-        temp_dir -- str temporary directory for I/O
+        temp_dir -- str or Path temporary directory for I/O
+            Default is the system temporary directory.
     
     Returns: 
         charges -- list of partial charges for each atom (in e-)
@@ -441,6 +453,8 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
         out_dir = Path(f'temp_xtb_opt_{rand}/')
         try:
             if temp_dir != '':
+                if isinstance(temp_dir, str):
+                    temp_dir = Path(temp_dir)
                 out_dir = temp_dir / out_dir
             out_dir.mkdir(exist_ok=True)
 
@@ -479,7 +493,7 @@ def single_point_xtb_from_xyz(xyz_block: str,
                               solvent: Optional[str] = None,
                               num_cores: int = 1,
                               charge: int = 0,
-                              temp_dir: str = ''):
+                              temp_dir: str | Path = TMPDIR):
     """
     Uses external calls to GFN2-XTB (command line) to compute the energy and atomic partial charges
     from a single point calculation of a provided conformer.
@@ -490,7 +504,8 @@ def single_point_xtb_from_xyz(xyz_block: str,
             Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
         num_cores -- number of cpu cores to be used in the xtb geometry optimization
         charge -- int of the molecular charge
-        temp_dir -- str temporary directory for I/O
+        temp_dir -- str or Path temporary directory for I/O
+            Default is the system temporary directory.
     
     Returns: 
         energy -- float xtb energy in Hartrees
@@ -503,6 +518,8 @@ def single_point_xtb_from_xyz(xyz_block: str,
         out_dir = Path(f'temp_xtb_opt_{rand}/')
         try:
             if temp_dir != '':
+                if isinstance(temp_dir, str):
+                    temp_dir = Path(temp_dir)
                 out_dir = temp_dir / out_dir
             out_dir.mkdir(exist_ok=True)
 
@@ -557,7 +574,7 @@ def optimize_conformer_ensemble_with_xtb(conformers: List[Chem.Mol],
                                        num_processes: int = 1,
                                        num_workers: int = 1,
                                        charge: int = 0,
-                                       temp_dir: str = '',
+                                       temp_dir: str | Path = TMPDIR,
                                        verbose: bool = False):
     """
     GFN2-XTB geometry optimization for a list of conformers.
@@ -570,7 +587,8 @@ def optimize_conformer_ensemble_with_xtb(conformers: List[Chem.Mol],
         num_workers: number of parallel workers (processes) to distribute conformers across.
             Disclaimer: ensure num_workers * num_processes <= available CPUs to avoid oversubscription.
         charge: molecular charge. RDKit will be used to compute the formal charge if len(conformers) > 1
-        temp_dir: temporary directory for XTB I/O.
+        temp_dir: str or Path temporary directory for I/O
+            Default is the system temporary directory.
         verbose: show a simple progress bar in single-process mode.
 
     Returns:
@@ -631,7 +649,7 @@ def generate_opt_conformers_xtb(smiles: str,
                                 MMFF_optimize: bool = True,
                                 num_processes: int = 1,
                                 num_workers: int = 1,
-                                temp_dir: str = '',
+                                temp_dir: str | Path = TMPDIR,
                                 verbose: bool = False,
                                 num_confs: int = 1000):
     """
@@ -646,7 +664,8 @@ def generate_opt_conformers_xtb(smiles: str,
             Solvent that is supported by XTB (https://xtb-docs.readthedocs.io/en/latest/gbsa.html)
         num_workers -- number of parallel workers (processes) to distribute conformers across.
             Disclaimer: ensure num_workers * num_processes <= available CPUs to avoid oversubscription.
-        temp_dir -- str temporary directory for I/O
+        temp_dir -- str or Path temporary directory for I/O
+            Default is the system temporary directory.
         verbose -- bool toggle tqdm
         num_confs -- int number of conformers to initially generate
     
