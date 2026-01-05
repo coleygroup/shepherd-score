@@ -361,8 +361,10 @@ def VAB_2nd_order_cosine_mask(centers_1: torch.Tensor,
         V2_weighted_permuted = (V2_sim_permuted + 2.) / 3. # Following PheSA's suggestion for weighting
 
         # Prepare masks
-        if m1_final.dim() == 1: m1_final = m1_final.unsqueeze(0)
-        if m2_final.dim() == 1: m2_final = m2_final.unsqueeze(0)
+        if m1_final.dim() == 1:
+            m1_final = m1_final.unsqueeze(0)
+        if m2_final.dim() == 1:
+            m2_final = m2_final.unsqueeze(0)
         mask_mat_permuted = (m1_final.unsqueeze(2) * m2_final.unsqueeze(1)).permute(0, 2, 1) # (B, N2, N1)
 
         VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /

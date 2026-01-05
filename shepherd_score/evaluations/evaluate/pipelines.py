@@ -16,22 +16,22 @@ import pandas as pd
 from rdkit import Chem
 
 if any(d.metadata["Name"] == 'rdkit' for d in distributions()):
-    from rdkit.Contrib.SA_Score import sascorer
+    from rdkit.Contrib.SA_Score import sascorer  # type: ignore
 else:
     sys.path.append(os.path.join(os.environ['CONDA_PREFIX'],'share','RDKit','Contrib'))
-    from SA_Score import sascorer
+    from SA_Score import sascorer  # type: ignore
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.DataStructs import TanimotoSimilarity
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos   # noqa: F401
+from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos # noqa: F401
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 
-from shepherd_score.container import Molecule, MoleculePair  # noqa: F401
+from shepherd_score.container import Molecule, MoleculePair # noqa: F401
 from shepherd_score.score.gaussian_overlap_np import get_overlap_np
 from shepherd_score.score.electrostatic_scoring_np import get_overlap_esp_np
-from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
+from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np # noqa: F401
 
 from shepherd_score.conformer_generation import set_thread_limits
 

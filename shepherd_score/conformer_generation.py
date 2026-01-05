@@ -24,7 +24,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign
-from rdkit.ML.Cluster import Butina
+from rdkit.ML.Cluster import Butina # type: ignore
 
 
 @contextlib.contextmanager
