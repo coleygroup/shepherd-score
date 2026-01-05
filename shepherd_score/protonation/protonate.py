@@ -12,6 +12,9 @@ import os
 from typing import List, Literal
 from rdkit import Chem
 
+from rdkit.Chem.MolStandardize import ChargeParent
+from rdkit.rdBase import BlockLogs
+
 # From ZINC22 build pipeline
 BAD_CHARGES = [
     '[C-]',
@@ -32,6 +35,7 @@ def neutralize_atoms(mol: Chem.Mol) -> Chem.Mol:
     """
     Attempts to neutralize every atom of a molecule by adding/removing hydrogens.
     It doesn't attempt to keep the formal charge of the original molecule.
+    Neutralizes more than the rdMolStandardize.Uncharger.
 
     Below is copied from:
     https://rdkit.org/docs/Cookbook.html
@@ -70,6 +74,18 @@ def neutralize_atoms(mol: Chem.Mol) -> Chem.Mol:
             atom.SetFormalCharge(0)
             atom.SetNumExplicitHs(hcount - chg)
             atom.UpdatePropertyCache()
+    return mol
+
+
+def force_neutralize(mol: Chem.Mol) -> Chem.Mol:
+    """
+    Force neutralize a molecule by adding/removing hydrogens.
+    Does not attempt to keep the formal charge of the original molecule.
+    First runs `neutralize_atoms`, then runs `rdMolStandardize.ChargeParent`.
+    """
+    with BlockLogs():
+        mol = neutralize_atoms(mol)
+        mol = ChargeParent(mol)
     return mol
 
 
