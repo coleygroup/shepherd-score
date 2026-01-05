@@ -12,7 +12,7 @@ import os
 from typing import List, Literal
 from rdkit import Chem
 
-from rdkit.Chem.MolStandardize import ChargeParent
+from rdkit.Chem.MolStandardize.rdMolStandardize import ChargeParent
 from rdkit.rdBase import BlockLogs
 
 # From ZINC22 build pipeline
@@ -124,9 +124,12 @@ def protonate_smiles(smiles: str,
                      chemaxon_license_path: str | None = None,
                      ) -> List[str]:
     """
-    Protonate SMILES string with OpenBabel at given pH.
+    Protonate SMILES string with MolScrub, OpenBabel, or ChemAxon at given pH.
 
-    Adapted from DockString:
+    ChemAxon requires `cxcalc` and `molconvert` executables to be installed with relevant license
+    as input or set to the `CHEMAXON_LICENSE_URL` environment variable.
+
+    OpenBabel workflow adapted from DockString:
     https://github.com/dockstring/dockstring/blob/main/dockstring/utils.py#L330
 
     Arguments
