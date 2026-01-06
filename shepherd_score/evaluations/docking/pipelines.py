@@ -58,6 +58,7 @@ def _eval_docking_single(
     exhaustiveness: int,
     n_poses: int,
     protonate: bool,
+    return_best_protomer: bool,
     save_poses_path: Optional[str],
 ) -> Dict[str, Any]:
     """
@@ -79,17 +80,28 @@ def _eval_docking_single(
         # (set_ligand_from_string should replace previous ligand, but this ensures clean state)
         _worker_vina_smiles.state = None
 
-        energy = _worker_vina_smiles(
+        energy, docked_mol = _worker_vina_smiles(
             ligand_smiles=smiles,
             output_file=save_poses_path,
             exhaustiveness=exhaustiveness,
             n_poses=n_poses,
             protonate=protonate,
+            return_best_protomer=True,
         )
 
-        return {'i': i, 'energy': float(energy), 'error': None}
+        # Pickle the docked mol for return
+        docked_mol_pickle = None
+        if docked_mol is not None:
+            docked_mol_pickle = pickle.dumps(docked_mol)
+
+        return {
+            'i': i,
+            'energy': float(energy),
+            'error': None,
+            'docked_mol': docked_mol_pickle,
+        }
     except Exception as e:
-        return {'i': i, 'energy': np.nan, 'error': str(e)}
+        return {'i': i, 'energy': np.nan, 'error': str(e), 'docked_mol': None}
 
 
 def _unpack_eval_docking_single(args):
@@ -234,6 +246,7 @@ class DockingEvalPipeline:
                  verbose: bool = False,
                  num_workers: int = 1,
                  num_processes: int = 4,
+                 return_best_protomer: bool = False,
                  *,
                  mp_context: Literal['spawn', 'forkserver'] = 'spawn'
                  ) -> List[float]:
@@ -271,7 +284,7 @@ class DockingEvalPipeline:
         for i, smiles in enumerate(smiles_ls):
             if smiles in self.buffer:
                 self.repeats += 1
-                energies.append((i, self.buffer[smiles]))
+                energies.append((i, self.buffer[smiles]['energy']))
             elif smiles is None:
                 energies.append((i, np.nan))
                 self.num_failed += 1
@@ -307,7 +320,8 @@ class DockingEvalPipeline:
                     smiles,
                     exhaustiveness,
                     n_poses,
-                    protonate,
+                    protonate if not return_best_protomer else True,
+                    return_best_protomer,
                     save_poses_path,
                 ))
 
@@ -342,8 +356,18 @@ class DockingEvalPipeline:
 
                     # Update buffer
                     smiles_str = smiles_ls[idx]
+                    docked_mol = None
+                    if res['docked_mol'] is not None:
+                        try:
+                            docked_mol = pickle.loads(res['docked_mol'])
+                        except Exception:
+                            docked_mol = None
                     if smiles_str is not None:
-                        self.buffer[smiles_str] = float(energy)
+                        self.buffer[smiles_str] = {'energy': float(energy), 'docked_mol': docked_mol}
+                        if return_best_protomer:
+                            self.buffer[smiles_str].update({'protomer_smiles': None})
+                            if docked_mol is not None:
+                                self.buffer[smiles_str]['protomer_smiles'] = Chem.MolToSmiles(Chem.RemoveHs(docked_mol))
                         if np.isnan(energy):
                             self.num_failed += 1
 
@@ -358,7 +382,9 @@ class DockingEvalPipeline:
                         energies.append((idx, np.nan))
                         smiles_str = smiles_ls[idx]
                         if smiles_str is not None:
-                            self.buffer[smiles_str] = float(np.nan)
+                            self.buffer[smiles_str] = {'energy': float(np.nan), 'docked_mol': None}
+                            if return_best_protomer:
+                                self.buffer[smiles_str].update({'protomer_smiles': None})
                         self.num_failed += 1
         else:
             # Single process evaluation
@@ -373,21 +399,31 @@ class DockingEvalPipeline:
                 for _, (idx, smiles) in pbar:
                     save_poses_path = None
                     if save_poses_dir_path is not None:
-                        save_poses_path = dir_path / f'{self.pdb_id}_docked{"_prot" if protonate else ""}_{idx}.pdbqt'
+                        if return_best_protomer:
+                            save_poses_path = dir_path / f'{self.pdb_id}_docked_best_prot_{idx}.pdbqt'
+                        else:
+                            save_poses_path = dir_path / f'{self.pdb_id}_docked{"_prot" if protonate else ""}_{idx}.pdbqt'
                     try:
-                        energy = self.vina_smiles(
+                        energy, docked_mol = self.vina_smiles(
                             ligand_smiles=smiles,
                             output_file=save_poses_path,
                             exhaustiveness=exhaustiveness,
                             n_poses=n_poses,
-                            protonate=protonate,
+                            protonate=protonate if not return_best_protomer else True,
+                            return_best_protomer=return_best_protomer,
                         )
                         energies.append((idx, float(energy)))
-                        self.buffer[smiles] = float(energy)
+                        self.buffer[smiles] = {'energy': float(energy), 'docked_mol': docked_mol}
+                        if return_best_protomer:
+                            self.buffer[smiles].update({'protomer_smiles': None})
+                            if docked_mol is not None:
+                                self.buffer[smiles]['protomer_smiles'] = Chem.MolToSmiles(Chem.RemoveHs(docked_mol))
 
                     except Exception:
                         energies.append((idx, np.nan))
-                        self.buffer[smiles] = float(np.nan)
+                        self.buffer[smiles] = {'energy': float(np.nan), 'docked_mol': None}
+                        if return_best_protomer:
+                            self.buffer[smiles].update({'protomer_smiles': None})
                         self.num_failed += 1
 
         # Sort by original index and extract energies
@@ -606,14 +642,14 @@ class DockingEvalPipeline:
             dir_path = Path(save_poses_dir_path)
             save_poses_path = dir_path / f"{self.pdb_id}_docked{'_prot' if protonate else ''}.pdbqt"
 
-        best_energy = self.vina_smiles(
+        best_energy, docked_ligand = self.vina_smiles(
             self.docking_target_info[self.pdb_id]['ligand'],
             output_file=str(save_poses_path),
             exhaustiveness=exhaustiveness,
             n_poses=n_poses,
             protonate=protonate,
         )
-        return best_energy
+        return best_energy, docked_ligand
 
     def to_pandas(self) -> pd.DataFrame:
         """

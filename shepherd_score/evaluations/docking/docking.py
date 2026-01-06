@@ -11,7 +11,7 @@ Requires:
 """
 import os
 import time
-from typing import Tuple, Optional, Literal
+from typing import Tuple, Optional, Literal, List
 from pathlib import Path
 import uuid
 
@@ -39,6 +39,22 @@ except ImportError:
     raise ImportError(
         "Please install meeko following guidance in https://meeko.readthedocs.io/en/release-doc/installation.html"
     )
+
+def embed_conformer_from_smiles_fixed(
+    smiles: str,
+    attempts: int=50,
+    MMFF_optimize: bool=True,
+    random_seed: int=123456789,
+) -> Chem.Mol:
+    """
+    Embeds a mol object into a 3D RDKit mol object with ETKDG (and optional MMFF94)
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    mol = Chem.AddHs(mol)
+    AllChem.EmbedMolecule(mol, randomSeed=random_seed, maxAttempts=attempts)
+    if MMFF_optimize:
+        AllChem.MMFFOptimizeMolecule(mol, maxIters=200)
+    return mol
 
 class VinaBase:
     """
@@ -86,7 +102,7 @@ class VinaBase:
         self.v.set_receptor(rigid_pdbqt_filename=receptor_pdbqt_file)
         try:
             self.v.compute_vina_maps(center=self.center, box_size=self.box_size)
-        except Exception as _:
+        except Exception:
             raise ValueError(
                 "Cannot compute the affinity map, please check center and box_size"
             )
@@ -104,7 +120,8 @@ class VinaBase:
         self,
         ligand_smiles: str,
         protonate: bool = False,
-    ) -> Chem.Mol:
+        return_all: bool = False,
+    ) -> List[Chem.Mol]:
         """
         Load ligand SMILES string into Vina.
         """
@@ -118,12 +135,19 @@ class VinaBase:
                 molconvert_exe=self.molconvert_exe,
                 chemaxon_license_path=self.chemaxon_license_path,
             )
-            ligand_smiles = protomers[0]
-        m = Chem.MolFromSmiles(ligand_smiles)
-        m = Chem.AddHs(m)
-        AllChem.EmbedMolecule(m, randomSeed=123456789, maxAttempts=100)
-        AllChem.MMFFOptimizeMolecule(m, maxIters=200)
-        return m
+            if return_all:
+                ligand_smiles = protomers
+            else:
+                ligand_smiles = [protomers[0]]
+        else:
+            ligand_smiles = [ligand_smiles]
+
+        mols = []
+        for smi in ligand_smiles:
+            m = embed_conformer_from_smiles_fixed(smi, MMFF_optimize=True, random_seed=123456789)
+            if m is not None:
+                mols.append(m)
+        return mols
 
     def load_ligand_from_sdf(
         self,
@@ -135,7 +159,13 @@ class VinaBase:
         mol = Chem.SDMolSupplier(sdf_file, removeHs=False)[0]
         
         if mol.GetNumConformers() == 0:
-            mol = self.load_ligand_from_smiles(Chem.MolToSmiles(mol))
+            mols = self.load_ligand_from_smiles(Chem.MolToSmiles(mol))
+            if len(mols) > 0:
+                mol = mols[0]
+            else:
+                raise ValueError(
+                    f"Failed to load SDF file and could not embed conformer: {sdf_file}"
+                )
         return mol
 
     def _prep_ligand(
@@ -390,7 +420,8 @@ class VinaSmiles(VinaBase):
                  exhaustiveness: int = 8,
                  n_poses: int = 5,
                  protonate: bool = False,
-                 ) -> float:
+                 return_best_protomer: bool = False,
+                 ) -> Tuple[float, Chem.Mol]:
         """
         Score ligand by docking in receptor.
 
@@ -401,16 +432,36 @@ class VinaSmiles(VinaBase):
         exhaustiveness : int (default = 8) Number of Monte Carlo simulations to run per pose.
         n_poses : int (default = 5) Number of poses to save.
         protonate : bool (default = False) (de-)protonate ligand with OpenBabel at pH=7.4
+        return_best_protomer: bool (default = False) Evaluate all protomers and return the best
+        energy and pose / protomer which may be different from the input SMILES.
 
         Returns
         -------
-        float : energy (affinity) in kcal/mol
+        Tuple
+            float : energy (affinity) in kcal/mol
+            Chem.Mol : docked ligand
         """
-        ligand = self.load_ligand_from_smiles(ligand_smiles, protonate=protonate)
-        total_energy, _, _ = self.dock_ligand(
-            ligand=ligand,
-            output_file=output_file,
-            exhaustiveness=exhaustiveness,
-            n_poses=n_poses,
-        )
-        return total_energy
+        if not return_best_protomer:
+            ligand = self.load_ligand_from_smiles(ligand_smiles, protonate=protonate, return_all=False)
+            total_energy, _, docked_mol = self.dock_ligand(
+                ligand=ligand,
+                output_file=output_file,
+                exhaustiveness=exhaustiveness,
+                n_poses=n_poses,
+            )
+            return total_energy, docked_mol
+        else:
+            protomers = self.load_ligand_from_smiles(ligand_smiles, protonate=protonate, return_all=True)
+            best_energy = np.inf
+            best_protomer = None
+            for protomer in protomers:
+                total_energy, _, docked_mol = self.dock_ligand(
+                    ligand=protomer,
+                    output_file=output_file,
+                    exhaustiveness=exhaustiveness,
+                    n_poses=n_poses,
+                )
+                if total_energy < best_energy:
+                    best_energy = total_energy
+                    best_protomer = docked_mol
+            return best_energy, best_protomer
