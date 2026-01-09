@@ -1,5 +1,6 @@
 slurm/
 extra_scripts/
+tests/test_parallel.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
