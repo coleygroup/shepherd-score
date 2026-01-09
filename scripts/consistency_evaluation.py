@@ -50,21 +50,21 @@ def run_consistency_evaluation(load_dir: str,
     if not load_dir_path.is_dir():
         raise ValueError(f'Provided path is not a directory: {load_dir_path}')
 
-    save_file_dir = load_dir_path / f'consis_evals'
+    save_file_dir = load_dir_path / 'consis_evals'
     save_file_dir.mkdir(parents=True, exist_ok=True)
 
     if condition in ('x1x2', 'x1x3', 'x1x4'):
-        load_file_path = load_dir_path / f'samples.pickle'
+        load_file_path = load_dir_path / 'samples.pickle'
         save_file_path = save_file_dir / 'consis_eval'
     else:
         load_file_path = load_dir_path / 'samples_noisy.pickle'
         save_file_path = save_file_dir / 'consis_eval'
     print(f'Saving to {save_file_path}')
-    
+
     with open(load_file_path, 'rb') as f:
         samples = pickle.load(f)
     print(f'Samples loaded from {load_file_path}')
-    
+
 
     ls_atoms_pos = []
     if condition == 'x1x2' or condition == 'x1x3' or condition == 'x1x3x4':
@@ -93,7 +93,7 @@ def run_consistency_evaluation(load_dir: str,
             ls_pharm_feats.append(
                 (samples[i]['x4']['types'], samples[i]['x4']['positions'], samples[i]['x4']['directions'])
             )
-    
+
     if condition == 'x1x3x4':
         assert isinstance(ls_surf_points, list) and isinstance(ls_surf_esp, list) and isinstance(ls_pharm_feats, list)
     elif condition == 'x1x2':
@@ -130,9 +130,9 @@ def run_consistency_evaluation(load_dir: str,
     # Save values to numpy object
     save_global_series, save_local_df = consis_pipeline.to_pandas()
 
-    save_file_global = save_file_dir / f'consis_eval_global.pkl'
+    save_file_global = save_file_dir / 'consis_eval_global.pkl'
     save_global_series.to_pickle(save_file_global)
-    save_file_local = save_file_dir / f'consis_eval_local.pkl'
+    save_file_local = save_file_dir / 'consis_eval_local.pkl'
     save_local_df.to_pickle(save_file_local)
 
     print(f'Finished consistency evaluation!\nSaved global attributes to: {save_file_global}')
@@ -181,7 +181,7 @@ if __name__=='__main__':
         #load training data for random alignments / evaluations
         with open(training_data_file, 'rb') as f:
             training_molblock_charges = pickle.load(f)
-    
+
     run_consistency_evaluation(
         load_dir=load_dir_path,
         condition=model,

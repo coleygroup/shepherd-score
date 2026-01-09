@@ -75,7 +75,7 @@ class GeneralObjective:
             self.num_points = None
         else:
             self.alpha = ALPHA(self.num_points) if self.num_points is not None else None
-        
+
         self.lam = 0.1 if self.use_vol else 0.3
 
         self.pharm_multi_vector = pharm_multi_vector
@@ -84,7 +84,7 @@ class GeneralObjective:
 
         self.sim_score_distr_with_resample = np.array([1.])
         self.sim_score_upper_bound = 1.
-        
+
         if self.representation == 'shape':
             pass
         elif self.representation in ('electrostatics', 'esp'):
@@ -146,11 +146,11 @@ class GeneralObjective:
             self.ref_molec = Molecule(mol=ref_mol,
                                       num_surf_points=self.num_points,
                                       partial_charges=self.ref_partial_charges)
-        
+
         elif self.representation == 'pharm':
             self.ref_molec = Molecule(mol=ref_mol,
                                       pharm_multi_vector=self.pharm_multi_vector)
-        
+
         if self.representation in ('shape', 'esp') and not self.use_vol:
             self.sim_score_distr_with_resample = self.resampling_surf_scores()
             self.sim_score_upper_bound = max(self.sim_score_distr_with_resample)
@@ -213,7 +213,7 @@ class GeneralObjective:
                     ).cpu().numpy()
                 else:
                     score_distr[i] = get_overlap_esp_np(
-                        centers_1=self.ref_molec.surf_pos, 
+                        centers_1=self.ref_molec.surf_pos,
                         centers_2=molec.surf_pos,
                         charges_1=self.ref_molec.surf_esp,
                         charges_2=molec.surf_esp,
@@ -277,7 +277,7 @@ class GeneralObjective:
                                         trans_init=trans_init,
                                         use_jax=use_jax)
                 score = molec_pair.sim_aligned_esp
-        
+
         elif self.representation == 'pharm':
             molec_pair.align_with_pharm(similarity='tanimoto',
                                         extended_points=False,
@@ -339,9 +339,9 @@ class GeneralObjective:
             fit_partial_charges = []
             for m in fit_mols:
                 fit_partial_charges.append(charges_from_single_point_conformer_with_xtb(
-                    conformer=m, 
-                    solvent=self.solvent, 
-                    num_cores=self.num_processes, 
+                    conformer=m,
+                    solvent=self.solvent,
+                    num_cores=self.num_processes,
                     temp_dir=TMPDIR
                 ))
 
@@ -393,7 +393,7 @@ class GeneralObjective:
             self.buffer[smi] = scores[-1] # store {smiles : score}
 
         return scores
-    
+
 
 
 class Objective:
@@ -438,7 +438,7 @@ class Objective:
 
         self.num_points = num_points
         self.alpha = ALPHA(self.num_points)
-        
+
         self.lam = 0.3
 
         self.pharm_multi_vector = pharm_multi_vector
@@ -482,14 +482,14 @@ class Objective:
                              probe_radius=self.ref_molec.probe_radius,
                              partial_charges=self.ref_molec.partial_charges)
             esp_score_distr[i] = get_overlap_esp_np(
-                centers_1=self.ref_molec.surf_pos, 
+                centers_1=self.ref_molec.surf_pos,
                 centers_2=molec.surf_pos,
                 charges_1=self.ref_molec.surf_esp,
                 charges_2=molec.surf_esp,
                 alpha=self.alpha,
                 lam=self.lam
             )
-        
+
         pharm_score = get_overlap_pharm_np(self.ref_molec.pharm_types, self.ref_molec.pharm_types,
                                          self.ref_molec.pharm_ancs, self.ref_molec.pharm_ancs,
                                          self.ref_molec.pharm_vecs, self.ref_molec.pharm_vecs,
@@ -606,8 +606,8 @@ class Objective:
                 fit_partial_charges = []
                 for m in fit_mols:
                     fit_partial_charges.append(charges_from_single_point_conformer_with_xtb(
-                        conformer=m, 
-                        solvent=self.solvent, 
+                        conformer=m,
+                        solvent=self.solvent,
                         num_cores=self.num_processes,
                         charge=charge,
                         temp_dir=TMPDIR

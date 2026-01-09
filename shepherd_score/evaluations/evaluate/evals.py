@@ -22,7 +22,7 @@ else:
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
+from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 from shepherd_score.score.constants import P_TYPES
@@ -192,7 +192,7 @@ class ConfEval:
             self.logP = Crippen.MolLogP(self.mol)
             self.fsp3 = Lipinski.FractionCSP3(self.mol)
             self.morgan_fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(self.mol))
-        
+
         # 10. 2D graph properties post optimization
         if self.is_valid_post_opt:
             self.SA_score_post_opt = sascorer.calculateScore(Chem.RemoveHs(self.mol_post_opt))
@@ -292,7 +292,7 @@ class ConsistencyEval(ConfEval):
         self.sim_surf_consistent_relax_optimal = None
         self.sim_esp_consistent_relax_optimal = None
         self.sim_pharm_consistent_relax_optimal = None
-        
+
         if pharm_feats is not None:
             pharm_types, pharm_ancs, pharm_vecs = pharm_feats
             num_pharms = len(pharm_types)
@@ -313,7 +313,7 @@ class ConsistencyEval(ConfEval):
             print('         Pharmacophore similarity not computed.')
         if not isinstance(surf_points, np.ndarray) and not isinstance(surf_esp, np.ndarray) and not has_pharm_features:
             raise ValueError('Must provide at least one of the generated representations: surface, electrostatics, or pharmacophores.')
-        
+
         # Scoring parameters
         self.num_surf_points = len(surf_points) if surf_points is not None else None
         # Assumes no radius scaling with probe_radius=1.2
@@ -372,7 +372,7 @@ class ConsistencyEval(ConfEval):
                 )
 
         # Consistency between generated molecule and relaxed structure and features
-        if self.is_valid and self.is_valid_post_opt: 
+        if self.is_valid and self.is_valid_post_opt:
             # Generate a Molecule object of relaxed structure
             self.molec_post_opt = Molecule(
                 self.mol_post_opt,
@@ -389,7 +389,7 @@ class ConsistencyEval(ConfEval):
                     self.molec_post_opt.surf_pos,
                     alpha=self.alpha
                 )
-            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:            
+            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:
                 self.sim_esp_consistent_relax = get_overlap_esp_np(
                     self.molec.surf_pos, self.molec_post_opt.surf_pos,
                     self.molec.surf_esp, self.molec_post_opt.surf_esp,
@@ -416,7 +416,7 @@ class ConsistencyEval(ConfEval):
                                               do_center=False)
             if self.molec_post_opt.surf_pos is not None:
                 self.sim_surf_consistent_relax_optimal = self._align_with_surface(mp_ref_and_relaxed=mp_ref_and_relaxed)
-            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:            
+            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:
                 self.sim_esp_consistent_relax_optimal = self._align_with_esp(mp_ref_and_relaxed=mp_ref_and_relaxed)
             if isinstance(pharm_multi_vector, bool) and self.molec_post_opt.pharm_ancs is not None and self.molec.pharm_ancs is not None:
                 self.sim_pharm_consistent_relax_optimal = self._align_with_pharm(mp_ref_and_relaxed=mp_ref_and_relaxed)
@@ -438,7 +438,7 @@ class ConsistencyEval(ConfEval):
         )
         surf_similarity = mp_ref_and_relaxed.sim_aligned_surf
         return float(surf_similarity)
-    
+
 
     def _align_with_esp(self, mp_ref_and_relaxed: MoleculePair) -> float:
         """
@@ -454,7 +454,7 @@ class ConsistencyEval(ConfEval):
             num_repeats=1,
             trans_init=False,
             use_jax=False
-        ) 
+        )
         esp_similarity = mp_ref_and_relaxed.sim_aligned_esp
         return float(esp_similarity)
 
@@ -547,7 +547,7 @@ class ConditionalEval(ConfEval):
 
         self.sim_surf_target_relax_esp_aligned = None
         self.sim_pharm_target_relax_esp_aligned = None
-        
+
         # Scoring parameters
         self.num_surf_points = num_surf_points
         self.alpha = ALPHA(self.num_surf_points) # Fitted to probe_radius=1.2
@@ -684,7 +684,7 @@ class ConditionalEval(ConfEval):
 
         surf_similarity = mp_ref_and_relaxed.sim_aligned_surf
         return float(surf_similarity)
-    
+
 
     def _align_with_esp(self, mp_ref_and_relaxed: MoleculePair) -> float:
         """
@@ -700,7 +700,7 @@ class ConditionalEval(ConfEval):
             num_repeats=1,
             trans_init=False,
             use_jax=False
-        ) 
+        )
         esp_similarity = mp_ref_and_relaxed.sim_aligned_esp
         return float(esp_similarity)
 

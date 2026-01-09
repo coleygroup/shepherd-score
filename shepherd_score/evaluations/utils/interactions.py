@@ -20,7 +20,7 @@ from MDAnalysis.topology.guessers import guess_types
 
 def remove_ligand_from_protein(pdb_file: str) -> None:
     """
-    Remove ligand from protein to get apo structure. 
+    Remove ligand from protein to get apo structure.
     Generate new apo pdb file.
 
     Saves a pdb file with "_apo" appended to the original name.
@@ -55,7 +55,7 @@ def remove_ligand_from_protein(pdb_file: str) -> None:
         save_file_name = load_file_path.name.replace('bound', 'apo')
     else:
         save_file_name = load_file_path.stem + '_apo.pdb'
-    
+
     save_file = str(load_file_path.parent / save_file_name)
 
     # Write the apo protein structure to a new PDB file
@@ -217,7 +217,7 @@ def average_unit_vectors(vectors):
     """
     # Use the first vector as a reference to align the others
     ref_vector = vectors[0]
-    
+
     # Align all vectors to the reference direction
     aligned_vectors = []
     for vec in vectors:
@@ -225,12 +225,12 @@ def average_unit_vectors(vectors):
             aligned_vectors.append(-vec)  # Flip the vector
         else:
             aligned_vectors.append(vec)
-    
+
     # Compute the average of the aligned vectors
     aligned_vectors = np.array(aligned_vectors)
     avg_vector = np.mean(aligned_vectors, axis=0)
-    
+
     # Normalize the result to make it a unit vector
     avg_unit_vector = avg_vector / np.linalg.norm(avg_vector)
-    
+
     return avg_unit_vector

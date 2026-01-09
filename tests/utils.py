@@ -6,15 +6,15 @@ def _configure_jax_platform():
     """
     Configure JAX platform based on GPU availability.
     Sets JAX to CPU-only mode if no GPU is detected to avoid initialization errors.
-    
+
     Returns:
         bool: True if GPU detected, False otherwise
     """
     try:
         # Try to detect GPU via nvidia-smi
         result = subprocess.run(
-            ['nvidia-smi'], 
-            capture_output=True, 
+            ['nvidia-smi'],
+            capture_output=True,
             text=True,
             timeout=2  # Add timeout to avoid hanging
         )

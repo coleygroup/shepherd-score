@@ -1,4 +1,4 @@
-""" 
+"""
 Gaussian volume overlap scoring functions -- Shape-only (i.e., not color)
 JAX VERSION (~ 6x faster than numpy)
 
@@ -23,12 +23,12 @@ def jax_cdist(X_1: Array,
               ) -> Array:
     """
     Jax implementation pairwise euclidian distances.
-    
+
     Parameters
     ----------
     X_1 : Array (N, P)
     X_2 : Array (M, P)
-    
+
     Returns
     -------
     Array (N, M)
@@ -43,12 +43,12 @@ def jax_sq_cdist(X_1: Array,
                  ) -> Array:
     """
     Jax implementation pairwise SQUARED euclidian distances.
-    
+
     Parameters
     ----------
     X_1 : Array (N, P)
     X_2 : Array (M, P)
-    
+
     Returns
     -------
     Array (N, M)

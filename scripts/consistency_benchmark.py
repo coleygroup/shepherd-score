@@ -80,7 +80,7 @@ def generate_benchmark_set(training_set_dir: str,
                              num_surf_points=num_surf_points,
                              probe_radius=probe_radius,
                              pharm_multi_vector=False)
-        except:
+        except Exception:
             num_failed += 1
             continue
 
@@ -121,7 +121,7 @@ def generate_benchmark_set(training_set_dir: str,
     with open(molblock_save_path, 'wb') as f:
         pickle.dump(ls_mmff_molblocks, f, protocol=pickle.HIGHEST_PROTOCOL)
     print(f'Saved MMFF molblocks to {molblock_save_path}')
-    
+
     atom_pos_path = save_dir_path / 'atom_pos.pkl'
     with open(atom_pos_path, 'wb') as f:
         pickle.dump(ls_atoms_pos, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -198,13 +198,13 @@ def run_consistency_benchmark(save_dir: str,
     consis_pipeline.evaluate(num_processes=num_processes, verbose=True)
 
     # Save values to numpy object
-    benchmark_output_path = save_dir_path / data_name / f'benchmark_output.npz'
+    benchmark_output_path = save_dir_path / data_name / 'benchmark_output.npz'
     # Save values to numpy object
     save_global_series, save_local_df = consis_pipeline.to_pandas()
 
-    save_file_global = save_dir_path / data_name / f'benchmark_output_global.pkl'
+    save_file_global = save_dir_path / data_name / 'benchmark_output_global.pkl'
     save_global_series.to_pickle(save_file_global)
-    save_file_local = save_dir_path / data_name / f'benchmark_output_local.pkl'
+    save_file_local = save_dir_path / data_name / 'benchmark_output_local.pkl'
     save_local_df.to_pickle(save_file_local)
 
     print(f'Finished consistency evaluation!\nSaved global attributes to: {save_file_global}')

@@ -18,13 +18,13 @@ def write_xyz_file(atomic_numbers: np.ndarray,
                    ) -> str:
     """
     Writes an xyz file of an atomistic structure, given np.ndarray of atomic numbers and coordinates.
-    
+
     Arguments
     ---------
     atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
     positions : np.ndarray of shape (N,3) containing atomic coordinates
     path_to_file : str specifying file path -- e.g. path_to_file = 'examples/molecule.xyz'. If None, then no output file is written.
-    
+
     Returns
     -------
     str : xyz block
@@ -53,13 +53,13 @@ def write_xyz_file_with_dummy(
     """
     Writes an xyz file of an atomistic structure, given np.ndarray of atomic numbers and coordinates.
     Accounts for the presence of dummy atoms.
-    
+
     Arguments
     ---------
     atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
     positions : np.ndarray of shape (N,3) containing atomic coordinates
     path_to_file : str specifying file path -- e.g. path_to_file = 'examples/molecule.xyz'. If None, then no output file is written.
-    
+
     Returns
     -------
     Tuple
@@ -80,7 +80,7 @@ def write_xyz_file_with_dummy(
     if path_to_file is not None:
         with open(f'{path_to_file}', 'w') as f:
             f.write(xyz)
-    
+
     dummy_atom_pos = None
     if len(atomic_numbers) - len(real_atom_inds) > 0:
         dummy_atom_pos = positions[np.where(atomic_numbers == 0)[0]]
@@ -250,15 +250,15 @@ def load_npz_to_df(npz_path: Union[Path, str],
     # Find the first non-zero dimensional array length (assumed to be N_i)
     length = None
     for key, arr in data.items():
-        
+
         if arr.ndim == 1 and len(arr) < 50:  # Non-zero dimensional array
             length = len(arr)
             break
-    
+
     # Ensure we have a valid length for the file
     if length is None:
         raise ValueError(f"No 1D array found in {npz_path}")
-    
+
     # Fill in the dictionary with arrays
     for key, arr in data.items():
         if key in ('ref_surf_resampling_scores', 'ref_surf_esp_resampling_scores', 'ref_mol_morgan_fp'):
@@ -269,14 +269,14 @@ def load_npz_to_df(npz_path: Union[Path, str],
             df_dict[key] = arr
         else:
             raise ValueError(f"Inconsistent array length for {key} in {npz_path}")
-    
+
     if file_id is not None:
         df_dict['file_id'] = np.repeat(file_id, length)
-    
+
     return pd.DataFrame(df_dict)
 
 
-def collate_npz_files(npz_files: List[Union[str, Path]], 
+def collate_npz_files(npz_files: List[Union[str, Path]],
                       include_file_id: bool
                       ) -> pd.DataFrame:
     """
@@ -287,7 +287,7 @@ def collate_npz_files(npz_files: List[Union[str, Path]],
     npz_files : list of file paths
     include_file_id : bool Whether to include a column called "file_id" that groups together
         rows that came from the same file.
-    
+
     Returns
     -------
     pd.DataFrame : rows are each sample, columns are each property, and it repeats any 0d arrays.
@@ -299,6 +299,6 @@ def collate_npz_files(npz_files: List[Union[str, Path]],
         else:
             df = load_npz_to_df(npz_file, file_id=None)
         dfs.append(df)
-    
+
     # Concatenate all dataframes
     return pd.concat(dfs, ignore_index=True)

@@ -25,7 +25,7 @@ convert_to_jnp_array = None
 try:
     # Configure JAX platform before import to avoid GPU initialization errors
     _gpu_detected = _configure_jax_platform()
-    
+
     import jax.numpy as jnp
     from shepherd_score.alignment_jax import (
         optimize_ROCS_overlay_jax,
@@ -34,7 +34,7 @@ try:
         optimize_pharm_overlay_jax,
         convert_to_jnp_array,
     )
-    
+
     JAX_AVAILABLE = True
 except ImportError:
     # JAX not available - all tests will be skipped since they require JAX for comparison
@@ -82,7 +82,7 @@ def common_points_data():
     np.random.seed(0) # JAX uses numpy for array conversion from torch
     ref_points = torch.rand(20, 3, dtype=DEFAULT_DTYPE) * 10
     fit_points = torch.rand(15, 3, dtype=DEFAULT_DTYPE) * 10
-    
+
     ref_points_jax = jnp.array(ref_points.numpy())
     fit_points_jax = jnp.array(fit_points.numpy())
     return ref_points, fit_points, ref_points_jax, fit_points_jax
@@ -107,13 +107,13 @@ def common_trans_centers_data():
 def common_esp_combo_data(common_points_data, common_charges_data):
     ref_points_torch, fit_points_torch, ref_points_jax, fit_points_jax = common_points_data
     # For esp_combo, 'points' usually means surface points, 'centers' means atom centers
-    
+
     # Simulate additional points for hydrogens
     num_extra_ref_h = 5
     num_extra_fit_h = 4
 
     ref_centers_w_H_torch = torch.cat([
-        ref_points_torch, 
+        ref_points_torch,
         torch.rand(num_extra_ref_h, 3, dtype=DEFAULT_DTYPE) * 10 + 0.1 # Additional H atoms
     ], dim=0)
     fit_centers_w_H_torch = torch.cat([
@@ -123,7 +123,7 @@ def common_esp_combo_data(common_points_data, common_charges_data):
 
     # Simplified placeholder data - this needs to be realistic for meaningful tests
     data = {
-        "ref_centers_w_H": ref_centers_w_H_torch, 
+        "ref_centers_w_H": ref_centers_w_H_torch,
         "fit_centers_w_H": fit_centers_w_H_torch,
         "ref_centers": ref_points_torch, "fit_centers": fit_points_torch, # Heavy atoms as centers
         "ref_points": ref_points_torch, "fit_points": fit_points_torch, # Surface points (could be same as heavy atom centers or different)
@@ -132,13 +132,13 @@ def common_esp_combo_data(common_points_data, common_charges_data):
         "ref_surf_esp": common_charges_data[0], "fit_surf_esp": common_charges_data[1], # ESP on surface points
         "ref_radii": torch.rand(ref_centers_w_H_torch.shape[0], dtype=DEFAULT_DTYPE) + 1.2, # Radii in [1.2, 2.2)
         "fit_radii": torch.rand(fit_centers_w_H_torch.shape[0], dtype=DEFAULT_DTYPE) + 1.2, # Radii in [1.2, 2.2)
-        "alpha": DEFAULT_ALPHA, "lam": DEFAULT_LAM, 
+        "alpha": DEFAULT_ALPHA, "lam": DEFAULT_LAM,
         "probe_radius": 1.0, "esp_weight": 0.5
     }
 
     # Create JAX equivalents. Note: optimize_esp_combo_score_overlay_jax handles internal conversion.
     data_jax = {key: convert_to_jnp_array(val) if isinstance(val, torch.Tensor) else val for key, val in data.items()}
-    
+
     # Return both PyTorch and JAX versions of the data dictionary
     return data, data_jax
 
@@ -146,16 +146,16 @@ def common_esp_combo_data(common_points_data, common_charges_data):
 def common_pharm_data():
     torch.manual_seed(0)
     np.random.seed(0)
-    
+
     num_pharm_ref = 10
     num_pharm_fit = 8
-    
+
     ptype_1_torch = torch.randint(0, len(P_TYPES), (num_pharm_ref,), dtype=torch.long)
     ptype_2_torch = torch.randint(0, len(P_TYPES), (num_pharm_fit,), dtype=torch.long)
 
     anchors_1_torch = torch.rand(num_pharm_ref, 3, dtype=DEFAULT_DTYPE) * 10
     anchors_2_torch = torch.rand(num_pharm_fit, 3, dtype=DEFAULT_DTYPE) * 10
-    
+
     vectors_1_torch = torch.rand(num_pharm_ref, 3, dtype=DEFAULT_DTYPE) - 0.5
     vectors_1_torch = torch.nn.functional.normalize(vectors_1_torch, p=2, dim=1)
     vectors_2_torch = torch.rand(num_pharm_fit, 3, dtype=DEFAULT_DTYPE) - 0.5
@@ -188,7 +188,7 @@ class TestOptimizeROCSOverlayConsistency:
             lr=DEFAULT_LR, max_num_steps=DEFAULT_MAX_STEPS, verbose=DEFAULT_VERBOSE
         )
         aligned_jax_t, transform_jax_t, score_jax_t = jax_outputs_to_torch(aligned_jax, transform_jax, score_jax)
-        
+
         assert torch.allclose(aligned_torch, aligned_jax_t, atol=COORD_ATOL, rtol=COORD_RTOL), "Aligned points mismatch"
         assert torch.allclose(transform_torch, transform_jax_t, atol=TRANSFORM_ATOL, rtol=TRANSFORM_RTOL), "Transform mismatch"
         assert torch.allclose(score_torch, score_jax_t, atol=SCORE_ATOL, rtol=SCORE_RTOL), "Score mismatch"
@@ -211,7 +211,7 @@ class TestOptimizeROCSOverlayConsistency:
 
 
 class TestOptimizeROCSEspOverlayConsistency:
-    def _run_and_compare(self, r_pts_t, f_pts_t, r_chg_t, f_chg_t, 
+    def _run_and_compare(self, r_pts_t, f_pts_t, r_chg_t, f_chg_t,
                          r_pts_j, f_pts_j, r_chg_j, f_chg_j,
                          num_repeats, trans_t, trans_j):
         # PyTorch run
@@ -322,11 +322,11 @@ class TestOptimizePharmOverlayConsistency:
             num_repeats=num_repeats, trans_centers=trans_jax,
             lr=DEFAULT_LR, max_num_steps=DEFAULT_MAX_STEPS, verbose=DEFAULT_VERBOSE
         )
-        
+
         aligned_anchors_j_t, aligned_vectors_j_t, transform_j_t, score_j_t = jax_pharm_outputs_to_torch(
             aligned_anchors_j, aligned_vectors_j, transform_j, score_j
         )
-        
+
         assert torch.allclose(aligned_anchors_t, aligned_anchors_j_t, atol=COORD_ATOL, rtol=COORD_RTOL), "Aligned anchors mismatch"
         assert torch.allclose(aligned_vectors_t, aligned_vectors_j_t, atol=COORD_ATOL, rtol=COORD_RTOL), "Aligned vectors mismatch"
         assert torch.allclose(transform_t, transform_j_t, atol=TRANSFORM_ATOL, rtol=TRANSFORM_RTOL), "Transform mismatch"

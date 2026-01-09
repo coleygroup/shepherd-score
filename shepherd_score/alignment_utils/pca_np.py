@@ -55,14 +55,14 @@ def quaternion_from_axis_angle_np(axis: np.ndarray, angle: np.ndarray) -> np.nda
     """
     Create a Quaternion from a rotation axis and an angle in radians.
     Numpy implementation.
-    
+
     Parameters
     ----------
     axis : np.ndarray (3,)
         Axis to rotate about.
     angle: np.ndarray (1,)
         Angle in radians.
-    
+
     Returns
     -------
     quaternion : np.ndarray (4,)
@@ -107,11 +107,11 @@ def quaternion_mult_np(p: np.ndarray, q: np.ndarray) -> np.ndarray:
 def quaternions_for_principal_component_alignment_np(ref_points: np.ndarray,
                                                      fit_points: np.ndarray
                                                      ) -> np.ndarray:
-    """ 
+    """
     Computes the 4 quaternions required for alignment of the fit mol along the
     principal components of the reference mol.
     NumPy implementation.
-    
+
     The computed quaternions assumes that fit_points will be rotated after being centered at COM.
 
     Parameters
@@ -128,7 +128,7 @@ def quaternions_for_principal_component_alignment_np(ref_points: np.ndarray,
         four possible principal component combinations.
     """
     pmi_ref = compute_principal_moments_of_interia_np(ref_points)
-    
+
     quaternions = np.zeros((4,4))
     for q_index in range(4):
         if q_index == 1:

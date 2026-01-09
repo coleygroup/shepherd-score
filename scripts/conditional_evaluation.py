@@ -47,14 +47,14 @@ def run_conditional_eval(sample_id,
         raise ValueError(f'Provided path is not a directory: {load_dir_path}')
     save_file_dir = load_dir_path / f'cond_eval_sample_{sample_id}'
     save_file_dir.mkdir(parents=True, exist_ok=True)
-    
+
     with open(load_file_path_, 'rb') as f:
         samples = pickle.load(f)
-        
+
     ref_mol = Chem.MolFromMolBlock(samples[0], removeHs=False)
     ref_partial_charges = samples[1]
-    surface_points = samples[2]
-    electrostatics = samples[3]
+    surface_points = samples[2] # noqa: F841
+    electrostatics = samples[3] # noqa: F841
     pharm_types = samples[4]
     pharm_ancs = samples[5]
     pharm_vecs = samples[6]
@@ -70,7 +70,7 @@ def run_conditional_eval(sample_id,
     generated_mols = [(samples[-1][i]['x1']['atoms'], samples[-1][i]['x1']['positions']) for i in range(len(samples[-1]))]
 
     subselected_gen_mols = generated_mols[job_id:len(generated_mols):num_tasks]
-    
+
     print(f'Starting Conditional Eval Pipeline on sample {sample_id} and job {job_id}')
     cond_pipe = ConditionalEvalPipeline(
         ref_molec=ref_molec,
@@ -116,18 +116,18 @@ def run_conditional_eval_by_sample_only(
         condition = 'esp'
     elif conditioning_type == 'x4':
         condition = 'pharm'
-    
-    save_file_dir = load_dir_path / f'cond_evals'
+
+    save_file_dir = load_dir_path / 'cond_evals'
     save_file_dir.mkdir(parents=True, exist_ok=True)
-    
+
     load_file_path = load_dir_path / f'samples_{sample_id}.pickle'
     with open(load_file_path, 'rb') as f:
         samples = pickle.load(f)
-        
+
     ref_mol = Chem.MolFromMolBlock(samples[0], removeHs=False)
     ref_partial_charges = samples[1]
-    surface_points = samples[2]
-    electrostatics = samples[3]
+    surface_points = samples[2] # noqa: F841
+    electrostatics = samples[3] # noqa: F841
     pharm_types = samples[4]
     pharm_ancs = samples[5]
     pharm_vecs = samples[6]
@@ -141,7 +141,7 @@ def run_conditional_eval_by_sample_only(
                          pharm_vecs=pharm_vecs)
 
     generated_mols = [(samples[-1][i]['x1']['atoms'], samples[-1][i]['x1']['positions']) for i in range(len(samples[-1]))]
-    
+
     print(f'Starting Conditional Eval Pipeline on sample {sample_id}.')
     cond_pipe = ConditionalEvalPipeline(
         ref_molec=ref_molec,
@@ -154,12 +154,12 @@ def run_conditional_eval_by_sample_only(
 
     # Run evaluation
     cond_pipe.evaluate(num_processes=num_processes, verbose=True)
-    
+
     save_global_series, save_local_df = cond_pipe.to_pandas()
 
-    save_file_global = save_file_dir / f'cond_eval_global.pkl'
+    save_file_global = save_file_dir / 'cond_eval_global.pkl'
     save_global_series.to_pickle(save_file_global)
-    save_file_local = save_file_dir / f'cond_eval_local.pkl'
+    save_file_local = save_file_dir / 'cond_eval_local.pkl'
     save_local_df.to_pickle(save_file_local)
 
     print(f'Finished evaluation!\nSaved global attributes to: {save_file_global}')
@@ -183,7 +183,7 @@ def run_conditional_eval_frag(job_id,
         raise ValueError(f'Provided path is not a directory: {load_dir_path}')
     save_file_dir = load_dir_path / 'cond_evals'
     save_file_dir.mkdir(parents=True, exist_ok=True)
-    
+
     with open(load_file_path, 'rb') as f:
         samples = pickle.load(f)
 
@@ -207,7 +207,7 @@ def run_conditional_eval_frag(job_id,
     avg_esp = np.stack(esps).mean(axis=0)
 
     print('Finished generating the merged reference Molecule object.')
-    
+
     # just choose the first molblock, it doesn't affect anything once you make the Molecule object
     ref_mol = mols[0]
     ref_partial_charges = partial_charges[0]
@@ -230,7 +230,7 @@ def run_conditional_eval_frag(job_id,
     generated_mols = [(samples[-1][i]['x1']['atoms'], samples[-1][i]['x1']['positions']) for i in range(len(samples[-1]))]
 
     subselected_gen_mols = generated_mols[job_id:len(generated_mols):num_tasks]
-    
+
     print(f'Starting Conditional Eval Pipeline on Fragment mergining and job {job_id}')
     cond_pipe = ConditionalEvalPipeline(
         ref_molec=ref_molec,
@@ -284,7 +284,7 @@ if __name__=='__main__':
             num_processes=4,
             probe_radius=0.6
         )
-    
+
     if 'frag' in task:
         run_conditional_eval_frag(
             job_id=my_task_id,

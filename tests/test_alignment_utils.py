@@ -27,14 +27,14 @@ apply_SE3_transform_jax = None
 try:
     # Configure JAX platform before import to avoid GPU initialization errors
     _gpu_detected = _configure_jax_platform()
-    
+
     import jax.numpy as jnp
     from shepherd_score.alignment_utils.se3_jax import (
-        quaternions_to_rotation_matrix_jax, 
-        get_SE3_transform_jax, 
+        quaternions_to_rotation_matrix_jax,
+        get_SE3_transform_jax,
         apply_SE3_transform_jax
     )
-    
+
     JAX_AVAILABLE = True
 except ImportError:
     # JAX not available - JAX-specific tests will be skipped
@@ -95,7 +95,7 @@ class TestSE3:
         """ Test get_SE3_transform (torch) """
         out_se3_matrix = get_SE3_transform(torch.Tensor(self.ex_se3_params))
         assert torch.allclose(out_se3_matrix, torch.Tensor(self.sol_se3_transform))
-    
+
     def test_apply_se3_transform_torch(self):
         """ Test apply_SE3_transform torch  """
         out_transformed = apply_SE3_transform(torch.Tensor(self.ex_set_of_points), torch.Tensor(self.sol_se3_transform))
@@ -111,7 +111,7 @@ class TestSE3:
         """ Test get_SE3_transform (torch batched) """
         out_se3_matrix = get_SE3_transform(torch.Tensor(self.ex_se3_params).repeat((2,1)))
         assert torch.allclose(out_se3_matrix, torch.Tensor(self.sol_se3_transform).repeat((2, 1, 1)))
-    
+
     def test_apply_se3_transform_torch_batched(self):
         """ Test apply_SE3_transform (torch batched)  """
         points_repeated = torch.Tensor(self.ex_set_of_points).repeat((2, 1, 1))
@@ -132,17 +132,16 @@ class TestSE3:
         """ Test get_SE3_transform (Jax) """
         out_se3_matrix = get_SE3_transform_jax(jnp.array(self.ex_se3_params))
         assert jnp.allclose(out_se3_matrix, jnp.array(self.sol_se3_transform))
-    
+
     @pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
     def test_apply_se3_transform_jax(self):
         """ Test apply_SE3_transform (Jax)  """
         out_transformed = apply_SE3_transform_jax(jnp.array(self.ex_set_of_points), jnp.array(self.sol_se3_transform))
         assert jnp.allclose(out_transformed, jnp.array(self.sol_points_transformed))
-        
+
 
 
 class TestPCA:
     """
     Test principal component analysis
     """
-    

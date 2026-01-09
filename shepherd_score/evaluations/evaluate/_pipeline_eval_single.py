@@ -270,9 +270,9 @@ def _eval_unconditional_single(i: int,
             raise ValueError("atoms and positions must have same length")
         if len(atoms) == 0:
             raise ValueError("Empty molecule")
-        
+
         conf_eval = ConfEval(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes)
-        
+
         res = {
             'i': i,
             'is_valid': conf_eval.is_valid,
@@ -295,7 +295,7 @@ def _eval_unconditional_single(i: int,
             'error': None
         }
         return res
-        
+
     except Exception as e:
         error_msg = f"Unconditional evaluation failed for molecule {i}: {str(e)}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
@@ -334,7 +334,7 @@ def _eval_conditional_single(i: int,
             num_processes=num_processes,
             solvent=solvent
         )
-        
+
         res = {
             'i': i,
             'is_valid': cond_eval.is_valid,
@@ -369,7 +369,7 @@ def _eval_conditional_single(i: int,
             'error': None
         }
         return res
-        
+
     except Exception as e:
         error_msg = f"Conditional evaluation failed for molecule {i}: {str(e)}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")

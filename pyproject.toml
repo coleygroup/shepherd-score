@@ -110,6 +110,7 @@ ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # function call in default argument
     "SIM108", # ternary operator
+    "F401",   # unused imports
 ]
 
 [tool.ruff.lint.per-file-ignores]

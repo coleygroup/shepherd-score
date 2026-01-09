@@ -49,9 +49,9 @@ def neutralize_atoms(mol: Chem.Mol) -> Chem.Mol:
 
     The neutralize_atoms() function differs from the `rdMolStandardize.Uncharger` behavior.
     See the MolVS documentation for Uncharger:
-    
+
     https://molvs.readthedocs.io/en/latest/api.html#molvs-charge
-    
+
     “This class uncharges molecules by adding and/or removing hydrogens.
     In cases where there is a positive charge that is not neutralizable,
     any corresponding negative charge is also preserved.”
@@ -171,7 +171,7 @@ def protonate_smiles(smiles: str,
 
         if os.environ.get('CHEMAXON_LICENSE_URL') is None or chemaxon_license_path is not None:
             raise ValueError('CHEMAXON_LICENSE_URL is not set')
-        
+
         from shepherd_score.protonation.chemaxon_utils import tautomerize_chemaxon
         return tautomerize_chemaxon(
             smiles=smiles,

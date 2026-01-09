@@ -2,7 +2,7 @@
 Handles anything related to generating conformers with xTB or MMFF94.
 
 Requires:
-- xtb installation 
+- xtb installation
     - command-line access
     - https://xtb-docs.readthedocs.io/en/latest/setup.html
     - install from source (not conda)
@@ -58,11 +58,11 @@ def set_thread_limits(num_threads: int):
 def update_mol_coordinates(mol: Chem.Mol, coordinates) -> Chem.Mol:
     """
     Updates the coordinates of a 3D RDKit mol object with a new set of coordinates
-    
+
     Args:
         mol -- RDKit mol object with 3D coordinates to be replaced
         coordinates -- list/array of new [x,y,z] coordinates
-    
+
     Returns:
         mol_new -- RDKit mol object with updated 3D coordinates
     """
@@ -76,10 +76,10 @@ def update_mol_coordinates(mol: Chem.Mol, coordinates) -> Chem.Mol:
 def read_multi_xyz_file(file_dir: str):
     """
     Reads an xyz file that potentially contains multiple structures
-    
+
     Args:
         file_dir -- (str) path to .xyz file
-    
+
     Returns:
         all_coordinates -- list of lists containing the coordinates of each structure in the xyz file
         all_elements -- list of lists containing the element types of each atom in each structure
@@ -128,7 +128,7 @@ def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
         mol -- RDKit Mol object
         attempts -- (int) number of embedding attempts
         MMFF_optimize -- (bool) whether to optimize embedded conformer with MMFF94
-        
+
     Returns:
         mol -- RDKit mol object with 3D coordinates
     """
@@ -148,12 +148,12 @@ def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
 def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: bool = False):
     """
     Embeds a SMILES into a 3D RDKit mol object with ETKDG (and optionally MMFF94)
-    
+
     Args:
         smiles -- SMILES string of molecule
         attempts -- (int) number of embedding attempts
         MMFF_optimize -- (bool) whether to optimize embedded conformer with MMFF94
-        
+
     Returns:
         mol -- RDKit mol object with 3D coordinates
     """
@@ -169,11 +169,11 @@ def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: 
 def conf_to_mol(mol, conf_id):
     """
     Converts a conformer of a RDKit mol object into its own RDKit mol object
-    
+
     Args:
         mol -- RDKit mol object with multiple conformers
         conf_id -- ID of conformer to be converted into its own mol object
-    
+
     Returns:
         new_mol -- mol object with only 1 conformer (the selected conformer)
     """
@@ -192,14 +192,14 @@ def generate_conformer_ensemble(mol_3d: Chem.Mol,
     """
     Uses ETKDG algorithm to embed multiple (new) conformers from a given 3D conformer 'template'.
     Optionally optimizes each embedded conformer with MMFF94.
-    
+
     Args:
         mol_3d -- RDKit mol object with 3D coordinates
         num_confs -- (int) maximum number of conformers to be embedded with ETKDG
         num_threads -- (int) number of processors to be used in parallel when embedding conformers
         threshold -- (float) RMSD threshold used to eliminate redundant conformers after ETKDG embedding
         num_opt_steps -- (int) number of MMFF94 optimization steps
-    
+
     Returns:
         mols -- list of mol objects, each containing 1 (unique) conformer
     """
@@ -231,13 +231,13 @@ def generate_conformer_ensemble(mol_3d: Chem.Mol,
 def cluster_conformers_butina(conformers, threshold: float = 0.2, num_max_conformers: int = 100):
     """
     Clusters a list of conformers by their pairwise RMSD with Butina Clustering algorithm
-    
+
     Args:
         conformers -- list of rdkit mol objects containing conformers of a common molecule to be clustered.
         threshold -- initial RMSD theshold for clustering
         num_max_conformers -- maximum number of conformers in the final clustered ensemble
-    
-    Returns: 
+
+    Returns:
         select_confs -- a list (int) of the centroids of each cluster, to be indexed into conformers
     """
     dists = []
@@ -267,7 +267,7 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                                 temp_dir: str | Path = TMPDIR):
     """
     Uses external calls to GFN2-XTB (command line) to optimize a conformer geometry
-    
+
     Args:
         conformer -- RDKit mol object containing 3D coordinates
         solvent -- None or str indicating any implicit solvent to be used during optimization
@@ -276,8 +276,8 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
         charge -- int of the molecular charge
         temp_dir -- str or Path temporary directory for I/O
             Default is the system temporary directory.
-    
-    Returns: 
+
+    Returns:
         (xtb_mol, energy, charges) -- tuple of optimized RDKit mol object, xtb energy (in Hartrees)
                                       and partial charges (in e-)
     """
@@ -323,12 +323,12 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                         numbers = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", line)
                         energy = float(numbers[0])
                         break
-            
+
             with open(out_dir/'charges', 'r') as file:
                 lines = file.readlines()
                 charges = [0]*len(lines)
                 for i, line in enumerate(lines):
-                    charges[i] = float(line.split()[0]) 
+                    charges[i] = float(line.split()[0])
                     xtb_mol.GetAtomWithIdx(i).SetProp('charge', str(charges[i]))
 
             xtb_mol.SetProp("energy", str(energy))
@@ -348,7 +348,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
     """
     Uses external calls to GFN2-XTB (command line) to optimize an set of coordinates provided
     as an xyz block.
-    
+
     Args:
         xyz_block -- str of an xyz block
         solvent -- None or str indicating any implicit solvent to be used during optimization
@@ -357,8 +357,8 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
         charge -- int of the molecular charge
         temp_dir -- str or Path temporary directory for I/O
             Default is the system temporary directory.
-    
-    Returns: 
+
+    Returns:
         (xtb_mol, energy, charges) -- tuple of optimized RDKit mol object, xtb energy (in Hartrees)
                                       and partial charges (in e-)
     """
@@ -391,7 +391,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
                 )
-            
+
             opt_xyz_path = out_dir/'xtbopt.xyz'
             if opt_xyz_path.is_file():
                 with open(out_dir/'xtbopt.xyz', 'r') as file:
@@ -413,7 +413,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                 lines = file.readlines()
                 charges = [0]*len(lines)
                 for i, line in enumerate(lines):
-                    charges[i] = float(line.split()[0]) 
+                    charges[i] = float(line.split()[0])
 
         finally:
             if out_dir.exists():
@@ -431,7 +431,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
     """
     Uses external calls to GFN2-XTB (command line) to compute the atomic partial charges from
     a single point calculation of a provided conformer.
-    
+
     Args:
         conformer -- RDKit mol object containing 3D coordinates
         solvent -- None or str indicating any implicit solvent to be used during optimization
@@ -440,8 +440,8 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
         charge -- int of the molecular charge
         temp_dir -- str or Path temporary directory for I/O
             Default is the system temporary directory.
-    
-    Returns: 
+
+    Returns:
         charges -- list of partial charges for each atom (in e-)
     """
 
@@ -480,7 +480,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                 lines = file.readlines()
                 charges = [0]*len(lines)
                 for i, line in enumerate(lines):
-                    charges[i] = float(line.split()[0]) 
+                    charges[i] = float(line.split()[0])
 
         finally:
             if out_dir.exists():
@@ -497,7 +497,7 @@ def single_point_xtb_from_xyz(xyz_block: str,
     """
     Uses external calls to GFN2-XTB (command line) to compute the energy and atomic partial charges
     from a single point calculation of a provided conformer.
-    
+
     Args:
         xyz_block -- str of xyz block representing a molecule
         solvent -- None or str indicating any implicit solvent to be used during optimization
@@ -506,8 +506,8 @@ def single_point_xtb_from_xyz(xyz_block: str,
         charge -- int of the molecular charge
         temp_dir -- str or Path temporary directory for I/O
             Default is the system temporary directory.
-    
-    Returns: 
+
+    Returns:
         energy -- float xtb energy in Hartrees
         charges -- list of partial charges for each atom (in e-)
     """
@@ -557,7 +557,7 @@ def single_point_xtb_from_xyz(xyz_block: str,
                 lines = file.readlines()
                 charges = [0]*len(lines)
                 for i, line in enumerate(lines):
-                    charges[i] = float(line.split()[0]) 
+                    charges[i] = float(line.split()[0])
         finally:
             if out_dir.exists():
                 shutil.rmtree(out_dir)
@@ -654,7 +654,7 @@ def generate_opt_conformers_xtb(smiles: str,
                                 num_confs: int = 1000):
     """
     Generate conformer ensemble with rdkit then relax with xTB.
-    
+
     Args:
         smiles -- str
         charge -- int of the molecular charge
@@ -668,8 +668,8 @@ def generate_opt_conformers_xtb(smiles: str,
             Default is the system temporary directory.
         verbose -- bool toggle tqdm
         num_confs -- int number of conformers to initially generate
-    
-    Returns: 
+
+    Returns:
         clustered_conformers_xtb: list of rdkit conformers after xTB relaxation and clustering
         clustered_energies_xtb: list of energies for associated conformers
         clustered_charges_xtb: list of partial charges for associated conformers
@@ -738,14 +738,14 @@ def generate_opt_conformers(smiles: str,
                             num_confs: int = 1000):
     """
     Generate optimal conformers with rdkit (MMFF94)
-    
+
     Args:
         smiles -- str
         MMFF_optimize -- bool optimize RDKit embedded molecules with MMFF94
         verbose -- bool toggle tqdm
         num_confs -- int number of conformers to initially generate
-    
-    Returns: 
+
+    Returns:
         clustered_conformers_xtb: list of clustered rdkit conformers after RDKit embedding and
             optional MMFF relaxation
     """

@@ -53,7 +53,7 @@ def rotation_axis_jax(v1: Array, v2: Array) -> Array:
         v3 = jnp.zeros(v1.shape)
         if same_vectors_idx.size > 0:
             v3 = v3.at[same_vectors_idx].set(jnp.tile(jnp.array([1., 0., 0.]), (len(same_vectors_idx), 1)))
-        diff_vectors_idx = jnp.where(all_close == False)[0]
+        diff_vectors_idx = jnp.where(not all_close)[0]
         if diff_vectors_idx.size > 0:
             v3 = v3.at[diff_vectors_idx].set(jnp.cross(v1.at[diff_vectors_idx].get(),
                                                        v2.at[diff_vectors_idx].get(), axis=-1))
@@ -69,14 +69,14 @@ def quaternion_from_axis_angle_jax(axis: Array, angle: Array) -> Array:
     """
     Create a Quaternion from a rotation axis and an angle in radians.
     Jax implementation.
-    
+
     Parameters
     ----------
     axis : Array (3,)
         Axis to rotate about.
     angle: Array (1,)
         Angle in radians.
-    
+
     Returns
     -------
     quaternion : Array (4,)
@@ -123,7 +123,7 @@ def quaternions_for_principal_component_alignment_jax(ref_points: Array,
     Computes the 4 quaternions required for alignment of the fit mol along the
     principal components of the reference mol.
     NumPy implementation.
-    
+
     The computed quaternions assumes that fit_points will be rotated after being centered at COM.
 
     Parameters
@@ -140,7 +140,7 @@ def quaternions_for_principal_component_alignment_jax(ref_points: Array,
         four possible principal component combinations.
     """
     pmi_ref = compute_principal_moments_of_interia_jax(ref_points)
-    
+
     quaternions = jnp.zeros((4,4))
     for q_index in range(4):
         if q_index == 1:

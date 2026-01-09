@@ -1,4 +1,4 @@
-""" 
+"""
 Gaussian volume overlap scoring functions -- Shape-only (i.e., not color)
 
 Batched and non-batched functionalities
@@ -37,7 +37,7 @@ def VAB_2nd_order(centers_1: torch.Tensor,
     # Batched case
     if len(R2_cdist.shape) == 3:
         R2 = R2_cdist.permute(0, 2, 1)  # (B, N_c2, N_c1)
-        
+
         VAB_second_order = torch.sum(torch.sum((np.pi**1.5) /
                                                ((2 * alpha)**1.5) *
                                                torch.exp(-(alpha / 2) * R2),
@@ -91,7 +91,7 @@ def get_overlap(centers_1: Union[torch.Tensor, np.ndarray],
         for a single instance to be broadcast against a batch in centers_1.
     alpha : float (default=0.81)
         Gaussian width parameter. Lower value corresponds to wider Gaussian (longer tail).
-    
+
     Returns
     -------
     torch.Tensor : (batch,) or scalar
@@ -149,11 +149,11 @@ def VAB_2nd_order_mask(centers_1: torch.Tensor,
             m1_final = m1_final.unsqueeze(0) # (1, N1)
         if m2_final.dim() == 1:
             m2_final = m2_final.unsqueeze(0) # (1, N2)
-        
+
         # m1_final_unsqueezed: (B or 1, N1, 1), m2_final_unsqueezed: (B or 1, 1, N2)
         m1_final_unsqueezed = m1_final.unsqueeze(2)
         m2_final_unsqueezed = m2_final.unsqueeze(1)
-        
+
         # mask_mat will broadcast to (B, N1, N2) then permuted to (B, N2, N1)
         mask_mat = (m1_final_unsqueezed * m2_final_unsqueezed).permute(0, 2, 1)
 
@@ -168,7 +168,7 @@ def VAB_2nd_order_mask(centers_1: torch.Tensor,
         # m1_final should be (N1,), m2_final should be (N2,)
         # mask_mat should be (N1, N2) for direct multiplication with R2_cdist
         mask_mat = m1_final.unsqueeze(1) * m2_final.unsqueeze(0) # (N1,1) * (1,N2) -> (N1,N2)
-        
+
         VAB_second_order = torch.sum((np.pi**1.5) /
                                      ((2 * alpha)**1.5) *
                                      mask_mat *
@@ -203,7 +203,7 @@ def VAB_2nd_order_mask_batch(cdist_21: torch.Tensor,
         Mask for the first set of points (corresponding to N in cdist_21).
     mask_2 : torch.Tensor (B,M) or (1,M)
         Mask for the second set of points (corresponding to M in cdist_21).
-    
+
     Returns
     -------
     torch.Tensor : (B,)
@@ -260,7 +260,7 @@ def VAB_2nd_order_cosine(centers_1: torch.Tensor,
     # Batched case
     if R2_cdist.dim() == 3:
         R2_permuted = R2_cdist.permute(0, 2, 1)  # (B, N2, N1)
-        
+
         # Cosine similarity V2: (B, N1, N2)
         # vec1_norm: (B or 1, N1, 3), vec2_norm: (B or 1, N2, 3)
         # Need vec2_norm.permute(0,2,1) for matmul -> (B or 1, 3, N2)
@@ -342,7 +342,7 @@ def VAB_2nd_order_cosine_mask(centers_1: torch.Tensor,
     norm_dim_v2 = vectors_2.dim() - 1
     vec1_norm = F.normalize(vectors_1, p=2, dim=norm_dim_v1)
     vec2_norm = F.normalize(vectors_2, p=2, dim=norm_dim_v2)
-    
+
     m1_final = mask_1.float()
     m2_final = mask_2.float()
 
@@ -412,7 +412,7 @@ def VAB_2nd_order_cosine_mask_batch(cdist_21: torch.Tensor,
                                     mask_2: torch.Tensor
                                     ) -> torch.Tensor:
     """
-    2nd order volume overlap of AB (batched) weighted by cosine similarity, 
+    2nd order volume overlap of AB (batched) weighted by cosine similarity,
     with masking, using precomputed cdist and vector dot products (vmm).
     Assumes inputs `cdist_21`, `vmm_21`, `mask_1`, `mask_2` are already batched and broadcast-compatible.
 
@@ -469,9 +469,9 @@ def VAB_2nd_order_batched(centers_1: torch.Tensor,
                           prefactors_1: torch.Tensor,
                           prefactors_2: torch.Tensor
                           ) -> torch.Tensor:
-    """ 
+    """
     Calculate the 2nd order volume overlap of AB -- batched functionality
-    
+
     Parameters
     ----------
         centers_1 : (torch.Tensor) (batch_size, num_atoms_1, 3)
@@ -491,7 +491,7 @@ def VAB_2nd_order_batched(centers_1: torch.Tensor,
 
         prefactors_2 : (torch.Tensor) (batch_size, num_atoms_2)
             Prefactor values for atoms in molecule 2
-    
+
     Returns
     -------
     torch.Tensor (batch_size,)

@@ -163,7 +163,7 @@ def find_hydrophobes(mol: rdkit.Chem.rdchem.Mol,
                     group.append(h)
             grouped_hydrophobes.append(__average(group))
         return grouped_hydrophobes
-    
+
 ### End Tsuda Lab code
 
 
@@ -172,12 +172,12 @@ def _get_points_fibonacci(num_samples):
     Generate points on unit sphere using fibonacci approach.
     Adapted from Morfeus:
     https://github.com/digital-chemistry-laboratory/morfeus/blob/main/morfeus/geometry.py
-    
+
     Parameters
     ----------
     num_samples : int
         Number of points to sample from the surface of a sphere
-    
+
     Returns
     -------
     np.ndarray (num_samples,3)
@@ -232,7 +232,7 @@ def __is_accessible(interaction_sphere, atom_pos, radii, mask_atom_idx):
     mask_atom_idx : np.ndarray of bool (N,) contains atom indices to ignore if the interaction
                     points are within their SA volumes. For example, the acceptor atom or the
                     donating hydrogens.
-    
+
     Returns
     -------
     bool
@@ -265,7 +265,7 @@ def _is_donator_accessible(mol: rdkit.Chem.rdchem.Mol,
     Check accessbility of donator atoms inspired by protocol of Pharao.
     DOI: 10.1016/j.jmgm.2008.04.003
     Check whether at least 2% of the points sampled on a sphere of 1.8A radius is accessible.
-        i.e., beyond the SAS        
+        i.e., beyond the SAS
     Arguments
     ---------
     mol : rdkit Mol with conformer
@@ -406,7 +406,7 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                  }
     """
     pharmacophores = {}
-    
+
     dirname = os.path.dirname(__file__)
     fdef_file = os.path.join(dirname, 'smarts_features.fdef')
     factory = AllChem.BuildFeatureFactory(fdef_file)
@@ -428,7 +428,7 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
         pos = feat.GetPos() # positions of pharmacophore anchor
 
         if family.lower() == 'aromatic':
-            anchor, vec = GetAromaticFeatVects(conf = mol.GetConformer(), 
+            anchor, vec = GetAromaticFeatVects(conf = mol.GetConformer(),
                                                featAtoms = feat.GetAtomIds(),
                                                featLoc = pos,
                                                return_both = multi_vector,
@@ -463,7 +463,7 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                                                     unit_vec = avg_vec
                                                     ):
                         continue # don't keep this pharmacophore
-                
+
                 # If only one vector per pharmacophore
                 if not multi_vector and anchor is not None:
                     anchor = anchor[0]
@@ -501,13 +501,13 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                 if not multi_vector and anchor is not None:
                     anchor = anchor[0]
                     vec = deepcopy(avg_vec)
-        
+
         elif family.lower() == 'halogen':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
                 anchor, vec = GetHalogenFeatVects(conf = mol.GetConformer(),
-                                                  featAtoms = aids, 
+                                                  featAtoms = aids,
                                                   scale = scale)
                 anchor = anchor[0]
                 vec = vec[0]
@@ -549,7 +549,7 @@ def get_pharmacophores(mol: rdkit.Chem.rdchem.Mol,
      buried acceptors/donors, but may be prone to false positives. For example, CN(C)C would have
      its sole HBA rejected. Other approaches such as buried volume should be considered in the
      future.
-    
+
     Arguments
     ---------
     mol : rdkit Mol object with conformer.

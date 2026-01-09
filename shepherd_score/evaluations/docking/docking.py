@@ -157,7 +157,7 @@ class VinaBase:
         Load ligand from SDF file into Vina.
         """
         mol = Chem.SDMolSupplier(sdf_file, removeHs=False)[0]
-        
+
         if mol.GetNumConformers() == 0:
             mols = self.load_ligand_from_smiles(Chem.MolToSmiles(mol))
             if len(mols) > 0:
@@ -236,7 +236,7 @@ class VinaBase:
             vina_output_string = self.v.poses()
             docked_pdbqt_mols = PDBQTMolecule(vina_output_string, is_dlg=False, skip_typing=False)
             docked_rdmol = RDKitMolCreate.from_pdbqt_mol(docked_pdbqt_mols)[0]
-            
+
         except Exception as e:
             print(e)
             return np.nan, np.nan, None
@@ -323,7 +323,7 @@ class VinaBase:
             self.state = 'optimized'
             if output_file is not None:
                 self.v.write_pose(output_file, overwrite=True)
-            
+
             if output_file is None:
                 _used_temp_file = True
                 _file_name = str(uuid.uuid4()) + ''.join(str(time.time()).split('.')[1])
@@ -339,10 +339,10 @@ class VinaBase:
 
             if output_file is None:
                 output_file = temp_output_file
-            
+
             pdbqt_mol_opt = PDBQTMolecule.from_file(output_file)
             rdkitmol_opt = RDKitMolCreate.from_pdbqt_mol(pdbqt_mol_opt)[0]
-            
+
             if _used_temp_file:
                 os.remove(output_file)
 
@@ -350,7 +350,7 @@ class VinaBase:
             print(e)
             return np.nan, np.nan, None
         return total_energy, torsion_energy, rdkitmol_opt
-    
+
     def save_pose_to_file(self, output_file: str, n_poses: int = 1):
         if self.state is None:
             print("Cannot save pose in state None. Run docking or optimization first.")

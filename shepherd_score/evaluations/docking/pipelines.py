@@ -63,7 +63,7 @@ def _eval_docking_single(
 ) -> Dict[str, Any]:
     """
     Evaluate a single SMILES string for docking.
-    
+
     This function is designed to be called by multiprocessing workers.
     It uses the pre-initialized VinaSmiles instance from the worker.
     """
@@ -118,7 +118,7 @@ def _eval_relax_single(
 ) -> Dict[str, Any]:
     """
     Evaluate a single mol object for relaxation.
-    
+
     This function is designed to be called by multiprocessing workers.
     It uses the pre-initialized VinaSmiles instance from the worker.
     """
@@ -133,7 +133,7 @@ def _eval_relax_single(
     try:
         # Unpickle the mol object
         mol = pickle.loads(mol_pickle)
-        
+
         if mol is None:
             return {'i': i, 'energy': np.nan, 'relaxed_mol': None, 'error': 'mol is None after unpickling'}
 
@@ -261,7 +261,7 @@ class DockingEvalPipeline:
         protonate : bool (default = False) Use protonation protocol
         save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
         verbose : bool (default = False) show tqdm progress bar for each SMILES.
-        num_workers : int (default = 1) number of parallel worker processes. 
+        num_workers : int (default = 1) number of parallel worker processes.
             Only recommended if `smiles_ls` is > 100 due to start-up overhead of new processes.
         num_processes : int (default = 4) number of processes each worker uses internally for Vina.
             Constraint: num_workers * num_processes <= available CPUs
@@ -390,12 +390,12 @@ class DockingEvalPipeline:
             # Single process evaluation
             if len(smiles_to_process) > 0:
                 if verbose:
-                    pbar = tqdm(enumerate(zip(indices_to_process, smiles_to_process)), 
-                            desc=f'Docking {self.pdb_id}', 
+                    pbar = tqdm(enumerate(zip(indices_to_process, smiles_to_process)),
+                            desc=f'Docking {self.pdb_id}',
                             total=len(smiles_to_process))
                 else:
                     pbar = enumerate(zip(indices_to_process, smiles_to_process))
-                
+
                 for _, (idx, smiles) in pbar:
                     save_poses_path = None
                     if save_poses_dir_path is not None:
@@ -455,7 +455,7 @@ class DockingEvalPipeline:
             If None, uses the default value of 10000.
         save_poses_dir_path : Optional[str] (default = None) Path to directory to save optimized poses.
         verbose : bool (default = False) show tqdm progress bar for each mol.
-        num_workers : int (default = 1) number of parallel worker processes. 
+        num_workers : int (default = 1) number of parallel worker processes.
         mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
 
         Returns
@@ -579,12 +579,12 @@ class DockingEvalPipeline:
             # Single process evaluation
             if len(mols_to_process) > 0:
                 if verbose:
-                    pbar = tqdm(enumerate(zip(indices_to_process, mols_to_process)), 
-                            desc=f'Relaxing {self.pdb_id}', 
+                    pbar = tqdm(enumerate(zip(indices_to_process, mols_to_process)),
+                            desc=f'Relaxing {self.pdb_id}',
                             total=len(mols_to_process))
                 else:
                     pbar = enumerate(zip(indices_to_process, mols_to_process))
-                
+
                 for _, (idx, mol) in pbar:
                     save_poses_path = None
                     if save_poses_dir_path is not None:
@@ -685,7 +685,7 @@ def run_docking_benchmark(save_dir_path: str,
     """
     Run docking benchmark on experimental smiles. Uses an exhaustivness of 32 and saves the top-30
     poses to a specified location.
-    
+
     Arguments
     ---------
     save_dir_path : str Path to save docked poses to
@@ -732,7 +732,7 @@ def run_docking_evaluation(atoms: List[np.ndarray],
                            ) -> DockingEvalPipeline:
     """
     Run docking evaluation with an exhaustiveness of 32.
-    
+
     Arguments
     ---------
     atoms : List[np.ndarray (N,)] of atomic numbers of the generated molecule or (N,M) one-hot
@@ -754,7 +754,7 @@ def run_docking_evaluation(atoms: List[np.ndarray],
     protonate : bool (default = False) Use protonation protocol
     save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
     verbose : bool (default = True) show tqdm progress bar for each SMILES.
-    num_workers : int (default = 1) number of parallel worker processes. 
+    num_workers : int (default = 1) number of parallel worker processes.
     mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
 
     Returns
@@ -774,8 +774,8 @@ def run_docking_evaluation(atoms: List[np.ndarray],
     for sample in zip(atoms, positions):
         smiles_list.append(get_smiles_from_atom_pos(atoms=sample[0], positions=sample[1]))
 
-    docking_pipe.evaluate(smiles_list, exhaustiveness=exhaustiveness, n_poses=n_poses, 
-                          protonate=protonate, save_poses_dir_path=save_poses_dir_path, 
+    docking_pipe.evaluate(smiles_list, exhaustiveness=exhaustiveness, n_poses=n_poses,
+                          protonate=protonate, save_poses_dir_path=save_poses_dir_path,
                           verbose=verbose, num_workers=num_workers, num_processes=num_processes,
                           mp_context=mp_context)
 
@@ -797,7 +797,7 @@ def run_docking_evaluation_from_smiles(smiles: List[str],
                                        ) -> DockingEvalPipeline:
     """
     Run docking evaluation with an exhaustiveness of 32.
-    
+
     Arguments
     ---------
     smiles : List[str] list of SMILES strings. These must be valid or None.
@@ -817,7 +817,7 @@ def run_docking_evaluation_from_smiles(smiles: List[str],
     protonate : bool (default = False) Use protonation protocol
     save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
     verbose : bool (default = True) show tqdm progress bar for each SMILES.
-    num_workers : int (default = 1) number of parallel worker processes. 
+    num_workers : int (default = 1) number of parallel worker processes.
     mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
 
     Returns
@@ -833,8 +833,8 @@ def run_docking_evaluation_from_smiles(smiles: List[str],
                                        verbose=0,
                                        path_to_bin='')
 
-    docking_pipe.evaluate(smiles, exhaustiveness=exhaustiveness, n_poses=n_poses, 
-                          protonate=protonate, save_poses_dir_path=save_poses_dir_path, 
+    docking_pipe.evaluate(smiles, exhaustiveness=exhaustiveness, n_poses=n_poses,
+                          protonate=protonate, save_poses_dir_path=save_poses_dir_path,
                           verbose=verbose, num_workers=num_workers, num_processes=num_processes,
                           mp_context=mp_context)
 

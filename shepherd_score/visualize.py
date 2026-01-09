@@ -40,7 +40,7 @@ def __draw_arrow(view, color, anchor_pos, rel_unit_vec, flip: bool = False, opac
         flip = -1.
     else:
         flip = 1.
-        
+
     view.addArrow({
         'start' : {k: float(anchor_pos[i]) for i, k in enumerate(keys)},
         'end' : {k: float(flip*2*rel_unit_vec[i] + anchor_pos[i]) for i, k in enumerate(keys)},
@@ -80,7 +80,7 @@ def draw(mol: Union[Chem.Mol, str],
     mol : Chem.Mol | str
         The molecule to draw. Either an RDKit Mol object or a string of the molecule in XYZ format.
         The XYZ string does not need to be a valid molecular structure.
-    
+
     Optional Parameters
     -------------------
     feats : dict
@@ -125,13 +125,13 @@ def draw(mol: Union[Chem.Mol, str],
         view.removeAllModels()
     if removeHs:
         mol = Chem.RemoveHs(mol)
-    
+
     if isinstance(mol, Chem.Mol):
         mb = Chem.MolToMolBlock(mol, confId=0)
         view.addModel(mb, 'sdf')
     else:
         view.addModel(mol, 'xyz')
-    
+
     if color_scheme is not None:
         view.setStyle({'model': -1}, {'stick': {'colorscheme':color_scheme, 'opacity': opacity}})
     elif custom_carbon_color is not None:
@@ -167,13 +167,13 @@ def draw(mol: Union[Chem.Mol, str],
 
                 if fam == 'Aromatic':
                     __draw_arrow(view, clr, pos, vec, flip=True, opacity=opacity_features)
-    
+
     if feats == {} and pharm_types is not None and pharm_ancs is not None and pharm_vecs is not None:
         for i, ptype in enumerate(pharm_types):
             # Skip invalid pharmacophore type indices (like -1)
             if ptype < 0 or ptype >= len(P_TYPES):
                 continue
-                
+
             fam = P_IND2TYPES[ptype]
             clr = feature_colors.get(fam, (.5,.5,.5))
             view.addSphere({'center':{keys[k]: float(pharm_ancs[i][k]) for k in range(3)},
@@ -186,7 +186,7 @@ def draw(mol: Union[Chem.Mol, str],
 
             if fam == 'Aromatic':
                 __draw_arrow(view, clr, pharm_ancs[i], vec, flip=True, opacity=opacity_features)
-    
+
     if dummy_atom_pos is not None:
         for i, pos in enumerate(dummy_atom_pos):
             clr = (.8, .6, 1.)
@@ -228,16 +228,16 @@ def _process_generated_sample(
 
     if 'x1' not in generated_sample or 'atoms' not in generated_sample['x1'] or 'positions' not in generated_sample['x1']:
         raise ValueError('Generated sample does not contain atoms and positions in expected dict.')
-    
+
     if model_type not in ['all', 'x2', 'x3', 'x4']:
         raise ValueError(f'Invalid model type: {model_type}')
-    
+
     xyz_block, dummy_atom_pos = get_xyz_content_with_dummy(generated_sample['x1']['atoms'], generated_sample['x1']['positions'])
 
     surf_pos = generated_sample['x3']['positions'] if model_type in ['all', 'x3'] else None
     if model_type == 'x2':
         surf_pos = generated_sample['x2']['positions']
-    
+
     surf_esp = generated_sample['x3']['charges'] if model_type in ['all', 'x3'] else None
 
     pharm_types = generated_sample['x4']['types'] if model_type in ['all', 'x4'] else None
@@ -309,7 +309,7 @@ def draw_sample(
     if view is None:
         view = py3Dmol.view(width=width, height=height)
         view.removeAllModels()
-    
+
     if ref_mol is not None:
         mb = Chem.MolToMolBlock(ref_mol, confId=0)
         view.addModel(mb, 'sdf')
@@ -392,8 +392,8 @@ def chimera_from_mol(mol: Chem.Mol,
         save_dir_.mkdir(parents=True, exist_ok=True)
 
     pharm_types, pharm_pos, pharm_direction = get_pharmacophores(
-        mol, 
-        multi_vector = False, 
+        mol,
+        multi_vector = False,
         check_access = False,
     )
 
@@ -444,10 +444,10 @@ def _chimera_pharmacophore_file(pharm_types: np.ndarray, pharm_pos: np.ndarray, 
         pharm_name = pharmacophore_colors[pharm_type][0]
         p = pharm_pos[i]
         v = pharm_direction[i] * 2.0 # scaling size of vector
-        
+
         bild += f'.color {pharmacophore_colors[pharm_type][1][0]} {pharmacophore_colors[pharm_type][1][1]} {pharmacophore_colors[pharm_type][1][2]}\n'
         bild += f'.transparency {pharmacophore_colors[pharm_type][3]}\n'
-        if pharm_name not in ['Aromatic', 'Acceptor', 'Donor', 'Halogen', 'Exit vector']: 
+        if pharm_name not in ['Aromatic', 'Acceptor', 'Donor', 'Halogen', 'Exit vector']:
             bild += f'.sphere {p[0]} {p[1]} {p[2]} {pharmacophore_colors[pharm_type][2]}\n'
         if np.linalg.norm(v) > 0.0:
             bild += f'.arrow {p[0]} {p[1]} {p[2]} {p[0] + v[0]} {p[1] + v[1]} {p[2] + v[2]} 0.1 0.2\n'
@@ -584,7 +584,7 @@ def draw_2d_valid(ref_mol: Chem.Mol,
         AllChem.Compute2DCoords(qmol)
         # generate coordinates for the molecules using the template
         [AllChem.GenerateDepictionMatching2DStructure(m, qmol) for m in valid_mols]
-    
+
     return Chem.Draw.MolsToGridImage(
         [temp_mol]+ valid_mols,
         highlightAtomLists=[temp_mol.GetSubstructMatch(mcs.queryMol)]+[m.GetSubstructMatch(mcs.queryMol) for m in valid_mols] if find_atomic_overlap else None,
@@ -627,23 +627,23 @@ def draw_2d_highlight(mol: Chem.Mol,
     """
     if colors is None:
         colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
-    
+
     non_empty_sets = [s for s in atom_sets if s]
-    
+
     highlight_atoms = {}
     highlight_colors = {}
-    
+
     for set_idx, atom_set in enumerate(non_empty_sets):
         color_rgb = mcolors.to_rgb(colors[set_idx % len(colors)])
         for atom_id in atom_set:
             highlight_atoms[atom_id] = color_rgb
             highlight_colors[atom_id] = color_rgb
-    
+
     drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
-    
+
     opts = drawer.drawOptions()
     opts.addStereoAnnotation = add_stereo_annotation
-    
+
     if label is not None:
         mol_copy = mol_with_atom_index(mol, label=label)
     else:
@@ -652,13 +652,13 @@ def draw_2d_highlight(mol: Chem.Mol,
     if compute_2d_coords:
         AllChem.Compute2DCoords(mol_copy)
 
-    drawer.DrawMolecule(mol_copy, 
+    drawer.DrawMolecule(mol_copy,
                         highlightAtoms=list(highlight_atoms.keys()),
                         highlightAtomColors=highlight_colors)
-    
+
     drawer.FinishDrawing()
     svg = drawer.GetDrawingText()
-    
+
     if embed_display:
         return SVG(svg)
     else:

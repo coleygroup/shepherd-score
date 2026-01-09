@@ -257,7 +257,7 @@ class UnconditionalEvalPipeline:
             return np.nan
         else:
             return val
-    
+
     def get_frac_valid(self):
         """ Fraction of generated molecules that were valid. """
         return self.num_valid / self.num_generated_mols
@@ -269,7 +269,7 @@ class UnconditionalEvalPipeline:
     def get_frac_consistent_graph(self):
         """ Fraction of generated molecules that were consistent before and after relaxation. """
         return self.num_consistent_graph / self.num_generated_mols
-    
+
     def get_frac_unique(self):
         """ Fraction of unique smiles extracted pre-optimization in the generated set. """
         if self.num_valid != 0:
@@ -388,7 +388,7 @@ class ConditionalEvalPipeline:
         """
         self.generated_mols = generated_mols
         self.num_generated_mols = len(self.generated_mols)
-        self.solvent = solvent        
+        self.solvent = solvent
 
         self.pharm_multi_vector = pharm_multi_vector
         self.condition = condition
@@ -443,7 +443,7 @@ class ConditionalEvalPipeline:
         self.frac_unique = None
         self.frac_unique_post_opt = None
         self.avg_graph_diversity = None
-        
+
         # 3D similarity scores
         self.sims_surf_target = np.empty(self.num_generated_mols)
         self.sims_esp_target = np.empty(self.num_generated_mols)
@@ -472,7 +472,7 @@ class ConditionalEvalPipeline:
                  *,
                  mp_context: Literal['spawn', 'forkserver'] = 'spawn'
                  ):
-        """ 
+        """
         Run conditional evaluation on every generated molecule and store collective values.
 
         Arguments
@@ -496,7 +496,7 @@ class ConditionalEvalPipeline:
         max_workers_allowed = max(1, available_cpus // max(1, num_processes))
         if num_workers > max_workers_allowed:
             num_workers = max_workers_allowed
-        
+
         if num_workers > 1:
             multiprocessing.set_start_method(mp_context, force=True)
             with set_thread_limits(num_processes):
@@ -651,16 +651,16 @@ class ConditionalEvalPipeline:
                 alpha=ALPHA(molec.num_surf_points)
             )
             esp_scores[i] = get_overlap_esp_np(
-                centers_1=self.ref_molec.surf_pos, 
+                centers_1=self.ref_molec.surf_pos,
                 centers_2=molec.surf_pos,
                 charges_1=self.ref_molec.surf_esp,
                 charges_2=molec.surf_esp,
                 alpha=ALPHA(molec.num_surf_points),
                 lam=self.lam_scaled
             )
-            
+
         return surf_scores, esp_scores
-            
+
 
     def get_attr(self, obj, attr: str):
         """ Gets an attribute of `obj` via the string name. If it is None, then return np.nan """
@@ -669,7 +669,7 @@ class ConditionalEvalPipeline:
             return np.nan
         else:
             return val
-        
+
     def get_frac_valid(self):
         """ Fraction of generated molecules that were valid. """
         return self.num_valid / self.num_generated_mols
@@ -681,7 +681,7 @@ class ConditionalEvalPipeline:
     def get_frac_consistent_graph(self):
         """ Fraction of generated molecules that were consistent before and after relaxation. """
         return self.num_consistent_graph / self.num_generated_mols
-    
+
     def get_frac_unique(self):
         """ Fraction of unique smiles extracted pre-optimization in the generated set. """
         if self.num_valid != 0:
@@ -709,8 +709,8 @@ class ConditionalEvalPipeline:
         """
         avg_diversity = np.nanmean(1 - self.graph_similarities)
         return avg_diversity
-    
-    
+
+
     def to_pandas(self) -> Tuple[pd.Series, pd.DataFrame]:
         """
         Convert the stored attributes to a pd.Series (for global attributes) and pd.DataFrame
@@ -770,7 +770,7 @@ def resample_surf_scores(ref_molec: Molecule,
                                         molec.surf_pos,
                                         alpha=ALPHA(molec.num_surf_points))
         if eval_esp:
-            esp_scores[i] = get_overlap_esp_np(centers_1=ref_molec.surf_pos, 
+            esp_scores[i] = get_overlap_esp_np(centers_1=ref_molec.surf_pos,
                                                centers_2=molec.surf_pos,
                                                charges_1=ref_molec.surf_esp,
                                                charges_2=molec.surf_esp,
@@ -821,7 +821,7 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         """
         # Initialize parent class (UnconditionalEvalPipeline)
         super().__init__(generated_mols=generated_mols, solvent=solvent)
-        
+
         # Consistency-specific attributes
         self.probe_radius = probe_radius
         self.random_molblock_charges = random_molblock_charges
@@ -848,7 +848,7 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         self.pharm_multi_vector = pharm_multi_vector
 
         # Additional overall metrics for post-opt diversity
-        
+
         # 3D similarity scores
         self.sims_surf_consistent = np.empty(self.num_generated_mols)
         self.sims_esp_consistent = np.empty(self.num_generated_mols)
@@ -1001,7 +1001,7 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         """
         Capture distribution of surface similarity and surface ESP scores caused by resampling
         surface.
-        
+
         Arguments
         ---------
         consis_eval : ConsistencyEval obj to check similarity scores caused by resampling
@@ -1020,10 +1020,10 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
             eval_surf=consis_eval.molec.surf_pos is not None,
             eval_esp=consis_eval.molec.surf_esp is not None,
             lam_scaled=consis_eval.lam_scaled
-        )            
+        )
         return surf_scores, esp_scores
 
-    
+
     @staticmethod
     def resampling_upper_bounds(consis_eval: ConsistencyEval,
                                 num_samples: int = 5,
@@ -1047,7 +1047,7 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         return _compute_consistency_upper_bounds(
             consis_eval, num_samples, num_surf_points
         )
-            
+
 
     def to_pandas(self) -> Tuple[pd.Series, pd.DataFrame]:
         """

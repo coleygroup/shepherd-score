@@ -64,7 +64,7 @@ class TestDataGenerator:
     """Generate consistent test data across all implementations."""
 
     @staticmethod
-    def generate_pharmacophore_data(n_pharm_1: int = 10, n_pharm_2: int = 8, 
+    def generate_pharmacophore_data(n_pharm_1: int = 10, n_pharm_2: int = 8,
                                   seed: int = 42) -> Tuple[np.ndarray, ...]:
         """Generate test pharmacophore data."""
         np.random.seed(seed)
@@ -87,7 +87,7 @@ class TestDataGenerator:
         return ptype_1, ptype_2, anchors_1, anchors_2, vectors_1, vectors_2
 
     @staticmethod
-    def generate_shape_data(n_atoms_1: int = 20, n_atoms_2: int = 15, 
+    def generate_shape_data(n_atoms_1: int = 20, n_atoms_2: int = 15,
                           seed: int = 42) -> Tuple[np.ndarray, np.ndarray]:
         """Generate test shape data (atomic coordinates)."""
         np.random.seed(seed + 100)  # Different seed for shape data
@@ -110,7 +110,7 @@ def pharmacophore_sizes(request):
 
 @pytest.fixture(params=[
     'tanimoto',
-    'tversky', 
+    'tversky',
     'tversky_ref',
     'tversky_fit'
 ])
@@ -251,7 +251,7 @@ class TestComboScoring:
 
         # NumPy result (ground truth)
         result_np = get_pharm_combo_score_np(
-            centers_1, centers_2, ptype_1, ptype_2, 
+            centers_1, centers_2, ptype_1, ptype_2,
             anchors_1, anchors_2, vectors_1, vectors_2
         )
 
@@ -282,7 +282,7 @@ class TestEdgeCases:
         """Test with completely different pharmacophore types."""
         # Molecule 1 has only hydrophobic (0)
         ptype_1 = np.array([0, 0, 0], dtype=np.int32)
-        # Molecule 2 has only aromatic (4)  
+        # Molecule 2 has only aromatic (4)
         ptype_2 = np.array([4, 4], dtype=np.int32)
 
         anchors_1 = np.random.normal(0, 1, size=(3, 3)).astype(np.float32)
@@ -328,7 +328,7 @@ class TestEdgeCases:
 
         # Use same data for both molecules
         ptype_2, anchors_2, vectors_2 = ptype_1, anchors_1, vectors_1
-        
+
         result_np = get_overlap_pharm_np(
             ptype_1, ptype_2, anchors_1, anchors_2, vectors_1, vectors_2,
             similarity='tanimoto'
@@ -361,7 +361,7 @@ class TestPerformance:
     """Performance comparison tests (marked as slow)."""
 
     @pytest.mark.slow
-    @pytest.mark.skipif(not (TORCH_AVAILABLE and JAX_AVAILABLE), 
+    @pytest.mark.skipif(not (TORCH_AVAILABLE and JAX_AVAILABLE),
                        reason="Both PyTorch and JAX needed for performance comparison")
     def test_performance_comparison(self):
         """Compare performance of different implementations."""
@@ -435,4 +435,4 @@ class TestPerformance:
         assert np.allclose(np.array(result_jax), result_np, rtol=RTOL, atol=ATOL)
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"]) 
+    pytest.main([__file__, "-v"])

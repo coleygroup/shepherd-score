@@ -29,13 +29,18 @@ from shepherd_score.alignment_utils.se3_np import apply_SE3_transform_np, apply_
 def update_mol_coordinates(mol: Chem.Mol, coordinates: Union[List, np.ndarray]) -> Chem.Mol:
     """
     Updates the coordinates of a 3D RDKit mol object with a new set of coordinates
-    
-    Args:
-        mol -- RDKit mol object with 3D coordinates to be replaced
-        coordinates -- list/array of new [x,y,z] coordinates
-    
-    Returns:
-        mol_new -- deep-copied RDKit mol object with updated 3D coordinates
+
+    Arguments
+    ---------
+    mol : Chem.Mol
+        RDKit mol object with 3D coordinates to be replaced
+    coordinates : Union[List, np.ndarray]
+        List/array of new [x,y,z] coordinates
+
+    Returns
+    -------
+    mol_new : Chem.Mol
+        deep-copied RDKit mol object with updated 3D coordinates
     """
     mol_new = deepcopy(mol)
     conf = mol_new.GetConformer()
@@ -64,7 +69,7 @@ class Molecule:
                  ):
         """
         Molecule constructor to extract interaction profiles.
-        
+
         If `partial_charges` are not provided, they will be generated using MMFF94 which may
         result in subpar performance.
 
@@ -118,7 +123,7 @@ class Molecule:
         else:
             self.surf_pos = surface_points
             self.probe_radius = probe_radius if probe_radius is not None else 1.2
-        
+
         if self.surf_pos is not None and self.partial_charges is not None:
             if not isinstance(electrostatics, np.ndarray):
                 self.surf_esp = self.get_electrostatic_potential()
@@ -180,7 +185,7 @@ class Molecule:
         # Calculate the potentials
         E_pot = np.dot(self.partial_charges, 1 / distances.T) * COULOMB_SCALING
         # Ensure that invalid distances (where distance is 0) are handled
-        E_pot[np.isinf(E_pot)] = 0    
+        E_pot[np.isinf(E_pot)] = 0
         return E_pot.astype(np.float32)
 
 
@@ -276,7 +281,7 @@ class MoleculePair:
         if not isinstance(device, torch.device):
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.device = device
-        
+
         # Center to origin
         if do_center:
             self.ref_molec.center_to(self.ref_molec.atom_pos.mean(0))
@@ -284,7 +289,7 @@ class MoleculePair:
 
         self.transform_vol = np.eye(4)
         self.sim_aligned_vol = None
-        
+
         self.transform_vol_noH = np.eye(4)
         self.sim_aligned_vol_noH = None
 
@@ -470,7 +475,7 @@ class MoleculePair:
             se3_transform = np.array(se3_transform)
             score = np.array(score)
             aligned_fit_points = np.array(aligned_fit_points)
-            
+
         else: # Use Torch implementation
             aligned_fit_points, se3_transform, score = optimize_ROCS_esp_overlay(
                 ref_points=torch.from_numpy(ref_mol_pos).to(torch.float32).to(self.device),
@@ -489,7 +494,7 @@ class MoleculePair:
             se3_transform = se3_transform.numpy()
             score = score.numpy()
             aligned_fit_points = aligned_fit_points.numpy()
-        
+
         if no_H:
             self.transform_vol_esp_noH = se3_transform
             self.sim_aligned_vol_esp_noH = score
@@ -497,8 +502,8 @@ class MoleculePair:
             self.transform_vol_esp = se3_transform
             self.sim_aligned_vol_esp = score
         return aligned_fit_points
-    
-    
+
+
     def align_with_surf(self,
                         alpha: float,
                         num_repeats: int = 50,
@@ -658,7 +663,7 @@ class MoleculePair:
             self.transform_esp = se3_transform.numpy()
             self.sim_aligned_esp = score.numpy()
             return aligned_fit_points.numpy()
-    
+
 
     def align_with_esp_combo(self,
                              alpha: float,
@@ -722,12 +727,12 @@ class MoleculePair:
                 ref_points=jnp.array(self.ref_molec.surf_pos),
                 fit_points=jnp.array(self.fit_molec.surf_pos),
                 ref_partial_charges=jnp.array(self.ref_molec.partial_charges),
-                fit_partial_charges=jnp.array(self.fit_molec.partial_charges), 
+                fit_partial_charges=jnp.array(self.fit_molec.partial_charges),
                 ref_surf_esp=jnp.array(self.ref_molec.surf_esp),
                 fit_surf_esp=jnp.array(self.fit_molec.surf_esp),
                 ref_radii=jnp.array(self.ref_molec.radii),
                 fit_radii=jnp.array(self.fit_molec.radii),
-                alpha=alpha, 
+                alpha=alpha,
                 lam=lam,
                 probe_radius=probe_radius,
                 esp_weight=esp_weight,
@@ -756,12 +761,12 @@ class MoleculePair:
                 ref_points=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
                 fit_points=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
                 ref_partial_charges=torch.from_numpy(self.ref_molec.partial_charges).to(torch.float32).to(self.device),
-                fit_partial_charges=torch.from_numpy(self.fit_molec.partial_charges).to(torch.float32).to(self.device), 
+                fit_partial_charges=torch.from_numpy(self.fit_molec.partial_charges).to(torch.float32).to(self.device),
                 ref_surf_esp=torch.from_numpy(self.ref_molec.surf_esp).to(torch.float32).to(self.device),
                 fit_surf_esp=torch.from_numpy(self.fit_molec.surf_esp).to(torch.float32).to(self.device),
                 ref_radii=torch.from_numpy(self.ref_molec.radii).to(torch.float32).to(self.device),
                 fit_radii=torch.from_numpy(self.fit_molec.radii).to(torch.float32).to(self.device),
-                alpha=alpha, 
+                alpha=alpha,
                 lam=lam,
                 probe_radius=probe_radius,
                 esp_weight=esp_weight,
@@ -831,7 +836,7 @@ class MoleculePair:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
             from .alignment_jax import optimize_pharm_overlay_jax
-            
+
             aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = optimize_pharm_overlay_jax(
                 ref_pharms=jnp.array(self.ref_molec.pharm_types),
                 fit_pharms=jnp.array(self.fit_molec.pharm_types),
@@ -873,7 +878,7 @@ class MoleculePair:
         self.transform_pharm = se3_transform.numpy()
         self.sim_aligned_pharm = score.numpy()
         return aligned_fit_anchors.numpy(), aligned_fit_vectors.numpy()
-    
+
 
     def score_with_surf(self,
                         alpha: float,
@@ -931,7 +936,7 @@ class MoleculePair:
             )
             return score
 
-    
+
     def score_with_esp(self,
                        alpha: float,
                        lam: float = 0.3,
@@ -952,7 +957,7 @@ class MoleculePair:
             For numpy use: 'np' or 'numpy'
             For jax use: 'jax' or 'jnp'
             For torch use: 'torch' or 'pytorch'
-        
+
         Returns
         -------
         score : np.ndarray (1,) similarity score
@@ -1081,7 +1086,7 @@ class MoleculePair:
                 only_extended=only_extended
             )
             return np.array(score)
-    
+
 
     def get_transformed_mol_and_feats(self,
                                       se3_transform: np.ndarray

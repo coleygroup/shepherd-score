@@ -19,7 +19,7 @@ def tautomerize_chemaxon(
     smiles: str,
     cxcalc_exe: str,
     molconvert_exe: str,
-    pH: float = 7.4, 
+    pH: float = 7.4,
     cutoff: float = 10,
     tautomer_limit: float = 20,
     protomer_limit: float = 20,
@@ -42,7 +42,7 @@ def tautomerize_chemaxon(
     protomer_limit [float] (default: 20): Limit for the protomerization.
     neutralize [bool] (default: True): Whether to neutralize the molecule before tautomerization/protonation.
     verbose [bool] (default: False): Whether to print verbose output.
-    
+
     Returns:
     --------
     List of SMILES strings of the tautomers/protomers with bad charges removed.
@@ -63,7 +63,7 @@ def tautomerize_chemaxon(
     output1 = subprocess.check_output(cmd1, shell=True, input=smiles.encode(), stderr=_stderr)
 
     cmd2 = f'{molconvert_exe} sdf -g -c "tautomer-dist>={tautomer_limit}" '
-    output2 = subprocess.check_output(cmd2, shell=True, input=output1, stderr=_stderr) 
+    output2 = subprocess.check_output(cmd2, shell=True, input=output1, stderr=_stderr)
 
     cmd3 = f'{cxcalc_exe} -g microspeciesdistribution -H {pH} -t protomer-dist'
     output3 = subprocess.check_output(cmd3, shell=True, input=output2, stderr=_stderr)
@@ -81,7 +81,7 @@ def tautomerize_chemaxon(
             if smi in prots:
                 prots[smi] = max(score, prots[smi])
             elif score > cutoff:
-                prots[smi] = score 
+                prots[smi] = score
         protomers = sorted(prots, key = lambda x: prots[x], reverse=True)
 
     return remove_bad_protomers(protomers)

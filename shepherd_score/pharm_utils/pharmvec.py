@@ -93,7 +93,7 @@ def GetDonorFeatVects(conf, featAtoms, scale=1., exclude=[]):
         return [cpt]*len(vectors), vectors, hyd_nbrs
     else:
         return None, None, None
-    
+
 
 def GetAcceptorFeatVects(conf: Chem.rdchem.Mol,
                          featAtoms: Chem.rdchem.Atom,
@@ -150,7 +150,7 @@ def GetAcceptorFeatVects(conf: Chem.rdchem.Mol,
             v1 = FeatDirUtils._findAvgVec(conf, cpt, nbrs)
             v1 *= (-1.0 * scale)
             return [cpt], [v1]
-        
+
         elif len(nbrs) == 3: # sp3
             cpt = conf.GetAtomPosition(atom_id)
             out = FeatDirUtils._GetTetrahedralFeatVect(conf, atom_id, scale)
@@ -158,7 +158,7 @@ def GetAcceptorFeatVects(conf: Chem.rdchem.Mol,
                 v1 = out[0][1] - cpt # need to subtract out the center to be relative
                 v1.Normalize()
                 v1 *= scale
-                return [cpt], [v1] 
+                return [cpt], [v1]
             else:
                 # Means that this is planar so likely not an acceptor, remove it after
                 return None, None
@@ -205,10 +205,10 @@ def GetAcceptorFeatVects(conf: Chem.rdchem.Mol,
             bv1 *= scale
             bv2 *= scale
             return [cpt]*2, [bv1, bv2]
-        
+
         else:
             return None, None
-        
+
     elif num_lone_pairs == 3: # sp3 but do linear
         # Just do opposite of single bond (i.e., F)
         heavy_nbr = heavy[0]
@@ -220,7 +220,7 @@ def GetAcceptorFeatVects(conf: Chem.rdchem.Mol,
             return [cpt], [v1]
     else:
         return None, None
-    
+
 
 def GetHalogenFeatVects(conf: Chem.rdchem.Mol,
                         featAtoms: Chem.rdchem.Atom,
@@ -269,7 +269,7 @@ def GetDonor1FeatVects_single(conf, featAtoms, scale=1.):
     """
     Get the direction vectors for Donor of type 1.
     Made to generate a single vector representation.
-    
+
     This is a donor with one heavy atom. It is not clear where we should we should be putting the
     direction vector for this. It should probably be a cone. In this case we will just use the
     direction vector from the donor atom to the heavy atom.
@@ -278,7 +278,7 @@ def GetDonor1FeatVects_single(conf, featAtoms, scale=1.):
     1. If 1 hydrogen, vector should point in the direction of the hydrogen.
     2. If 2 hydrogens, vector should point in a bisecting direction of the two hydrogens.
     3. If 3 hydrogens, point in the direction of the bond.
-    
+
     Arguments
     ---------
     conf - rdkit Mol object with conformer
@@ -296,7 +296,7 @@ def GetDonor1FeatVects_single(conf, featAtoms, scale=1.):
     aid = featAtoms[0]
     mol = conf.GetOwningMol()
     nbrs = mol.GetAtomWithIdx(aid).GetNeighbors()
-    
+
     hyd_nbrs = [] # hydrogens
     heavy_nbr = -1 # hnbr in rdkit
     for nbr in nbrs:
@@ -318,7 +318,7 @@ def GetDonor1FeatVects_single(conf, featAtoms, scale=1.):
     elif len(hyd_nbrs) == 2:
         bvec = FeatDirUtils._findAvgVec(conf, cpt, hyd_nbrs)
         bvec *= scale
-        # Removed conditional for generating 2 vectors for sp3 oxygen to maintain one average vector    
+        # Removed conditional for generating 2 vectors for sp3 oxygen to maintain one average vector
         return cpt, bvec, hyd_nbrs
 
     # Otherwise, vector is the one from donor atom to heavy atom. 3 hydrogens
@@ -334,7 +334,7 @@ def GetDonor2FeatVects_single(conf, featAtoms, scale=1.):
     """
     Get the direction vectors for Donor of type 2.
     Made to generate a single vector representation.
-    
+
     This is a donor with two heavy atoms as neighbors. The atom may are may not have
     hydrogen on it. Here are the situations with the neighbors that will be considered here
     1. two heavy atoms and two hydrogens: we will assume a sp3 arrangement here
@@ -345,7 +345,7 @@ def GetDonor2FeatVects_single(conf, featAtoms, scale=1.):
     1. For case 1, point in the direction bisecting the two hydrogens.
     2. For case 2, point in the direction of the hydrogen.
     3. For case 3, no changes.
-    
+
     Arguments
     ---------
     conf : rdkit Mol object with conformer
@@ -363,11 +363,11 @@ def GetDonor2FeatVects_single(conf, featAtoms, scale=1.):
     aid = featAtoms[0]
     mol = conf.GetOwningMol()
     cpt = conf.GetAtomPosition(aid)
-    
+
     # find the two atoms that are neighbors of this atoms
     nbrs = list(mol.GetAtomWithIdx(aid).GetNeighbors())
     assert len(nbrs) >= 2
-    
+
     hydrogens = []
     heavy = []
     for nbr in nbrs:
@@ -375,7 +375,7 @@ def GetDonor2FeatVects_single(conf, featAtoms, scale=1.):
           hydrogens.append(nbr)
         else:
           heavy.append(nbr)
-    
+
     # Case 3: not sure when this would be triggered
     if len(nbrs) == 2:
         # there should be no hydrogens in this case
@@ -384,7 +384,7 @@ def GetDonor2FeatVects_single(conf, featAtoms, scale=1.):
         bvec = FeatDirUtils._findAvgVec(conf, cpt, heavy)
         bvec *= (-1.0 * scale)
         return cpt, bvec, None
-    
+
     # Case 2
     if len(nbrs) == 3:
         assert len(hydrogens) == 1
@@ -403,7 +403,7 @@ def GetDonor2FeatVects_single(conf, featAtoms, scale=1.):
         # we have a non-planar configuration - we will assume sp3 and compute a second direction vector
         # Changed since we constrain to 1 vector
         return cpt, bvec, hydrogens
-    
+
     # Case 1
     if len(nbrs) >= 4:
         # Changed -> take the bisecting vector (average) to only use 1 vector
@@ -466,7 +466,7 @@ def GetAcceptor1FeatVects_single(conf, featAtoms, scale=1.):
     """
     Get the direction vectors for Acceptor of type 1.
     Made to generate a single vector representation.
-    
+
     This is a acceptor with one heavy atom neighbor. There are two possibilities we will
     consider here
     1. The bond to the heavy atom is a single bond e.g. CO
@@ -483,7 +483,7 @@ def GetAcceptor1FeatVects_single(conf, featAtoms, scale=1.):
         If two hydrogens, assume sp3 and project in that lone-pair direction. If not tetrahedral,
          then return None.
     2. Case 2: Return the bisecting vector of the two lone-pairs.
-     
+
     Arguments
     ---------
     conf : rdkit Mol object with conformer
@@ -500,9 +500,9 @@ def GetAcceptor1FeatVects_single(conf, featAtoms, scale=1.):
     aid = featAtoms[0]
     mol = conf.GetOwningMol()
     nbrs = mol.GetAtomWithIdx(aid).GetNeighbors()
-    
+
     cpt = conf.GetAtomPosition(aid)
-    
+
     hyd_nbrs = [] # hydrogens
     heavyAt = -1
     # find the adjacent heavy atom and hydrogens
@@ -517,15 +517,15 @@ def GetAcceptor1FeatVects_single(conf, featAtoms, scale=1.):
 
     # special scale - if the heavy atom is a sulfur (we should proabably check phosphorous as well)
     sulfur = heavyAt.GetAtomicNum() == 16
-    
+
     methanamine = mol.GetBondBetweenAtoms(aid, heavyAt.GetIdx()).GetBondType() == Chem.BondType.DOUBLE and len(hyd_nbrs) == 1
-    
+
     if singleBnd or sulfur or methanamine:
         if len(hyd_nbrs) == 1:
             bvec = FeatDirUtils._findAvgVec(conf, cpt, [heavyAt, hyd_nbrs[0]])
             bvec *= (-1 * scale)
             return cpt, bvec
-    
+
         elif len(hyd_nbrs) == 2:
             out = FeatDirUtils._GetTetrahedralFeatVect(conf, aid, scale)
             if out != ():
@@ -547,7 +547,7 @@ def GetAcceptor2FeatVects_single(conf, featAtoms, scale=1.):
     """
     Get the direction vectors for Acceptor of type 2.
     Made to generate a single vector representation.
-    
+
     This is the acceptor with two adjacent heavy atoms. We will special case a few things here.
     If the acceptor atom is an oxygen we will assume a sp3 hybridization
     the acceptor directions (two of them)
@@ -556,7 +556,7 @@ def GetAcceptor2FeatVects_single(conf, featAtoms, scale=1.):
 
     Changed: Only generate one vector
     Rather than generating 2 vectors for sp3 oxygen, just keep the average vector.
-    
+
     Arguments
     ---------
     conf : rdkit Mol object with conformer
@@ -572,7 +572,7 @@ def GetAcceptor2FeatVects_single(conf, featAtoms, scale=1.):
     assert len(featAtoms) == 1
     aid = featAtoms[0]
     cpt = conf.GetAtomPosition(aid)
-    
+
     mol = conf.GetOwningMol()
     nbrs = list(mol.GetAtomWithIdx(aid).GetNeighbors())
     hydrogens = []
@@ -582,14 +582,14 @@ def GetAcceptor2FeatVects_single(conf, featAtoms, scale=1.):
           hydrogens.append(nbr)
         else:
           heavy.append(nbr)
-    
+
     if len(hydrogens) == 0:
         bvec = FeatDirUtils._findAvgVec(conf, cpt, heavy)
     elif len(hydrogens) == 1:
         bvec = FeatDirUtils._findAvgVec(conf, cpt, nbrs)
     bvec *= (-1.0 * scale)
 
-    # Changed -- Removed conditional for generating 2 vectors for sp3 oxygen to maintain one average vector    
+    # Changed -- Removed conditional for generating 2 vectors for sp3 oxygen to maintain one average vector
     return cpt, bvec
 
 
@@ -635,7 +635,7 @@ def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
     """
     Get the direction vectors for Acceptor of type 1.
     Made to generate a multi-vector representation.
-    
+
     This is a acceptor with one heavy atom neighbor. There are two possibilities we will
     consider here
     1. The bond to the heavy atom is a single bond e.g. CO
@@ -646,7 +646,7 @@ def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
      where again we will use bond direction
 
     Changed return format, added fixes for methanamine and two vectors for hydroxyls
-     
+
     Arguments
     ---------
     conf : rdkit Mol object with a conformer.
@@ -663,9 +663,9 @@ def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
     aid = featAtoms[0]
     mol = conf.GetOwningMol()
     nbrs = mol.GetAtomWithIdx(aid).GetNeighbors()
-    
+
     cpt = conf.GetAtomPosition(aid)
-    
+
     hyd_nbrs = [] # hydrogens
     heavyAt = -1
     # find the adjacent heavy atom and hydrogens
@@ -682,7 +682,7 @@ def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
     sulfur = heavyAt.GetAtomicNum() == 16
 
     methanamine = mol.GetBondBetweenAtoms(aid, heavyAt.GetIdx()).GetBondType() == Chem.BondType.DOUBLE and len(hyd_nbrs) == 1
-    
+
     if singleBnd or sulfur or methanamine:
         if len(hyd_nbrs) == 0 or sulfur:
             v1 = conf.GetAtomPosition(heavyAt.GetIdx())
@@ -695,7 +695,7 @@ def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
             bvec = FeatDirUtils._findAvgVec(conf, cpt, [heavyAt, hyd_nbrs[0]])
             bvec *= (-1 * scale)
             return [cpt], [bvec]
-        
+
         elif len(hyd_nbrs) == 1 and singleBnd:
             # hydroxyl group
             bvec = FeatDirUtils._findAvgVec(conf, cpt, nbrs)
@@ -712,7 +712,7 @@ def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
             bv1 = FeatDirUtils.ArbAxisRotation(54.5, rotAxis, bvec)
             bv2 = FeatDirUtils.ArbAxisRotation(-54.5, rotAxis, bvec)
             return [cpt]*2, [bv1, bv2]
-    
+
         elif len(hyd_nbrs) == 2:
             out = FeatDirUtils._GetTetrahedralFeatVect(conf, aid, scale)
             if out != ():
@@ -751,7 +751,7 @@ def GetAcceptor2FeatVects(conf, featAtoms, scale=1.):
     """
     Get the direction vectors for Acceptor of type 2.
     Made to generate a single vector representation.
-    
+
     This is the acceptor with two adjacent heavy atoms. We will special case a few things here.
     If the acceptor atom is an oxygen we will assume a sp3 hybridization
     the acceptor directions (two of them)
@@ -759,7 +759,7 @@ def GetAcceptor2FeatVects(conf, featAtoms, scale=1.):
     heavy atoms
 
     Changed: return format
-    
+
     Arguments
     ---------
     conf : rdkit Mol object with a conformer.
@@ -775,7 +775,7 @@ def GetAcceptor2FeatVects(conf, featAtoms, scale=1.):
     assert len(featAtoms) == 1
     aid = featAtoms[0]
     cpt = conf.GetAtomPosition(aid)
-    
+
     mol = conf.GetOwningMol()
     nbrs = list(mol.GetAtomWithIdx(aid).GetNeighbors())
     hydrogens = []
@@ -785,7 +785,7 @@ def GetAcceptor2FeatVects(conf, featAtoms, scale=1.):
           hydrogens.append(nbr)
         else:
           heavy.append(nbr)
-    
+
     if len(hydrogens) == 0:
         bvec = FeatDirUtils._findAvgVec(conf, cpt, heavy)
     elif len(hydrogens) == 1:

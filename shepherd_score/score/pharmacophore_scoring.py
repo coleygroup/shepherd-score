@@ -292,7 +292,7 @@ def get_volume_overlap_score_extended_points(ptype_str: str,
                                              ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Score both the anchor and extended point volume overlap instead of a vector similarity.
-    """    
+    """
     ptype_str = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str)
     # single instance
@@ -657,7 +657,7 @@ def get_overlap_pharm(ptype_1: torch.Tensor,
         overlap += VAB
         ref_overlap += VAA
         fit_overlap += VBB
-    
+
     # Halogen
     if 'halogen' in ptype_key2ind:
         if batched:
@@ -724,7 +724,7 @@ def get_pharm_combo_score(centers_1: torch.Tensor,
                                     similarity=similarity,
                                     extended_points=extended_points,
                                     only_extended=only_extended)
-    
+
     # Shape scoring
     VAB = VAB_2nd_order(centers_1=centers_1,
                         centers_2=centers_2,

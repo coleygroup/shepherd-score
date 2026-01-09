@@ -180,7 +180,7 @@ def get_volume_overlap_score_extended_points_np(ptype_str: str,
                                                 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Score both the anchor and extended point volume overlap instead of a vector similarity.
-    """    
+    """
     ptype_str = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str)
     VAB, VAA, VBB = 0., 0., 0.
@@ -413,7 +413,7 @@ def get_overlap_pharm_np(ptype_1: np.ndarray,
         overlap += VAB
         ref_overlap += VAA
         fit_overlap += VBB
-    
+
     # Halogen
     if 'halogen' in ptype_key2ind:
         VAB, VAA, VBB = get_vector_volume_overlap_score_np(ptype_str='halogen',
