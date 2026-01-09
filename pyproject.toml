@@ -7,7 +7,7 @@ name = "shepherd-score"
 version = "1.1.5"
 description = "3D scoring functions used for evaluation of ShEPhERD"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Abeywardane", email = "kento@mit.edu"}
@@ -26,7 +26,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -88,7 +87,7 @@ exclude = ["tests*", "examples*", "scripts*"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py38"
+target-version = "py39"
 exclude = [
     ".git",
     ".mypy_cache",

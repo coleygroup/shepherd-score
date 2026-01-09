@@ -61,7 +61,7 @@ jobs:
         run: uv run pytest tests/ -v --tb=short
 
   lint:
-    name: Lint & Format Check
+    name: Lint Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
