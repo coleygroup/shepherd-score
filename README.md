@@ -56,48 +56,52 @@ The formulation of the interaction profile representation, scoring, alignment, a
 
 
 ## Installation
-### via PyPI
-`pip install shepherd-score`
 
-### For local development (includes `examples/`, `tests/`, etc.)
-1. Clone this repo
-2. Navigate to this repo's top-level directory
-3. Set up the environment following the instructions above
-4. Run `pip install -e .` for developer install
+### Via PyPI
+```bash
+pip install shepherd-score
+```
+
+#### Install xTB
+xTB will need to be installed manually since there are no PyPi bindings. This can be done in a conda environment, but since this approach has been reported to lead to conflicts, we suggest installing 
+from [source](https://xtb-docs.readthedocs.io/en/latest/setup.html) and adding it to `PATH`.
+### With optional dependencies
+```bash
+# JAX support (for faster scoring and alignment)
+pip install "shepherd-score[jax]"
+
+# Include docking evaluation tools
+pip install "shepherd-score[docking]"
+
+# Everything
+pip install "shepherd-score[all]"
+```
+
+### For local development
+```bash
+git clone https://github.com/coleygroup/shepherd-score.git
+cd shepherd-score
+pip install -e ".[all]"
+```
 
 ## Requirements
-An example environment can be found at `environment.yml`, however, this package should generally work where PyTorch, Open3D, RDKit, and xTB can be installed in an environment with Python >=3.8. Installation of xTB through conda has been reported to lead to conflicts, so we suggest installing from [source](https://xtb-docs.readthedocs.io/en/latest/setup.html) and adding it to `PATH`.
 
-#### Minimum requirements for interaction profile extraction, scoring/alignment, and evaluations
+This package works where PyTorch, Open3D, RDKit, and xTB can be installed for Python >=3.9. **If you are coming from the *ShEPhERD* repository, you can use the same environment as described there.**
+Core dependencies (installed automatically) which enables interaction profile extraction, scoring/alignment, and evaluations are listed below.
 ```
-python>=3.8
+python>=3.9
+numpy
 torch>=1.12
 open3d>=0.18
-rdkit>=2023.03 (newest available is recommended)
+rdkit>=2023.03
+pandas>=2.0
+scipy>=1.10
 ```
-<sup>[NOTE] If using `torch<=2.4` sure that mkl is `==2024.0` with conda since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.</sup>
 
-#### If you are coming from the *ShEPhERD* repository, you can use the same environment as described there and add the optional packages listed below, if needed.
+> **Note**: If using `torch<=2.4`, ensure that `mkl==2024.0` with conda since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.
 
-
-#### Software necessary for docking evaluation (optional)
-```
-meeko
-vina==1.2.5
-molscrub
-openbabel
-prolif>=2.0.3
-biopython>=1.84
-```
-You can pip install the python bindings for Autodock Vina for the python interface. However, this also requires an installation of the executable of Autodock Vina v1.2.5: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/) and the ADFR software suite: [https://ccsb.scripps.edu/adfr/implementation/](https://ccsb.scripps.edu/adfr/implementation/).
-
-#### Other optional packages
-```
-jax==0.4.26
-jaxlib==0.4.26+cuda12.cudnn89
-optax==0.2.2
-scikit-learn>=1.3
-```
+#### Docking with Autodock Vina
+Installing `shepherd-score[docking]` will automatically install the python bindings for Autodock Vina for the python interface. However, a manual installation of the executable of Autodock Vina v1.2.5 is required and can be found here: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/).
 
 ## Usage
 The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.
