@@ -34,7 +34,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
-    "rdkit>=2023.03",
+    "rdkit>=2023.03,<2025.09.3; python_version == '3.9'",
+    "rdkit>=2023.03; python_version >= '3.10'",
     "torch>=1.12",
     "open3d>=0.18",
     "py3Dmol",
@@ -72,7 +73,8 @@ docking = [
     "vina>=1.2.5",
     "openbabel",
     "prolif>=2.0.3",
-    "biopython>=1.84",
+    "biopython>=1.84,<1.86; python_version == '3.9'",
+    "biopython>=1.84; python_version >= '3.10'",
 ]
 all = [
     "shepherd-score[dev,docs,jax,docking]",
