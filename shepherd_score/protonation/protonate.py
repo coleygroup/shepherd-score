@@ -11,6 +11,7 @@ import subprocess
 import os
 from typing import List, Literal
 from rdkit import Chem
+from copy import deepcopy
 
 from rdkit.Chem.MolStandardize.rdMolStandardize import ChargeParent
 from rdkit.rdBase import BlockLogs
@@ -63,6 +64,7 @@ def neutralize_atoms(mol: Chem.Mol) -> Chem.Mol:
     neutralize charges even if the neutralization introduces an overall formal charge on the
     molecule.
     """
+    mol = deepcopy(mol)
     pattern = Chem.MolFromSmarts("[+1!h0!$([*]~[-1,-2,-3,-4]),-1!$([*]~[+1,+2,+3,+4])]")
     at_matches = mol.GetSubstructMatches(pattern)
     at_matches_list = [y[0] for y in at_matches]
@@ -84,6 +86,7 @@ def force_neutralize(mol: Chem.Mol) -> Chem.Mol:
     First runs `neutralize_atoms`, then runs `rdMolStandardize.ChargeParent`.
     """
     with BlockLogs():
+        mol = deepcopy(mol)
         mol = neutralize_atoms(mol)
         mol = ChargeParent(mol)
     return mol
