@@ -72,11 +72,13 @@ class UnconditionalEvalPipeline:
         """
         Evaluation pipeline for a list of unconditionally generated molecules.
 
-        Arguments
-        ---------
-        generated_mols : List containing tuple of np.ndarrays holding: atomic numbers (N,)
-            and corresponding positions (N,3)
-        solvent : Optional[str] implicit solvent model to use for xtb relaxation
+        Parameters
+        ----------
+        generated_mols : List[Tuple[np.ndarray, np.ndarray]]
+            List containing tuple of np.ndarrays holding atomic numbers (N,)
+            and corresponding positions (N, 3).
+        solvent : str, optional
+            Implicit solvent model to use for xtb relaxation.
         """
         self.generated_mols = generated_mols
         self.smiles = [None] * len(generated_mols)
@@ -128,20 +130,27 @@ class UnconditionalEvalPipeline:
         """
         Run the evaluation pipeline.
 
-        Arguments
-        ---------
-        num_processes : int number of processors to use for xtb relaxation
-        num_workers : int number of parallel worker processes. Constraint: num_workers*num_processes <= available CPUs
-            Only recommended if `generated_mols` is > 100 due to start-up overhead of new processes.
-            If num_workers > 1, multiprocessing is used, and not much is gained by setting
-            num_processes > 1 in this case.
-        verbose : bool for whether to print tqdm progress bar
-        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
-            'spawn' is recommended for most cases.
+        Parameters
+        ----------
+        num_processes : int, optional
+            Number of processors to use for xtb relaxation. Default is 1.
+        num_workers : int, optional
+            Number of parallel worker processes. Constraint:
+            num_workers*num_processes <= available CPUs. Only recommended if
+            ``generated_mols`` is > 100 due to start-up overhead of new
+            processes. If num_workers > 1, multiprocessing is used, and not
+            much is gained by setting num_processes > 1 in this case.
+            Default is 1.
+        verbose : bool, optional
+            Whether to print tqdm progress bar. Default is ``False``.
+        mp_context : {'spawn', 'forkserver'}, optional
+            Context for multiprocessing. ``'spawn'`` is recommended for most
+            cases. Default is ``'spawn'``.
 
         Returns
         -------
-        None : Just updates the class attributes
+        None
+            Updates the class attributes in place.
         """
         available_cpus = multiprocessing.cpu_count() or 1
         if num_workers < 1:
@@ -288,14 +297,26 @@ class UnconditionalEvalPipeline:
 
     def get_diversity(self, post_opt=False) -> Tuple[float, np.ndarray]:
         """
-        Get average molecular graph diversity (average dissimilarity) as defined by GenBench3D (arXiv:2407.04424)
-        and the tanimioto similarity matrix of fingerprints.
+        Get average molecular graph diversity and similarity matrix.
+
+        Computes average molecular graph diversity (average dissimilarity) as
+        defined by GenBench3D (arXiv:2407.04424) and the Tanimoto similarity
+        matrix of fingerprints.
+
+        Parameters
+        ----------
+        post_opt : bool, optional
+            Whether to use post-optimization fingerprints. Default is
+            ``False``.
 
         Returns
         -------
-        tuple
-            avg_diversity : float [0,1] where 1 is more diverse (more dissimilar)
-            similarity_matrix : np.ndarray (N,N) similarity matrix
+        avg_diversity : float or None
+            Average diversity in range [0, 1] where 1 is more diverse (more
+            dissimilar). Returns ``None`` if no valid molecules.
+        similarity_matrix : np.ndarray or None
+            Similarity matrix of shape (N, N). Returns ``None`` if no valid
+            molecules.
         """
         if post_opt:
             if self.num_valid_post_opt == 0:
@@ -357,7 +378,7 @@ class UnconditionalEvalPipeline:
 
 
 class ConditionalEvalPipeline:
-    """ Evaluation pipeline for conditionally generate molecules. """
+    """Evaluation pipeline for conditionally generated molecules."""
 
     def __init__(self,
                  ref_molec: Molecule,
@@ -370,21 +391,27 @@ class ConditionalEvalPipeline:
         """
         Initialize attributes for conditional evaluation pipeline.
 
-        Arguments
-        ---------
-        ref_molec : Molecule obj of reference/target molecule that was used for conditioning.
-            Must contain the 3D representation that was used for conditioning (i.e., shape, ESP, or
-            pharmacophores).
-        generated_mols : List containing tuple of np.ndarrays holding: atomic numbers (N,)
-            and corresponding positions (N,3)
-        condition : str for which the molecule was conditioned on out of ('surface', 'esp',
-            'pharm', 'all'). Used for alignment.
-        num_surf_points : int (default = 4) Number of surface points to sample for similarity scoring.
-            Must match the number of surface points in ref_molec.
-        pharm_multi_vector : Optional[bool] Use multiple vectors to represent Aro/HBA/HBD or single.
-            Choose whatever was used during joint generation and the settings for ref_molec should
-            match.
-        solvent : str solvent type for xtb relaxation
+        Parameters
+        ----------
+        ref_molec : Molecule
+            Reference/target molecule object that was used for conditioning.
+            Must contain the 3D representation that was used for conditioning
+            (i.e., shape, ESP, or pharmacophores).
+        generated_mols : List[Tuple[np.ndarray, np.ndarray]]
+            List containing tuple of np.ndarrays holding atomic numbers (N,)
+            and corresponding positions (N, 3).
+        condition : str
+            Condition the molecule was conditioned on, one of ``'surface'``,
+            ``'esp'``, ``'pharm'``, ``'all'``. Used for alignment.
+        num_surf_points : int, optional
+            Number of surface points to sample for similarity scoring. Must
+            match the number of surface points in ref_molec. Default is 400.
+        pharm_multi_vector : bool, optional
+            Use multiple vectors to represent Aro/HBA/HBD or single. Choose
+            whatever was used during joint generation and the settings for
+            ref_molec should match.
+        solvent : str, optional
+            Solvent type for xtb relaxation.
         """
         self.generated_mols = generated_mols
         self.num_generated_mols = len(self.generated_mols)
@@ -473,22 +500,27 @@ class ConditionalEvalPipeline:
                  mp_context: Literal['spawn', 'forkserver'] = 'spawn'
                  ):
         """
-        Run conditional evaluation on every generated molecule and store collective values.
+        Run conditional evaluation on every generated molecule.
 
-        Arguments
-        ---------
-        num_processes : int number of processors to use for xtb relaxation
-        num_workers : int number of workers to use for multiprocessing
-            If num_workers > 1, multiprocessing is used, and not much is gained by setting
-            num_processes > 1.
-            There is an associated overhead of starting up new processes and doing score evaluations.
-        verbose : bool for whether to display tqdm
-        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
-            'spawn' is recommended for most cases.
+        Parameters
+        ----------
+        num_processes : int, optional
+            Number of processors to use for xtb relaxation. Default is 1.
+        num_workers : int, optional
+            Number of workers to use for multiprocessing. If num_workers > 1,
+            multiprocessing is used, and not much is gained by setting
+            num_processes > 1. There is an associated overhead of starting up
+            new processes and doing score evaluations. Default is 1.
+        verbose : bool, optional
+            Whether to display tqdm progress bar. Default is ``False``.
+        mp_context : {'spawn', 'forkserver'}, optional
+            Context for multiprocessing. ``'spawn'`` is recommended for most
+            cases. Default is ``'spawn'``.
 
         Returns
         -------
-        None : Just updates the class attributes
+        None
+            Updates the class attributes in place.
         """
         available_cpus = multiprocessing.cpu_count() or 1
         if num_workers < 1:
@@ -629,14 +661,15 @@ class ConditionalEvalPipeline:
 
     def resampling_surf_scores(self) -> Union[np.ndarray, None]:
         """
-        Capture distribution of surface similarity and surface ESP scores caused by resampling
-        surface.
+        Capture distribution of similarity scores caused by resampling surface.
 
         Returns
         -------
-        Tuple
-            surf_scores : np.ndarray or None (if not relevant)
-            esp_scores : np.ndarray or None (if not relevant)
+        surf_scores : np.ndarray or None
+            Surface similarity scores from resampling, or ``None`` if not
+            relevant.
+        esp_scores : np.ndarray or None
+            Surface ESP scores from resampling, or ``None`` if not relevant.
         """
         surf_scores = np.empty(50)
         esp_scores = np.empty(50)
@@ -701,11 +734,13 @@ class ConditionalEvalPipeline:
 
     def get_diversity(self) -> float:
         """
-        Get average molecular graph diversity (average dissimilarity) w.r.t. target.
+        Get average molecular graph diversity with respect to target.
 
         Returns
         -------
-        avg_diversity : float [0,1] where 1 is more diverse (more dissimilar)
+        float
+            Average diversity in range [0, 1] where 1 is more diverse (more
+            dissimilar).
         """
         avg_diversity = np.nanmean(1 - self.graph_similarities)
         return avg_diversity
@@ -753,7 +788,29 @@ def resample_surf_scores(ref_molec: Molecule,
                          lam_scaled: float = 0.3 * LAM_SCALING
                          ) -> Tuple[Union[np.ndarray, None]]:
     """
-    Helper function to get a baseline of resampling the surface and scoring.
+    Get baseline scores by resampling the surface.
+
+    Parameters
+    ----------
+    ref_molec : Molecule
+        Reference molecule object.
+    num_samples : int, optional
+        Number of times to resample the surface. Default is 20.
+    eval_surf : bool, optional
+        Whether to evaluate surface similarity. Default is ``True``.
+    eval_esp : bool, optional
+        Whether to evaluate ESP similarity. Default is ``True``.
+    lam_scaled : float, optional
+        Scaled lambda parameter for ESP scoring. Default is
+        ``0.3 * LAM_SCALING``.
+
+    Returns
+    -------
+    surf_scores : np.ndarray or None
+        Surface similarity scores from resampling, or ``None`` if not
+        relevant.
+    esp_scores : np.ndarray or None
+        ESP similarity scores from resampling, or ``None`` if not relevant.
     """
     surf_scores = np.empty(num_samples)
     esp_scores = np.empty(num_samples)
@@ -780,7 +837,7 @@ def resample_surf_scores(ref_molec: Molecule,
 
 
 class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
-    """ Evaluation pipeline for unconditionally generated molecules with consistency check. """
+    """Evaluation pipeline for generated molecules with consistency check."""
 
     def __init__(self,
                  generated_mols: List[Tuple[np.ndarray, np.ndarray]],
@@ -795,29 +852,36 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         """
         Initialize attributes for consistency evaluation pipeline.
 
-        Arguments
-        ---------
-        generated_mols : List containing tuple of np.ndarrays holding: atomic numbers (N,)
-            and corresponding positions (N,3)
+        Parameters
+        ----------
+        generated_mols : List[Tuple[np.ndarray, np.ndarray]]
+            List containing tuple of np.ndarrays holding atomic numbers (N,)
+            and corresponding positions (N, 3).
+        generated_surf_points : List[np.ndarray], optional
+            List containing all surface point clouds of shape (M, 3).
+        generated_surf_esp : List[np.ndarray], optional
+            List containing corresponding ESP values of shape (M,) for the
+            generated_surf_points.
+        generated_pharm_feats : List[Tuple[np.ndarray, np.ndarray, np.ndarray]], optional
+            List of tuples containing:
 
-        Jointly generated features subject for evaluation.
-
-        generated_surf_points : Optional List[np.ndarray (M, 3)] List containing all surface
-            point clouds.
-        generated_surf_esp : Optional List[np.ndarray (M,)] List containing corresponding ESP
-            values of the generated_surf_points.
-        generated_pharm_feats : Optional[List[Tuple[np.ndarray, np.ndarray, np.ndarray]]] containing:
-            generated_pharm_types : np.ndarray (P,) containing pharmacophore types as ints.
-            generated_pharm_ancs : np.ndarray (P, 3) containing pharm anchor coordinates.
-            generated_pharm_vecs : np.ndarray (P, 3) containing pharm vectors relative unit vecs.
-        probe_radius : float (default = 1.2) Probe radius used for solvent accessible surface
-        pharm_multi_vector : Optional[bool] Use multiple vectors to represent Aro/HBA/HBD or single
-            if `generated_pharm_feats` is used.
-            Choose whatever was used during joint generation and the settings for ref_molec should
-            match.
-        solvent : str solvent type for xtb relaxation
-        random_molblock_charges : Optional[List[Tuple]] Contains molblock_charges to randomly
-            select from, and align with (re-)generated sample.
+            - generated_pharm_types : np.ndarray (P,) pharmacophore types as
+              ints.
+            - generated_pharm_ancs : np.ndarray (P, 3) pharm anchor
+              coordinates.
+            - generated_pharm_vecs : np.ndarray (P, 3) pharm vectors relative
+              unit vecs.
+        probe_radius : float, optional
+            Probe radius used for solvent accessible surface. Default is 1.2.
+        pharm_multi_vector : bool, optional
+            Use multiple vectors to represent Aro/HBA/HBD or single if
+            ``generated_pharm_feats`` is used. Choose whatever was used during
+            joint generation and the settings for ref_molec should match.
+        solvent : str, optional
+            Solvent type for xtb relaxation.
+        random_molblock_charges : List[Tuple], optional
+            Contains molblock_charges to randomly select from, and align with
+            (re-)generated sample.
         """
         # Initialize parent class (UnconditionalEvalPipeline)
         super().__init__(generated_mols=generated_mols, solvent=solvent)
@@ -878,22 +942,28 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                  mp_context: Literal['spawn', 'forkserver'] = 'spawn'
                  ):
         """
-        Run consistency evaluation on every generated molecule and store collective values.
+        Run consistency evaluation on every generated molecule.
 
-        Arguments
-        ---------
-        num_processes : int number of processors to use for xtb relaxation
-        num_workers : int number of workers to use for multiprocessing
-            If num_workers > 1, multiprocessing is used, and not much is gained by setting
-            num_processes > 1 in this case.
-            There is an associated overhead of starting up new processes and doing score evaluations.
-        verbose : bool for whether to display tqdm
-        mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
-            'spawn' is recommended for most cases.
+        Parameters
+        ----------
+        num_processes : int, optional
+            Number of processors to use for xtb relaxation. Default is 1.
+        num_workers : int, optional
+            Number of workers to use for multiprocessing. If num_workers > 1,
+            multiprocessing is used, and not much is gained by setting
+            num_processes > 1 in this case. There is an associated overhead of
+            starting up new processes and doing score evaluations.
+            Default is 1.
+        verbose : bool, optional
+            Whether to display tqdm progress bar. Default is ``False``.
+        mp_context : {'spawn', 'forkserver'}, optional
+            Context for multiprocessing. ``'spawn'`` is recommended for most
+            cases. Default is ``'spawn'``.
 
         Returns
         -------
-        None : Just updates the class attributes
+        None
+            Updates the class attributes in place.
         """
         available_cpus = multiprocessing.cpu_count() or 1
         if num_workers < 1:
@@ -999,19 +1069,24 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                                consis_eval: ConsistencyEval,
                                num_samples: int = 20) -> Tuple[Union[np.ndarray, None]]:
         """
-        Capture distribution of surface similarity and surface ESP scores caused by resampling
-        surface.
+        Capture distribution of similarity scores caused by resampling surface.
 
-        Arguments
-        ---------
-        consis_eval : ConsistencyEval obj to check similarity scores caused by resampling
-        num_samples : int (default = 20) number of times to resample surface and score
+        Parameters
+        ----------
+        consis_eval : ConsistencyEval
+            ConsistencyEval object to check similarity scores caused by
+            resampling.
+        num_samples : int, optional
+            Number of times to resample surface and score. Default is 20.
 
         Returns
         -------
-        Tuple
-            surf_scores : np.ndarray or None (if not relevant)
-            esp_scores : np.ndarray or None (if not relevant)
+        surf_scores : np.ndarray or None
+            Surface similarity scores from resampling, or ``None`` if not
+            relevant.
+        esp_scores : np.ndarray or None
+            ESP similarity scores from resampling, or ``None`` if not
+            relevant.
         """
         ref_molec = consis_eval.molec
         surf_scores, esp_scores = resample_surf_scores(
@@ -1030,19 +1105,28 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                                 num_surf_points: Optional[int] = None
                                 ) -> Tuple[Union[float, None]]:
         """
-        Compute the expectation (upper bound) of similarity score caused by stochastic surface
-        sampling by calculating the mean similarity between pairwise comparisons.
+        Compute upper bound of similarity score from stochastic surface sampling.
 
-        Arguments
-        ---------
+        The upper bound is computed as the mean similarity between pairwise
+        comparisons of resampled surfaces.
+
+        Parameters
+        ----------
         consis_eval : ConsistencyEval
-        num_samples = 5
+            ConsistencyEval object to evaluate.
+        num_samples : int, optional
+            Number of samples to use for computing the upper bound.
+            Default is 5.
+        num_surf_points : int, optional
+            Number of surface points to sample. If ``None``, uses the value
+            from consis_eval.
 
         Returns
         -------
-        Tuple
-            upper_bound_surf : float or None surface similarity upper bound
-            upper_bound_esp : float or None ESP similarity upper bound
+        upper_bound_surf : float or None
+            Surface similarity upper bound, or ``None`` if not applicable.
+        upper_bound_esp : float or None
+            ESP similarity upper bound, or ``None`` if not applicable.
         """
         return _compute_consistency_upper_bounds(
             consis_eval, num_samples, num_surf_points

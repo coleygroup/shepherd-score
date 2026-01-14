@@ -127,7 +127,7 @@ def draw(mol: Union[Chem.Mol, str],
         mol = Chem.RemoveHs(mol)
 
     if isinstance(mol, Chem.Mol):
-        mb = Chem.MolToMolBlock(mol, confId=0)
+        mb = Chem.MolToMolBlock(mol)
         view.addModel(mb, 'sdf')
     else:
         view.addModel(mol, 'xyz')
@@ -260,49 +260,43 @@ def draw_sample(
     height = 400,
 ):
     """
-    Draw generated ShEPhERD sample with pharmacophore features and point cloud on surface
-    accessible surface and electrostatics optionally overlaid on the reference molecule.
+    Draw generated ShEPhERD sample with pharmacophore features and point cloud.
+
+    Draws on surface accessible surface and electrostatics, optionally overlaid
+    on the reference molecule.
 
     Parameters
     ----------
     generated_sample : dict
-        The generated sample with the following format.
-        Note that it does NOT use x2 and assumes shape positions are in x3:
-        {
-            'x1': {
-                'atoms': np.ndarray (N,),
-                'positions': np.ndarray (N, 3)
-            },
-            'x2': {
-                'positions': np.ndarray (N, 3),
-            },
-            'x3': {
-                'charges': np.ndarray (N,),
-                'positions': np.ndarray (N, 3),
-            },
-            'x4': {
-                'types': np.ndarray (N,),
-                'positions': np.ndarray (N, 3),
-                'directions': np.ndarray (N, 3)
-            }
-        }
-    ref_mol : Chem.Mol (default: None)
-        The reference molecule with a conformer.
-    only_atoms : bool (default: False)
+        The generated sample dictionary. Note that it does NOT use x2 and assumes
+        shape positions are in x3. Expected format::
+
+            {'x1': {'atoms': np.ndarray, 'positions': np.ndarray},
+             'x2': {'positions': np.ndarray},
+             'x3': {'charges': np.ndarray, 'positions': np.ndarray},
+             'x4': {'types': np.ndarray, 'positions': np.ndarray,
+                    'directions': np.ndarray}}
+
+    ref_mol : Chem.Mol, optional
+        The reference molecule with a conformer. Default is ``None``.
+    only_atoms : bool, optional
         Whether to only draw the atoms and ignore the interaction profiles.
-    opacity : float (default: 0.6)
-        The opacity of the reference molecule.
-    view : py3Dmol.view (default: None)
-        The view to draw the molecule to. If None, a new view will be created.
-    color_scheme : str (default: None)
-        Provide a py3Dmol color scheme string.
-        Example: 'whiteCarbon'
-    custom_carbon_color : str (default: 'dark slate grey')
-        Provide hex color of the carbon atoms. Programmed are 'dark slate grey' and 'light steel blue'.
-    width : int (default: 800)
-        The width of the view.
-    height : int (default: 400)
-        The height of the view.
+        Default is ``False``.
+    model_type : str, optional
+        One of 'all', 'x2', 'x3', 'x4'. Default is 'all'.
+    opacity : float, optional
+        The opacity of the reference molecule. Default is 0.6.
+    view : py3Dmol.view, optional
+        The view to draw the molecule to. If ``None``, a new view will be created.
+    color_scheme : str, optional
+        Provide a py3Dmol color scheme string (e.g., 'whiteCarbon').
+    custom_carbon_color : str, optional
+        Provide hex color of the carbon atoms. Programmed are 'dark slate grey'
+        and 'light steel blue'.
+    width : int, optional
+        The width of the view. Default is 800.
+    height : int, optional
+        The height of the view. Default is 400.
     """
     xyz_block, dummy_atom_pos, surf_pos, surf_esp, pharm_types, pharm_ancs, pharm_vecs = _process_generated_sample(generated_sample, model_type)
 
@@ -311,7 +305,7 @@ def draw_sample(
         view.removeAllModels()
 
     if ref_mol is not None:
-        mb = Chem.MolToMolBlock(ref_mol, confId=0)
+        mb = Chem.MolToMolBlock(ref_mol)
         view.addModel(mb, 'sdf')
         view.setStyle({'model': -1}, {'stick': {'opacity': opacity}})
 

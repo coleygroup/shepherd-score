@@ -104,16 +104,17 @@ def sample_molecular_surface_with_radius(centers: np.ndarray,
         The radius of a probe atom to act as a "solvent accessible surface".
         Default = 1.2 angstroms which is the radius of a Hydrogen atom.
 
-    num_samples_per_atom : int (default = 20)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        SQUARED. Typically choose a value between 15 and 35.
-            E.g., if set to 20, a carbon atom would have 400 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 20.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and SQUARED. Typically choose a value between 15 and 35. For example, if set to
+        20, a carbon atom would have 400 sampled points.
 
     Returns
     -------
-    np.ndarray (N*num_points_per_atom, 3)
-        Array containing the coordinates of each point sampled from each atom.
+    np.ndarray
+        Array of shape (N*num_points_per_atom, 3) containing the coordinates of each
+        point sampled from each atom.
     """
     # get surface radius based on vdW radii, cutoff
     # cutoff = 1.4
@@ -158,16 +159,17 @@ def sample_molecular_surface_with_radius_fibonacci(centers: np.ndarray,
         The radius of a probe atom to act as a "solvent accessible surface".
         Default = 1.2 angstroms which is the radius of a Hydrogen atom.
 
-    num_samples_per_atom : int (default = 20)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        SQUARED. Typically choose a value between 15 and 35.
-            E.g., if set to 20, a carbon atom would have 400 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 20.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and SQUARED. Typically choose a value between 15 and 35. For example, if set to
+        20, a carbon atom would have 400 sampled points.
 
     Returns
     -------
-    np.ndarray (N*num_points_per_atom, 3)
-        Array containing the coordinates of each point sampled from each atom.
+    np.ndarray
+        Array of shape (N*num_points_per_atom, 3) containing the coordinates of each
+        point sampled from each atom.
     """
     # get surface radius based on vdW radii, cutoff
     # cutoff = 1.4
@@ -336,22 +338,22 @@ def get_molecular_surface_point_cloud(centers: np.ndarray,
         The total number of points in the final point cloud. If None, it returns as many as what
         was left after cleaning up the atom-sampled surface point cloud.
 
-    num_samples_per_atom : int (default = 25)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        SQUARED. Typically choose a value between 15 and 35.
-            E.g., if set to 20, a carbon atom would have 400 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 25.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and SQUARED. Typically choose a value between 15 and 35. For example, if set to
+        20, a carbon atom would have 400 sampled points.
 
-    probe_radius : float (default = 1.2)
+    probe_radius : float, optional
         The radius of a probe atom to act as a "solvent accessible surface".
-        Default = 1.2 angstroms which is the radius of a Hydrogen atom.
+        Default is 1.2 angstroms which is the radius of a Hydrogen atom.
 
-    ball_radii : list[float] (default = [1.2])
-        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate a triangle
-        mesh.
+    ball_radii : list, optional
+        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate
+        a triangle mesh. Default is [1.2].
 
-    color : list[float] (default = [1., 0., 0.])
-        RGB color values for the point cloud (default is red).
+    color : list, optional
+        RGB color values for the point cloud (default is [1., 0., 0.] red).
 
     Returns
     -------
@@ -394,19 +396,19 @@ def get_molecular_surface(centers:np.ndarray,
         The total number of points in the final point cloud. If None, it returns as many as what
         was left after cleaning up the atom-sampled surface point cloud.
 
-    num_samples_per_atom : int (default = 25)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        SQUARED. Typically choose a value between 15 and 35.
-            E.g., if set to 20, a carbon atom would have 400 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 25.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and SQUARED. Typically choose a value between 15 and 35. For example, if set to
+        20, a carbon atom would have 400 sampled points.
 
-    probe_radius : float (default = 1.2)
+    probe_radius : float, optional
         The radius of a probe atom to act as a "solvent accessible surface".
-        Default = 1.2 angstroms which is the radius of a Hydrogen atom.
+        Default is 1.2 angstroms which is the radius of a Hydrogen atom.
 
-    ball_radii : list[float] (default = [1.2])
-        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate a triangle
-        mesh.
+    ball_radii : list, optional
+        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate
+        a triangle mesh. Default is [1.2].
 
     Returns
     -------
@@ -446,22 +448,22 @@ def get_molecular_surface_point_cloud_const_density(centers: np.ndarray,
         The density of points on the surface. The number of points is calculated from the solvent
         accessible surface area approximately computed by the surface area of the generated mesh.
 
-    num_samples_per_atom : int (default = 35)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        SQUARED. Typically choose a value between 15 and 35.
-            E.g., if set to 20, a carbon atom would have 400 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 25.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and SQUARED. Typically choose a value between 15 and 35. For example, if set to
+        20, a carbon atom would have 400 sampled points.
 
-    probe_radius : float (default = 1.2)
+    probe_radius : float, optional
         The radius of a probe atom to act as a "solvent accessible surface".
-        Default = 1.2 angstroms which is the radius of a Hydrogen atom.
+        Default is 1.2 angstroms which is the radius of a Hydrogen atom.
 
-    ball_radii : list[float] (default = [1.2])
-        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate a triangle
-        mesh.
+    ball_radii : list, optional
+        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate
+        a triangle mesh. Default is [1.2].
 
-    color : list[float] (default = [1., 0., 0.])
-        RGB color values for the point cloud (default is red).
+    color : list, optional
+        RGB color values for the point cloud (default is [1., 0., 0.] red).
 
     Returns
     -------
@@ -505,19 +507,19 @@ def get_molecular_surface_const_density(centers:np.ndarray,
         The density of points on the surface. The number of points is calculated from the solvent
         accessible surface area approximately computed by the surface area of the generated mesh.
 
-    num_samples_per_atom : int (default = 20)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        SQUARED. Typically choose a value between 15 and 35.
-            E.g., if set to 20, a carbon atom would have 400 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 25.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and SQUARED. Typically choose a value between 15 and 35. For example, if set to
+        20, a carbon atom would have 400 sampled points.
 
-    probe_radius : float (default = 1.2)
+    probe_radius : float, optional
         The radius of a probe atom to act as a "solvent accessible surface".
-        Default = 1.2 angstroms which is the radius of a Hydrogen atom.
+        Default is 1.2 angstroms which is the radius of a Hydrogen atom.
 
-    ball_radii : list[float] (default = [1.2])
-        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate a triangle
-        mesh.
+    ball_radii : list, optional
+        The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate
+        a triangle mesh. Default is [1.2].
 
     Returns
     -------
@@ -661,11 +663,11 @@ def get_molecular_volume(centers: np.ndarray, radii: np.ndarray, num_samples: in
     radii : np.ndarray (N,)
         van der Waals radii of each atom (in Angstrom) in the same order as the centers parameter.
 
-    num_samples_per_atom : int (default = 15)
-        Number of points to sample from the surface of each atom.
-        Note that this value is scaled by a given atom's relative vdW radius to a carbon and
-        CUBED. Typically choose a value between 10 and 20.
-            E.g., if set to 20, a carbon atom would have 8000 sampled points.
+    num_samples_per_atom : int, optional
+        Number of points to sample from the surface of each atom. Default is 15.
+        Note that this value is scaled by a given atom's relative vdW radius to a carbon
+        and CUBED. Typically choose a value between 10 and 20. For example, if set to
+        20, a carbon atom would have 8000 sampled points.
 
     Returns
     -------

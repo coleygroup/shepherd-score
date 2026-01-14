@@ -21,15 +21,22 @@ def tautomerize_molscrub(
     """
     Find all tautomers/protomers of a molecule using `molscrub` package.
 
-    Arguments
-    ---------
-    smiles [str]: SMILES string of the molecule to tautomerize/protonate.
-    pH [float] (default: 7.4): pH value to use for the protonation.
-    neutralize [bool] (default: True): Whether to neutralize the molecule before scrubbing.
+    Parameters
+    ----------
+    smiles : str
+        SMILES string of the molecule to tautomerize/protonate.
+    pH : float (default: 7.4)
+        pH value to use for the protonation.
+    neutralize : bool (default: True)
+        Whether to neutralize the molecule before scrubbing.
+    chemaxon_license_path : str | None (default: None)
+        Path to the chemaxon license file.
+        If ``None``, the ``CHEMAXON_LICENSE_URL`` environment variable is used.
 
-    Returns:
-    --------
-    List of SMILES strings of the tautomers/protomers.
+    Returns
+    -------
+    list[str]
+        List of SMILES strings of the tautomers/protomers.
     """
     scrub = Scrub(
         ph_low=pH,

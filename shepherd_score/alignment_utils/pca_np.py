@@ -81,20 +81,24 @@ def quaternion_from_axis_angle_np(axis: np.ndarray, angle: np.ndarray) -> np.nda
 
 def quaternion_mult_np(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     """
-    Mulitplication of quaternions p and q.
-    https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
-    General use case:
-        The consequtive rotations of q_1 then q_2 is equivalent to q_3 = q_2*q_1. (order matters)
+    Multiplication of quaternions p and q. Numpy implementation.
+
+    Reference: https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
+
+    General use case: The consecutive rotations of q_1 then q_2 is equivalent
+    to q_3 = q_2*q_1. (order matters)
+
     Parameters
     ----------
-    p : np.ndarray (4,)
-        The first quaternion.
-    q : np.ndarray (4,)
-        The second quaternion.
+    p : np.ndarray
+        The first quaternion with shape (4,).
+    q : np.ndarray
+        The second quaternion with shape (4,).
+
     Returns
     -------
-    pq : np.ndarray (4,)
-        The product of the two quaternions.
+    np.ndarray
+        The product of the two quaternions with shape (4,).
     """
     mat1 = np.array([[p[0], -p[1], -p[2], -p[3]],
                      [p[1],  p[0], -p[3],  p[2]],

@@ -1,12 +1,14 @@
 """
-Generate pharmacophores from a rdkit conformer.
+Generate pharmacophores from a RDKit conformer.
 
-Parts of code adapted from Francois Berenger / Tsuda Lab and rdkit.
-Code from Tsuda Lab: https://github.com/tsudalab/ACP4/blob/master/bin/acp4_ph4.py
-    From https://doi.org/10.1021/acs.jcim.2c01623
-Code from rdkit:
-    https://github.com/rdkit/rdkit/blob/master/rdkit/Chem/Features/FeatDirUtilsRD.py
-    https://github.com/rdkit/rdkit/blob/master/rdkit/Chem/Features/ShowFeats.py
+Parts of code adapted from Francois Berenger / Tsuda Lab and RDKit.
+
+References:
+
+- Tsuda Lab: https://github.com/tsudalab/ACP4/blob/master/bin/acp4_ph4.py
+  (From https://doi.org/10.1021/acs.jcim.2c01623)
+- RDKit: https://github.com/rdkit/rdkit/blob/master/rdkit/Chem/Features/FeatDirUtilsRD.py
+- RDKit: https://github.com/rdkit/rdkit/blob/master/rdkit/Chem/Features/ShowFeats.py
 """
 
 import os
@@ -386,24 +388,27 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                             ) -> Dict:
     """
     Get the positions of pharmacophore anchors and their associated unit vectors.
-    Returns a dictionary.
-    Adapted from rdkit.Chem.Features.ShowFeats.ShowMolFeats.
 
-    Arguments
-    ---------
-    mol : rdkit Mol object with a conformer.
-    multi_vector : bool to choose whether to represent pharmacophores with multiple vectors. (default = True)
-    exclude : list of atom indices to not include as a HBD.
-    check_access : bool check if HBD/HBA are accessible to the molecular surface. (default = True)
-    scale : float as the length of the vector in Angstroms (default = 1.0).
+    Returns a dictionary. Adapted from rdkit.Chem.Features.ShowFeats.ShowMolFeats.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        RDKit Mol object with a conformer.
+    multi_vector : bool, optional
+        Whether to represent pharmacophores with multiple vectors. Default is ``True``.
+    exclude : list, optional
+        List of atom indices to not include as a HBD. Default is [].
+    check_access : bool, optional
+        Check if HBD/HBA are accessible to the molecular surface. Default is ``False``.
+    scale : float, optional
+        Length of the vector in Angstroms. Default is 1.0.
 
     Returns
     -------
-    dictionary : {'FeatureName' : {
-                                   'P': [(anchor coord), ... ],
-                                   'V': [(rel. vec), ... ]
-                                   }
-                 }
+    dict
+        Dictionary with format ``{'FeatureName': {'P': [(anchor coord), ...],
+        'V': [(rel. vec), ...]}}``.
     """
     pharmacophores = {}
 
@@ -540,34 +545,41 @@ def get_pharmacophores(mol: rdkit.Chem.rdchem.Mol,
                        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Get the identity, anchor positions, and relative unit vectors for each pharmacophore.
+
     Pharmacophore ordering for indexing:
-        ('Acceptor', 'Donor', 'Aromatic', 'Hydrophobe', 'Cation', 'Anion', 'ZnBinder')
+    ('Acceptor', 'Donor', 'Aromatic', 'Hydrophobe', 'Cation', 'Anion', 'ZnBinder')
 
-    Note: `check_access` is currently based on whether interaction points sampled from a sphere's
-     surface with a radius of 1.8A from the acceptor/donor atom falls outside the solvent
-     accessible surface defined by the vdW radius + 0.8A of the neighboring atoms. This works for
-     buried acceptors/donors, but may be prone to false positives. For example, CN(C)C would have
-     its sole HBA rejected. Other approaches such as buried volume should be considered in the
-     future.
+    Notes
+    -----
+    The ``check_access`` parameter is currently based on whether interaction points sampled
+    from a sphere's surface with a radius of 1.8A from the acceptor/donor atom falls outside
+    the solvent accessible surface defined by the vdW radius + 0.8A of the neighboring atoms.
+    This works for buried acceptors/donors, but may be prone to false positives. For example,
+    CN(C)C would have its sole HBA rejected. Other approaches such as buried volume should
+    be considered in the future.
 
-    Arguments
-    ---------
-    mol : rdkit Mol object with conformer.
-    multi_vector : bool to choose whether to represent pharmacophores with multiple vectors. (default = True)
-    exclude : list of hydrogen indices to not include as a HBD.
-    check_access : bool check if HBD/HBA are accessible to the molecular surface. (default = True)
-    scale : float as the length of a pharmacophore vector in Angstroms (default = 1.0).
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        RDKit Mol object with conformer.
+    multi_vector : bool, optional
+        Whether to represent pharmacophores with multiple vectors. Default is ``True``.
+    exclude : list, optional
+        List of hydrogen indices to not include as a HBD. Default is [].
+    check_access : bool, optional
+        Check if HBD/HBA are accessible to the molecular surface. Default is ``False``.
+    scale : float, optional
+        Length of a pharmacophore vector in Angstroms. Default is 1.0.
 
     Returns
     -------
-    tuple
-        X : np.ndarray (N,)
-            Identity of pharmacophore corresponding to the indexing order.
-        P : np.ndarray (N, 3)
-            Anchor positions of each pharmacophores
-        V : np.ndarray (N, 3)
-            Unit vectors in a relative position to the anchor positions.
-            Adding P and V results in the position of the vector's extended point.
+    X : np.ndarray
+        Identity of pharmacophore corresponding to the indexing order, shape (N,).
+    P : np.ndarray
+        Anchor positions of each pharmacophore, shape (N, 3).
+    V : np.ndarray
+        Unit vectors in a relative position to the anchor positions, shape (N, 3).
+        Adding P and V results in the position of the vector's extended point.
     """
     pharmacophores_dict = get_pharmacophores_dict(mol=mol,
                                                   multi_vector=multi_vector,

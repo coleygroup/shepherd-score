@@ -176,23 +176,28 @@ class DockingEvalPipeline:
                  verbose: int = 0,
                  path_to_bin: str = ''):
         """
-        Constructor for docking evaluation pipeline. Initializes VinaSmiles with receptor pdbqt.
+        Constructor for docking evaluation pipeline.
 
-        Arguments
-        ---------
-        pdb_id : str PDB ID of receptor. Natively only supports:
-            1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11
-        num_processes : int (default = 4) Number of cpus to use for scoring
-        docking_target_info_dict : Dict holding minimum information needed for docking.
-            For example:
-                {
-                "1iep": {
-                    "center": (15.614, 53.380, 15.455),
-                    "size": (15, 15, 15),
-                    "pdbqt": "path_to_file.pdbqt"
-                }
-        verbose : int (default = 0) Level of verbosity from vina.Vina (0 is silent)
-        path_to_bin : str (default = '') path to environment bin containing `mk_prepare_ligand.py`
+        Initializes VinaSmiles with receptor pdbqt.
+
+        Parameters
+        ----------
+        pdb_id : str
+            PDB ID of receptor. Natively only supports:
+            1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11.
+        num_processes : int, optional
+            Number of CPUs to use for scoring. Default is 4.
+        docking_target_info_dict : dict, optional
+            Dict holding minimum information needed for docking. Example format::
+
+                {"1iep": {"center": (15.614, 53.380, 15.455),
+                          "size": (15, 15, 15),
+                          "pdbqt": "path_to_file.pdbqt"}}
+
+        verbose : int, optional
+            Level of verbosity from vina.Vina (0 is silent). Default is 0.
+        path_to_bin : str, optional
+            Path to environment bin containing ``mk_prepare_ligand.py``. Default is ''.
         """
         self.pdb_id = pdb_id
         self.path_to_bin = path_to_bin
@@ -683,26 +688,30 @@ def run_docking_benchmark(save_dir_path: str,
                           protonate: bool = False
                           ) -> None:
     """
-    Run docking benchmark on experimental smiles. Uses an exhaustivness of 32 and saves the top-30
-    poses to a specified location.
+    Run docking benchmark on experimental SMILES.
 
-    Arguments
-    ---------
-    save_dir_path : str Path to save docked poses to
-    pdb_id : str PDB ID of receptor. Natively only supports:
-        1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11
-    num_processes : int (default = 4) Number of cpus to use for scoring
-    docking_target_info_dict : Dict holding minimum information needed for docking.
-        For example:
-            {
-            "1iep": {
-                "center": (15.614, 53.380, 15.455),
-                "size": (15, 15, 15),
-                "pdbqt": "path_to_file.pdbqt",
-                "ligand": "SMILES string of experimental ligand"
-            }
-    protonate : bool (default = False) whether to protonate ligands at a given pH. (Requires `"pH"`
-        field to be filled out in docking_target_info_dict)
+    Uses an exhaustiveness of 32 and saves the top-30 poses to a specified location.
+
+    Parameters
+    ----------
+    save_dir_path : str
+        Path to save docked poses to.
+    pdb_id : str
+        PDB ID of receptor. Natively only supports:
+        1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11.
+    num_processes : int, optional
+        Number of CPUs to use for scoring. Default is 4.
+    docking_target_info_dict : dict, optional
+        Dict holding minimum information needed for docking. Example format::
+
+            {"1iep": {"center": (15.614, 53.380, 15.455),
+                      "size": (15, 15, 15),
+                      "pdbqt": "path_to_file.pdbqt",
+                      "ligand": "SMILES string of experimental ligand"}}
+
+    protonate : bool, optional
+        Whether to protonate ligands at a given pH. Requires ``"pH"`` field to be
+        filled out in docking_target_info_dict. Default is ``False``.
 
     Returns
     -------
@@ -733,36 +742,45 @@ def run_docking_evaluation(atoms: List[np.ndarray],
     """
     Run docking evaluation with an exhaustiveness of 32.
 
-    Arguments
-    ---------
-    atoms : List[np.ndarray (N,)] of atomic numbers of the generated molecule or (N,M) one-hot
-        encoding.
-    positions : List[np.ndarray (N,3)] of coordinates for the generated molecule's atoms.
-    pdb_id : str PDB ID of receptor. Natively only supports:
-        1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11
-    num_processes : int (default = 4) Number of cpu's to use for Autodock Vina
-    docking_target_info_dict : Dict holding minimum information needed for docking.
-        For example:
-            {
-            "1iep": {
-                "center": (15.614, 53.380, 15.455),
-                "size": (15, 15, 15),
-                "pdbqt": "path_to_file.pdbqt"
-            }
-    exhaustiveness : int (default = 32) Number of Monte Carlo simulations to run per pose
-    n_poses : int (default = 1) Number of poses to save
-    protonate : bool (default = False) Use protonation protocol
-    save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
-    verbose : bool (default = True) show tqdm progress bar for each SMILES.
-    num_workers : int (default = 1) number of parallel worker processes.
-    mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+    Parameters
+    ----------
+    atoms : list
+        List of np.ndarray (N,) of atomic numbers of the generated molecule or (N, M)
+        one-hot encoding.
+    positions : list
+        List of np.ndarray (N, 3) of coordinates for the generated molecule's atoms.
+    pdb_id : str
+        PDB ID of receptor. Natively only supports:
+        1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11.
+    num_processes : int, optional
+        Number of CPUs to use for Autodock Vina. Default is 4.
+    docking_target_info_dict : dict, optional
+        Dict holding minimum information needed for docking. Example format::
+
+            {"1iep": {"center": (15.614, 53.380, 15.455),
+                      "size": (15, 15, 15),
+                      "pdbqt": "path_to_file.pdbqt"}}
+
+    exhaustiveness : int, optional
+        Number of Monte Carlo simulations to run per pose. Default is 32.
+    n_poses : int, optional
+        Number of poses to save. Default is 1.
+    protonate : bool, optional
+        Use protonation protocol. Default is ``False``.
+    save_poses_dir_path : str, optional
+        Path to directory to save docked poses. Default is ``None``.
+    verbose : bool, optional
+        Show tqdm progress bar for each SMILES. Default is ``True``.
+    num_workers : int, optional
+        Number of parallel worker processes. Default is 1.
+    mp_context : str, optional
+        Context for multiprocessing. One of 'spawn' or 'forkserver'. Default is 'spawn'.
 
     Returns
     -------
-    DockingEvalPipeline object
-        Results are found in the `buffer` attribute {'smiles' : energy}
-        Or in `smiles` and `energies` which preserves the order of provided atoms/positions as a
-        list.
+    DockingEvalPipeline
+        Results are found in the ``buffer`` attribute {'smiles': energy} or in ``smiles``
+        and ``energies`` which preserves the order of provided atoms/positions as a list.
     """
     docking_pipe = DockingEvalPipeline(pdb_id=pdb_id,
                                        num_processes=num_processes,
@@ -798,34 +816,42 @@ def run_docking_evaluation_from_smiles(smiles: List[str],
     """
     Run docking evaluation with an exhaustiveness of 32.
 
-    Arguments
-    ---------
-    smiles : List[str] list of SMILES strings. These must be valid or None.
-    pdb_id : str PDB ID of receptor. Natively only supports:
-        1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11
-    num_processes : int (default = 4) Number of cpu's to use for Autodock Vina
-    docking_target_info_dict : Dict holding minimum information needed for docking.
-        For example:
-            {
-            "1iep": {
-                "center": (15.614, 53.380, 15.455),
-                "size": (15, 15, 15),
-                "pdbqt": "path_to_file.pdbqt"
-            }
-    exhaustiveness : int (default = 32) Number of Monte Carlo simulations to run per pose
-    n_poses : int (default = 1) Number of poses to save
-    protonate : bool (default = False) Use protonation protocol
-    save_poses_dir_path : Optional[str] (default = None) Path to directory to save docked poses.
-    verbose : bool (default = True) show tqdm progress bar for each SMILES.
-    num_workers : int (default = 1) number of parallel worker processes.
-    mp_context : Literal['spawn', 'forkserver'] context for multiprocessing.
+    Parameters
+    ----------
+    smiles : list
+        List of SMILES strings. These must be valid or ``None``.
+    pdb_id : str
+        PDB ID of receptor. Natively only supports:
+        1iep, 3eml, 3ny8, 4rlu, 4unn, 5mo4, 7l11.
+    num_processes : int, optional
+        Number of CPUs to use for Autodock Vina. Default is 4.
+    docking_target_info_dict : dict, optional
+        Dict holding minimum information needed for docking. Example format::
+
+            {"1iep": {"center": (15.614, 53.380, 15.455),
+                      "size": (15, 15, 15),
+                      "pdbqt": "path_to_file.pdbqt"}}
+
+    exhaustiveness : int, optional
+        Number of Monte Carlo simulations to run per pose. Default is 32.
+    n_poses : int, optional
+        Number of poses to save. Default is 1.
+    protonate : bool, optional
+        Use protonation protocol. Default is ``False``.
+    save_poses_dir_path : str, optional
+        Path to directory to save docked poses. Default is ``None``.
+    verbose : bool, optional
+        Show tqdm progress bar for each SMILES. Default is ``True``.
+    num_workers : int, optional
+        Number of parallel worker processes. Default is 1.
+    mp_context : str, optional
+        Context for multiprocessing. One of 'spawn' or 'forkserver'. Default is 'spawn'.
 
     Returns
     -------
-    DockingEvalPipeline object
-        Results are found in the `buffer` attribute {'smiles' : energy}
-        Or in `smiles` and `energies` which preserves the order of provided atoms/positions as a
-        list.
+    DockingEvalPipeline
+        Results are found in the ``buffer`` attribute {'smiles': energy} or in ``smiles``
+        and ``energies`` which preserves the order of provided SMILES as a list.
     """
     docking_pipe = DockingEvalPipeline(pdb_id=pdb_id,
                                        num_processes=num_processes,

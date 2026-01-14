@@ -33,19 +33,32 @@ def tautomerize_chemaxon(
 
     Arguments
     ---------
-    smiles [str]: SMILES string of the molecule to tautomerize/protonate.
-    cxcalc_exe [str]: Path to the cxcalc executable.
-    molconvert_exe [str]: Path to the molconvert executable.
-    pH [float] (default: 7.4): pH value to use for the protonation.
-    cutoff [float] (default: 10): Cutoff value to use for the tautomerization/protonation.
-    tautomer_limit [float] (default: 20): Limit for the tautomerization/protonation.
-    protomer_limit [float] (default: 20): Limit for the protomerization.
-    neutralize [bool] (default: True): Whether to neutralize the molecule before tautomerization/protonation.
-    verbose [bool] (default: False): Whether to print verbose output.
+    smiles : str
+        SMILES string of the molecule to tautomerize/protonate.
+    cxcalc_exe : str
+        Path to the cxcalc executable.
+    molconvert_exe : str
+        Path to the molconvert executable.
+    pH : float (default: 7.4)
+        pH value to use for the protonation.
+    cutoff : float (default: 10)
+        Cutoff value to use for the tautomerization/protonation.
+    tautomer_limit : float (default: 20)
+        Limit for the tautomerization/protonation.
+    protomer_limit : float (default: 20)
+        Limit for the protomerization.
+    neutralize : bool (default: True)
+        Whether to neutralize the molecule before tautomerization/protonation.
+    verbose : bool (default: False)
+        Whether to print verbose output.
+    chemaxon_license_path : str | None (default: None)
+        Path to the chemaxon license file.
+        If ``None``, the ``CHEMAXON_LICENSE_URL`` environment variable is used.
 
-    Returns:
-    --------
-    List of SMILES strings of the tautomers/protomers with bad charges removed.
+    Returns
+    -------
+    list[str]
+        List of SMILES strings of the tautomers/protomers with bad charges removed.
     """
     if chemaxon_license_path is not None:
         os.environ['CHEMAXON_LICENSE_URL'] = chemaxon_license_path

@@ -30,8 +30,8 @@ def update_mol_coordinates(mol: Chem.Mol, coordinates: Union[List, np.ndarray]) 
     """
     Updates the coordinates of a 3D RDKit mol object with a new set of coordinates
 
-    Arguments
-    ---------
+    Parameters
+    ----------
     mol : Chem.Mol
         RDKit mol object with 3D coordinates to be replaced
     coordinates : Union[List, np.ndarray]
@@ -73,26 +73,35 @@ class Molecule:
         If `partial_charges` are not provided, they will be generated using MMFF94 which may
         result in subpar performance.
 
-        Arguments
+        Parameters
         ----------
         mol : rdkit.Chem.rdchem.Mol
-        num_surf_points : Optional[int] Number of surface points to sample.
-            If None, the surface point cloud is not generated. More efficient if only doing volumentric.
-        density : Optional[np.ndarray]
+        num_surf_points : Optional[int]
+            Number of surface points to sample.
+            If ``None``, the surface point cloud is not generated. More efficient if only doing volumentric.
+        density : Optional[float]
             Density of points to sample on molecular surface.
-            If None, the surface point cloud is not generated. More efficient if only doing volumentric.
-            If both num_surf_points and density are not None, num_surf_points supercedes density.
-        surface_points : Optional[np.ndarray] (M,3) Surface points if they were previously generated.
-        probe_radius : Optional[float] the radius of a probe atom to act as a "solvent accessible surface".
-            Default is 1.2 if `None` is passed.
-        partial_charges : Optional[np.ndarray] (N,) Partial charges for each atom.
-            If `None` is passed and ESP surface is generated, it will default to MMFF94 partial charges.
-        electrostatics : Optional[np.ndarray] (M,) Electrostatic potential if they were previously generated.
-        pharm_multi_vector : Optional[bool] If None, don't generate pharmacophores, else generate
-            pharmacophores with/without (true/false) multi-vectors.
-        pharm_types : Optional[np.ndarray] (P,) Types of pharmacophores.
-        pharm_ancs : Optional[np.ndarray] (P,3) Anchor positions of pharmacophores.
-        pharm_vecs : Optional[np.ndarray] (P,3) Unit vectors relative to anchor positions of pharmacophores.
+            If ``None``, the surface point cloud is not generated. More efficient if only doing volumentric.
+            If both ``num_surf_points`` and ``density`` are not ``None``, ``num_surf_points`` supercedes ``density``.
+        surface_points : Optional[np.ndarray]
+            Surface points if they were previously generated. Shape: (M,3).
+        probe_radius : Optional[float]
+            The radius of a probe atom to act as a "solvent accessible surface".
+            Default is 1.2 if ``None`` is passed.
+        partial_charges : Optional[np.ndarray]
+            Partial charges for each atom. Shape: (N,).
+            If ``None`` is passed and ESP surface is generated, it will default to MMFF94 partial charges.
+        electrostatics : Optional[np.ndarray]
+            Electrostatic potential if they were previously generated. Shape: (M,).
+        pharm_multi_vector : Optional[bool]
+            If ``None``, don't generate pharmacophores, else generate
+            pharmacophores with/without (``True``/``False``) multi-vectors.
+        pharm_types : Optional[np.ndarray]
+            Types of pharmacophores. Shape: (P,).
+        pharm_ancs : Optional[np.ndarray]
+            Anchor positions of pharmacophores. Shape: (P,3).
+        pharm_vecs : Optional[np.ndarray]
+            Unit vectors relative to anchor positions of pharmacophores. Shape: (P,3).
         """
         self.mol = mol
         self.atom_pos = Chem.RemoveHs(mol).GetConformer().GetPositions()
@@ -231,6 +240,7 @@ class MoleculePair:
         """
         A pair of molecules. A refence molecule and a fit molecule that can be aligned to the fit.
         There are a number of alignments that can be done:
+
         - Volumetric (with and without hydrogens)
         - Volumetric with partial charge weighting (with and without hydrogens)
         - Surface
@@ -323,28 +333,34 @@ class MoleculePair:
         """
         Align fit_molec to ref_molec using volumetric similarity.
 
-        Optimally aligned score found in `self.sim_aligned_vol` and the optimal SE(3)
-        transformation is at `self.transform_vol`. If `no_H` is True, append '_noH' to them.
+        Optimally aligned score found in ``self.sim_aligned_vol`` and the optimal SE(3)
+        transformation is at ``self.transform_vol``. If ``no_H`` is ``True``, append '_noH' to them.
 
-        Arguments
-        ---------
-        no_H : bool (default = True) to not include hydrogens in volumetric similarity.
-        num_repeats : int (default=50)
-            Number of different random initializations of SO(3) transformation parameters.
-        trans_init : bool (default = False)
-            Apply translation initializiation for alignment. `fit_molec`'s COM is translated to
-            each `ref_molecs`'s atoms, with 10 rotations for each translation. So the
+        Parameters
+        ----------
+        no_H : bool
+            Whether to not include hydrogens in volumetric similarity. Default is ``True``.
+        num_repeats : int, optional
+            Number of different random initializations of SO(3) transformation parameters. Default is 50.
+        trans_init : bool, optional
+            Apply translation initializiation for alignment. ``fit_molec``'s center of mass (COM) is translated to
+            each ``ref_molec``'s atoms, with 10 rotations for each translation. So the
             number of initializations scales as (# translation centers * 10 + 5) where 5 is from
-            the identity and 4 PCA with aligned COM's.
-            If None, then num_repeats rotations are done with aligned COM's.
-        lr : float (default=0.1) Learning rate or step-size for optimization
-        max_num_steps : int (default=200) Maximum number of steps to optimize over.
-        use_jax : bool (default = False) toggle to use Jax instead of PyTorch
-        verbose : bool (False) Print initial and final similarity scores with scores every 100 steps.
+            the identity and 4 PCA with aligned COMs. If ``None``, then ``num_repeats``
+            rotations are done with aligned COMs.
+        lr : float, optional
+            Learning rate or step-size for optimization. Default is 0.1.
+        max_num_steps : int, optional
+            Maximum number of steps to optimize over. Default is 200.
+        use_jax : bool, optional
+            Whether to use Jax instead of PyTorch. Default is ``False``.
+        verbose : bool, optional
+            Print initial and final similarity scores with scores every 100 steps. Default is ``False``.
 
         Returns
         -------
-        aligned_fit_points : np.ndarray (N, 3) coordinates of transformed atoms
+        aligned_fit_points : np.ndarray
+            Coordinates of transformed atoms. Shape: (N, 3).
         """
         if no_H:
             ref_atom_pos = self.ref_molec.atom_pos
@@ -411,32 +427,41 @@ class MoleculePair:
                            verbose: bool = False) -> np.ndarray:
         """
         Align fit_molec to ref_molec using volume similarity weighted by partial charge
-        Toggle with_H parameter for scoring with or without hydrogens.
+        Toggle ``no_H`` parameter for scoring with or without hydrogens.
 
-        Typically `lam=0.1` is used.
-        Optimally aligned score found in `self.sim_aligned_vol_esp` and the optimal SE(3)
-        transformation is at `self.transform_vol_esp`. If `no_H` is True, append '_noH' to them.
+        Typically ``lam=0.1`` is used.
+        Optimally aligned score found in ``self.sim_aligned_vol_esp`` and the optimal SE(3)
+        transformation is at ``self.transform_vol_esp``. If ``no_H`` is ``True``, append '_noH' to them.
 
-        Arguments
-        ---------
-        lam : float partial charge weighting parameter
-        no_H : bool (default = True) to not include hydrogens in volumetric similarity.
-        num_repeats : int (default=50)
+        Parameters
+        ----------
+        lam : float
+            Partial charge weighting parameter.
+        no_H : bool
+            Whether to not include hydrogens in volumetric similarity. Default is ``True``.
+        num_repeats : int, optional
             Number of different random initializations of SO(3) transformation parameters.
-        trans_init : bool (default = False)
-            Apply translation initializiation for alignment. `fit_molec`'s COM is translated to
-            each `ref_molecs`'s atoms, with 10 rotations for each translation. So the
-            number of initializations scales as (# translation centers * 10 + 5) where 5 is from
-            the identity and 4 PCA with aligned COM's.
-            If None, then num_repeats rotations are done with aligned COM's.
-        lr : float (default=0.1) Learning rate or step-size for optimization
-        max_num_steps : int (default=200) Maximum number of steps to optimize over.
-        use_jax : bool (default = False) toggle to use Jax instead of PyTorch
-        verbose : bool (False) Print initial and final similarity scores with scores every 100 steps.
+            Default is 50.
+        trans_init : bool, optional
+            Apply translation initializiation for alignment. ``fit_molec``'s center of mass
+            (COM) is translated to each ``ref_molec``'s atoms, with 10 rotations for each translation.
+            So the number of initializations scales as (# translation centers * 10 + 5) where 5 is
+            from the identity and 4 PCA with aligned COMs. If ``None``, then ``num_repeats``
+            rotations are done with aligned COMs. Default is ``False``.
+        lr : float, optional
+            Learning rate or step-size for optimization. Default is 0.1.
+        max_num_steps : int, optional
+            Maximum number of steps to optimize over. Default is 200.
+        use_jax : bool, optional
+            Whether to use Jax instead of PyTorch. Default is ``False``.
+        verbose : bool, optional
+            Print initial and final similarity scores with scores every 100 steps.
+            Default is ``False``.
 
         Returns
         -------
-        aligned_fit_points : np.ndarray (N, 3) coordinates of transformed atoms
+        aligned_fit_points : np.ndarray
+            Coordinates of transformed atoms. Shape: (N, 3).
         """
         if no_H:
             ref_mol_partial_charges = self.ref_molec.partial_charges[self.ref_molec._nonH_atoms_idx]
@@ -515,28 +540,36 @@ class MoleculePair:
         """
         Align fit_molec to ref_molec using surface similarity.
 
-        Optimally aligned score found in `self.sim_aligned_surf` and the optimal SE(3)
-        transformation is at `self.transform_surf`.
+        Optimally aligned score found in ``self.sim_aligned_surf`` and the optimal SE(3)
+        transformation is at ``self.transform_surf``.
 
-        Arguments
-        ---------
-        alpha : float Gaussian width parameter for overlap
-        num_repeats : int (default=50)
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        num_repeats : int, optional
             Number of different random initializations of SO(3) transformation parameters.
-        trans_init : bool (default = False)
-            Apply translation initializiation for alignment. `fit_molec`'s COM is translated to
-            each `ref_molecs`'s atoms, with 10 rotations for each translation. So the
-            number of initializations scales as (# translation centers * 10 + 5) where 5 is from
-            the identity and 4 PCA with aligned COM's.
-            If None, then num_repeats rotations are done with aligned COM's.
-        lr : float (default=0.1) Learning rate or step-size for optimization
-        max_num_steps : int (default=200) Maximum number of steps to optimize over.
-        use_jax : bool (default = False) toggle to use Jax instead of PyTorch
-        verbose : bool (False) Print initial and final similarity scores with scores every 100 steps.
+            Default is 50.
+        trans_init : bool, optional
+            Apply translation initializiation for alignment. ``fit_molec``'s center of mass
+            (COM) is translated to each ``ref_molec``'s atoms, with 10 rotations for each
+            translation. So the number of initializations scales as
+            (# translation centers * 10 + 5) where 5 is from the identity and 4 PCA with
+            aligned COMs. If ``None``, then ``num_repeats`` rotations are done with aligned COMs.
+            Default is ``False``.
+        lr : float, optional
+            Learning rate or step-size for optimization. Default is 0.1.
+        max_num_steps : int, optional
+            Maximum number of steps to optimize over. Default is 200.
+        use_jax : bool, optional
+            Whether to use Jax instead of PyTorch. Default is ``False``.
+        verbose : bool, optional
+            Print initial and final similarity scores with scores every 100 steps. Default is ``False``.
 
         Returns
         -------
-        aligned_fit_points : np.ndarray (N, 3) coordinates of transformed atoms
+        aligned_fit_points : np.ndarray
+            Coordinates of transformed atoms. Shape: (N, 3).
         """
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
@@ -590,33 +623,42 @@ class MoleculePair:
                        verbose: bool = False) -> np.ndarray:
         """
         Align fit_molec to ref_molec using ESP+surface similarity.
-        `lam` is scaled by (1e4/(4*55.263*np.pi))**2 for correct units.
+        ``lam`` is scaled by ``(1e4/(4*55.263*np.pi))**2`` for correct units.
 
-        Typically, `lam=0.3` is used and is scaled internally.
+        Typically, ``lam=0.3`` is used and is scaled internally.
 
-        Optimally aligned score found in `self.sim_aligned_esp` and the optimal SE(3)
-        transformation is at `self.transform_esp`.
+        Optimally aligned score found in ``self.sim_aligned_esp`` and the optimal SE(3)
+        transformation is at ``self.transform_esp``.
 
-        Arguments
-        ---------
-        alpha : float Gaussian width parameter for overlap
-        lam : float (default = 0.3) Weighting factor for ESP scoring. Scaled internally.
-        num_repeats : int (default=50)
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        lam : float, optional
+            Weighting factor for ESP scoring. Scaled internally. Default is 0.3.
+        num_repeats : int, optional
             Number of different random initializations of SO(3) transformation parameters.
-        trans_init : bool (default = False)
-            Apply translation initializiation for alignment. `fit_molec`'s COM is translated to
-            each `ref_molecs`'s atoms, with 10 rotations for each translation. So the
+            Default is 50.
+        trans_init : bool, optional
+            Apply translation initializiation for alignment. ``fit_molec``'s COM is translated to
+            each ``ref_molecs``'s atoms, with 10 rotations for each translation. So the
             number of initializations scales as (# translation centers * 10 + 5) where 5 is from
-            the identity and 4 PCA with aligned COM's.
-            If None, then num_repeats rotations are done with aligned COM's.
-        lr : float (default=0.1) Learning rate or step-size for optimization
-        max_num_steps : int (default=200) Maximum number of steps to optimize over.
-        use_jax : bool (default = False) toggle to use Jax instead of PyTorch
-        verbose : bool (False) Print initial and final similarity scores with scores every 100 steps.
+            the identity and 4 PCA with aligned COM's. If None, then num_repeats rotations are done
+            with aligned COM's. Default is ``False``.
+        lr : float, optional
+            Learning rate or step-size for optimization. Default is 0.1.
+        max_num_steps : int, optional
+            Maximum number of steps to optimize over. Default is 200.
+        use_jax : bool, optional
+            Whether to use Jax instead of PyTorch. Default is ``False``.
+        verbose : bool, optional
+            Print initial and final similarity scores with scores every 100 steps.
+            Default is ``False``.
 
         Returns
         -------
-        aligned_fit_points : np.ndarray (N, 3) coordinates of transformed atoms
+        aligned_fit_points : np.ndarray
+            Coordinates of transformed atoms. Shape: (N, 3).
         """
         lam_scaled = LAM_SCALING * lam
         if self.num_surf_points is None:
@@ -681,33 +723,43 @@ class MoleculePair:
         If alpha is 0.81, then it automatically uses volumetric shape similarity.
         Otherwise, it uses surface shape similarity.
 
-        Optimally aligned score found in `self.sim_aligned_esp_combo` and the optimal SE(3)
-        transformation is at `self.transform_esp_combo`.
+        Optimally aligned score found in ``self.sim_aligned_esp_combo`` and the optimal SE(3)
+        transformation is at ``self.transform_esp_combo``.
 
-        Arguments
-        ---------
-        alpha : float Gaussian width parameter for overlap
-        lam : float ESP weighting parameter
-        probe_radius : float (default = 0.1) Surface points found within vdW radii + probe radius
-            will be masked out. Surface generation uses a probe radius of 1.2 by default (radius of
-            hydrogen) so we use a slightly lower radius for be more tolerant.
-        esp_weight : float (default = 0.5) How much to weight shape vs esp_combo similarity ([0,1])
-        num_repeats : int (default=50)
-            Number of different random initializations of SO(3) transformation parameters.
-        trans_init : bool (default = False)
-            Apply translation initializiation for alignment. `fit_molec`'s COM is translated to
-            each `ref_molecs`'s atoms, with 10 rotations for each translation. So the
-            number of initializations scales as (# translation centers * 10 + 5) where 5 is from
-            the identity and 4 PCA with aligned COM's.
-            If None, then num_repeats rotations are done with aligned COM's.
-        lr : float (default=0.1) Learning rate or step-size for optimization
-        max_num_steps : int (default=200) Maximum number of steps to optimize over.
-        use_jax : bool (default = False) toggle to use Jax instead of PyTorch
-        verbose : bool (False) Print initial and final similarity scores with scores every 100 steps.
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        lam : float, optional
+            ESP weighting parameter. Default is 0.001.
+        probe_radius : float, optional
+            Surface points found within vdW radii + probe radius will be masked out.
+            Surface generation uses a probe radius of 1.2 by default (radius of hydrogen)
+            so we use a slightly lower radius for be more tolerant. Default is 1.0.
+        esp_weight : float, optional
+            How much to weight shape vs esp_combo similarity ([0,1]). Default is 0.5.
+        num_repeats : int, optional
+            Number of different random initializations of SO(3) transformation parameters. Default is 50.
+        trans_init : bool, optional
+            Apply translation initializiation for alignment. ``fit_molec``'s COM is translated
+            to each ``ref_molecs``'s atoms, with 10 rotations for each translation. So the
+            number of initializations scales as (# translation centers * 10 + 5) where 5 is
+            from the identity and 4 PCA with aligned COM's. If ``None``, then ``num_repeats``
+            rotations are done with aligned COM's. Default is ``False``.
+        lr : float, optional
+            Learning rate or step-size for optimization. Default is 0.1.
+        max_num_steps : int, optional
+            Maximum number of steps to optimize over. Default is 200.
+        use_jax : bool, optional
+            Whether to use Jax instead of PyTorch. Default is ``False``.
+        verbose : bool, optional
+            Print initial and final similarity scores with scores every 100 steps.
+            Default is ``False``.
 
         Returns
         -------
-        aligned_fit_points : np.ndarray (N, 3) coordinates of transformed atoms
+        aligned_fit_points : np.ndarray (N, 3)
+            Coordinates of transformed atoms. Shape: (N, 3).
         """
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
@@ -795,38 +847,47 @@ class MoleculePair:
         """
         Align fit_molec to ref_molec using pharmacophore similarity.
 
-        Optimally aligned score found in `self.sim_aligned_pharm` and the optimal SE(3)
-        transformation is at `self.transform_pharm`.
+        Optimally aligned score found in ``self.sim_aligned_pharm`` and the optimal SE(3)
+        transformation is at ``self.transform_pharm``.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         similarity : str from ('tanimoto', 'tversky', 'tversky_ref', 'tversky_fit')
-        Specifies what similarity function to use.
+            Specifies what similarity function to use. Options are:
             'tanimoto' -- symmetric scoring function
             'tversky' -- asymmetric -> Uses OpenEye's formulation 95% normalization by molec 1
             'tversky_ref' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 1.
             'tversky_fit' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 2.
-        extended_points : bool of whether to score HBA/HBD with gaussian overlaps of extended points.
-        only_extended : bool for when `extended_points` is True, decide whether to only score the
-                        extended points (ignore anchor overlaps)
-        num_repeats : int (default=50)
+        extended_points : bool, optional
+            Whether to score HBA/HBD with gaussian overlaps of extended points. Default is ``False``.
+        only_extended : bool, optional
+            When ``extended_points`` is ``True``, decide whether to only score the extended points
+            (ignore anchor overlaps). Default is ``False``.
+        num_repeats : int, optional
             Number of different random initializations of SO(3) transformation parameters.
-        trans_init : bool (default = False)
-            Apply translation initializiation for alignment. `fit_molec`'s COM is translated to
-            each `ref_molecs`'s pharmacophore, with 10 rotations for each translation. So the
+            Default is 50.
+        trans_init : bool, optional
+            Apply translation initializiation for alignment. ``fit_molec``'s COM is translated to
+            each ``ref_molecs``'s pharmacophore, with 10 rotations for each translation. So the
             number of initializations scales as (# translation centers * 10 + 5) where 5 is from
-            the identity and 4 PCA with aligned COM's.
-            If None, then num_repeats rotations are done with aligned COM's.
-        lr : float (default=0.1) Learning rate or step-size for optimization
-        max_num_steps : int (default=200) Maximum number of steps to optimize over.
-        use_jax : bool (default = False) toggle to use Jax instead of PyTorch
-        verbose : bool (False) Print initial and final similarity scores with scores every 100 steps.
+            the identity and 4 PCA with aligned COM's. If ``None``, then ``num_repeats`` rotations
+            are done with aligned COM's. Default is ``False``.
+        lr : float, optional
+            Learning rate or step-size for optimization. Default is 0.1.
+        max_num_steps : int, optional
+            Maximum number of steps to optimize over. Default is 200.
+        use_jax : bool, optional
+            Whether to use Jax instead of PyTorch. Default is ``False``.
+        verbose : bool, optional
+            Print initial and final similarity scores with scores every 100 steps. Default is ``False``.
 
         Returns
         -------
-        Tuple
-            aligned_fit_anchors : np.ndarray (P, 3) aligned coordinates of pharmacophores positions
-            aligned_fit_vectors : np.ndarray (P, 3) aligned coordinates of pharmacophore vectors
+        tuple
+            aligned_fit_anchors : np.ndarray
+                Aligned coordinates of pharmacophores positions. Shape: (P, 3).
+            aligned_fit_vectors : np.ndarray
+                Aligned coordinates of pharmacophore vectors. Shape: (P, 3).
         """
         if use_jax:
             if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
@@ -888,17 +949,21 @@ class MoleculePair:
         Score fit_molec to ref_molec using surface similarity given current alignment.
         By default it uses the numpy implementation.
 
-        Arguments
-        ---------
-        alpha : float Gaussian width parameter for overlap
-        use : str (default = 'np') define what implementation to use
-            For numpy use: 'np' or 'numpy'
-            For jax use: 'jax' or 'jnp'
-            For torch use: 'torch' or 'pytorch'
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        use : str, optional
+            Specifies what implementation to use. Options are:
+            - 'np' or 'numpy' (numpy implementation)
+            - 'jax' or 'jnp' (Jax implementation)
+            - 'torch' or 'pytorch' (PyTorch implementation)
+            Default is 'np'.
 
         Returns
         -------
-        score : np.ndarray (1,) similarity score
+        score : np.ndarray
+            Similarity score. Shape: (1,).
         """
         use = use.lower()
         accepted_keys = ('jax', 'jnp', 'torch', 'pytorch', 'np', 'numpy')
@@ -944,23 +1009,28 @@ class MoleculePair:
                        ) -> np.ndarray:
         """
         Score fit_molec to ref_molec using ESP+surface similarity given current alignment.
-        `lam` is scaled by (1e4/(4*55.263*np.pi))**2 for correct units.
+        ``lam`` is scaled by ``(1e4/(4*55.263*np.pi))**2`` for correct units.
 
-        Typically `lam` = 0.3 is used and is scaled internally.
+        Typically ``lam = 0.3`` is used and is scaled internally.
         By default it uses the numpy implementation.
 
-        Arguments
-        ---------
-        alpha : float Gaussian width parameter for overlap
-        lam : float Weighting factor for ESP scoring
-        use : str (default = 'np') define what implementation to use
-            For numpy use: 'np' or 'numpy'
-            For jax use: 'jax' or 'jnp'
-            For torch use: 'torch' or 'pytorch'
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        lam : float, optional
+            Weighting factor for ESP scoring. Default is 0.3.
+        use : str, optional
+            Specifies what implementation to use. Options are:
+            - 'np' or 'numpy' (numpy implementation)
+            - 'jax' or 'jnp' (Jax implementation)
+            - 'torch' or 'pytorch' (PyTorch implementation)
+            Default is 'np'.
 
         Returns
         -------
-        score : np.ndarray (1,) similarity score
+        score : np.ndarray
+            Similarity score. Shape: (1,).
         """
         lam_scaled = LAM_SCALING * lam
         use = use.lower()
@@ -1018,21 +1088,31 @@ class MoleculePair:
         Score fit_molec to ref_molec using pharmacophore similarity given current alignment.
         By default it uses the numpy implementation.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         similarity : str from ('tanimoto', 'tversky', 'tversky_ref', 'tversky_fit')
-        Specifies what similarity function to use.
+            Specifies what similarity function to use. Options are:
             'tanimoto' -- symmetric scoring function
             'tversky' -- asymmetric -> Uses OpenEye's formulation 95% normalization by molec 1
             'tversky_ref' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 1.
             'tversky_fit' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 2.
-        extended_points : bool of whether to score HBA/HBD with gaussian overlaps of extended points.
-        only_extended : bool for when `extended_points` is True, decide whether to only score the
-                        extended points (ignore anchor overlaps)
-        use : str (default = 'np') define what implementation to use
-            For numpy use: 'np' or 'numpy'
-            For jax use: 'jax' or 'jnp'
-            For torch use: 'torch' or 'pytorch'
+        extended_points : bool, optional
+            Whether to score HBA/HBD with gaussian overlaps of extended points.
+            Default is ``False``.
+        only_extended : bool, optional
+            When ``extended_points`` is ``True``, decide whether to only score the extended
+            points (ignore anchor overlaps). Default is ``False``.
+        use : str, optional
+            Specifies what implementation to use. Options are:
+            - 'np' or 'numpy' (numpy implementation)
+            - 'jax' or 'jnp' (Jax implementation)
+            - 'torch' or 'pytorch' (PyTorch implementation)
+            Default is 'np'.
+
+        Returns
+        -------
+        score : np.ndarray
+            Similarity score. Shape: (1,).
         """
         use = use.lower()
         accepted_keys = ('jax', 'jnp', 'torch', 'pytorch', 'np', 'numpy')
@@ -1094,17 +1174,22 @@ class MoleculePair:
         """
         Get an RDKit mol object and applicable features with a transformation applied.
 
-        Arguments
-        ---------
-        se3_transform : np.ndarray (4,4) SE(3) transformation matrix.
+        Parameters
+        ----------
+        se3_transform : np.ndarray
+            SE(3) transformation matrix. Shape: (4,4).
 
         Returns
         -------
-        Tuple
-            transformed_mol : rdkit.Chem.Mol with transformed coordinates
-            transformed_surf_pos : np.ndarray with transformed surface or None if N/A
-            transformed_pharm_ancs : np.ndarray with transformed pharm positions or None if N/A
-            transformed_pharm_vecs : np.ndarray with transformed pharm vectors or None if N/A
+        tuple
+            transformed_mol : rdkit.Chem.Mol
+                Molecule with transformed coordinates.
+            transformed_surf_pos : np.ndarray
+                Transformed surface points. Shape: (N, 3).
+            transformed_pharm_ancs : np.ndarray
+                Transformed pharmacophore anchor positions. Shape: (P, 3).
+            transformed_pharm_vecs : np.ndarray
+                Transformed pharmacophore vector positions. Shape: (P, 3).
         """
         # Transform mol
         transformed_mol = update_mol_coordinates(
@@ -1144,13 +1229,15 @@ class MoleculePair:
         """
         Get Molecule object transformation applied to all applicable features for the fit molecule.
 
-        Arguments
-        ---------
-        se3_transform : np.ndarray (4,4) SE(3) transformation matrix.
+        Parameters
+        ----------
+        se3_transform : np.ndarray
+            SE(3) transformation matrix. Shape: (4,4).
 
         Returns
         -------
-        Molecule object with transformed features.
+        Molecule
+            Molecule with transformed features.
         """
         (transformed_mol,
         transformed_surf_pos,

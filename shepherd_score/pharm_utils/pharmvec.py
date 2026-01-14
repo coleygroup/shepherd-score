@@ -100,20 +100,24 @@ def GetAcceptorFeatVects(conf: Chem.rdchem.Mol,
                          scale: float = 1.0):
     """
     Get the anchor positions and relative unit vectors of an acceptor atom.
-    Assumes HBA's are only O, and N as defined by smarts_featurs.fdef.
+
+    Assumes HBA's are only O and N as defined by smarts_features.fdef.
     If HBA is not one of those, then it assumes the atom has one lone pair.
 
-    Arguments
-    ---------
-    conf : rdkit Mol object with a conformer.
-    featAtoms : list containing rdkit Atom object of atom attributed as an acceptor.
-    scale : float (default = 1.) length of direction vector.
+    Parameters
+    ----------
+    conf : Chem.Mol
+        RDKit Mol object with a conformer.
+    featAtoms : list
+        List containing RDKit Atom object of atom attributed as an acceptor.
+    scale : float, optional
+        Length of direction vector. Default is 1.0.
 
     Returns
     -------
-    Tuple
-        list of anchor position(s) as rdkit Point3D or [None]
-        list of relative unit vector(s) as rdkit Point3D or [None]
+    tuple
+        (list of anchor position(s) as RDKit Point3D or [None],
+        list of relative unit vector(s) as RDKit Point3D or [None])
     """
     assert len(featAtoms) == 1
     atom_id = featAtoms[0]
@@ -464,37 +468,39 @@ def GetDonor3FeatVects_single(conf, featAtoms, scale=1.0):
 # Hydrogen bond acceptors
 def GetAcceptor1FeatVects_single(conf, featAtoms, scale=1.):
     """
-    Get the direction vectors for Acceptor of type 1.
-    Made to generate a single vector representation.
+    Get the direction vectors for Acceptor of type 1 (single vector representation).
 
-    This is a acceptor with one heavy atom neighbor. There are two possibilities we will
-    consider here
-    1. The bond to the heavy atom is a single bond e.g. CO
-     In this case we don't know the exact direction and we just use the inversion of this bond direction
-     and mark this direction as a 'cone'
-    2. The bond to the heavy atom is a double bond e.g. C=O
-     In this case the we have two possible direction except in some special cases e.g. SO2
-     where again we will use bond direction
+    This is an acceptor with one heavy atom neighbor. There are two possibilities:
 
-    Changed: conditioning based on the number of hydrogens, and methanamine fix
-    1. Case 1
-        If one hydrogen, vector points in the opposite direction of the bisection of the acute
-         angle formed by the heavy-acceptor-hydrogen.
-        If two hydrogens, assume sp3 and project in that lone-pair direction. If not tetrahedral,
-         then return None.
-    2. Case 2: Return the bisecting vector of the two lone-pairs.
+    - The bond to the heavy atom is a single bond (e.g. CO): We use the inversion
+      of this bond direction and mark it as a 'cone'.
+    - The bond to the heavy atom is a double bond (e.g. C=O): We have two possible
+      directions except in some special cases (e.g. SO2) where we use bond direction.
 
-    Arguments
-    ---------
-    conf : rdkit Mol object with conformer
-    featAtoms : list of atoms that are part of the feature
-    scale : float for length of the direction vector (default = 1.0)
+    Notes
+    -----
+    Modified to condition on the number of hydrogens with methanamine fix:
+
+    - Case 1: If one hydrogen, vector points in the opposite direction of the bisection
+      of the acute angle formed by the heavy-acceptor-hydrogen. If two hydrogens,
+      assume sp3 and project in that lone-pair direction. If not tetrahedral,
+      return None.
+    - Case 2: Return the bisecting vector of the two lone-pairs.
+
+    Parameters
+    ----------
+    conf : Chem.Mol
+        RDKit Mol object with conformer.
+    featAtoms : list
+        List of atoms that are part of the feature.
+    scale : float, optional
+        Length of the direction vector. Default is 1.0.
 
     Returns
     -------
-    Tuple
-        anchor position as rdkit Point3D or None
-        relative unit vector(s) as rdkit Point3D or None
+    tuple
+        (anchor position as RDKit Point3D or None,
+        relative unit vector(s) as RDKit Point3D or None)
     """
     assert len(featAtoms) == 1
     aid = featAtoms[0]
@@ -633,31 +639,34 @@ def GetAcceptor3FeatVects_single(conf, featAtoms, scale=1.0):
 # Hydrogen bond acceptors
 def GetAcceptor1FeatVects(conf, featAtoms, scale=1.):
     """
-    Get the direction vectors for Acceptor of type 1.
-    Made to generate a multi-vector representation.
+    Get the direction vectors for Acceptor of type 1 (multi-vector representation).
 
-    This is a acceptor with one heavy atom neighbor. There are two possibilities we will
-    consider here
-    1. The bond to the heavy atom is a single bond e.g. CO
-     In this case we don't know the exact direction and we just use the inversion of this bond direction
-     and mark this direction as a 'cone'
-    2. The bond to the heavy atom is a double bond e.g. C=O
-     In this case the we have two possible direction except in some special cases e.g. SO2
-     where again we will use bond direction
+    This is an acceptor with one heavy atom neighbor. There are two possibilities:
 
-    Changed return format, added fixes for methanamine and two vectors for hydroxyls
+    - The bond to the heavy atom is a single bond (e.g. CO): We use the inversion
+      of this bond direction and mark it as a 'cone'.
+    - The bond to the heavy atom is a double bond (e.g. C=O): We have two possible
+      directions except in some special cases (e.g. SO2) where we use bond direction.
 
-    Arguments
-    ---------
-    conf : rdkit Mol object with a conformer.
-    featAtoms : list containing rdkit Atom object of atom attributed as an acceptor.
-    scale : float (default = 1.) length of direction vector.
+    Notes
+    -----
+    Modified to change return format, with fixes for methanamine and two vectors
+    for hydroxyls.
+
+    Parameters
+    ----------
+    conf : Chem.Mol
+        RDKit Mol object with a conformer.
+    featAtoms : list
+        List containing RDKit Atom object of atom attributed as an acceptor.
+    scale : float, optional
+        Length of direction vector. Default is 1.0.
 
     Returns
     -------
-    Tuple
-        list of anchor position(s) as rdkit Point3D or None
-        list of relative unit vector(s) as rdkit Point3D or None
+    tuple
+        (list of anchor position(s) as RDKit Point3D or None,
+        list of relative unit vector(s) as RDKit Point3D or None)
     """
     assert len(featAtoms) == 1
     aid = featAtoms[0]

@@ -96,13 +96,15 @@ def remove_bad_protomers(protomers: List[str]) -> List[str]:
     """
     Remove protomers with bad charges from the rules in ZINC22 build pipeline.
 
-    Arguments
-    ---------
-    protomers [List[str]]: List of SMILES strings of the protomers.
+    Parameters
+    ----------
+    protomers : list[str]
+        List of SMILES strings of the protomers.
 
-    Returns:
-    --------
-    List of SMILES strings of the protomers with bad charges removed.
+    Returns
+    -------
+    list[str]
+        List of SMILES strings of the protomers with bad charges removed.
     """
     bad_charges = [c for c in BAD_CHARGES if c != '']
     passing_prots = []
@@ -135,20 +137,28 @@ def protonate_smiles(smiles: str,
     OpenBabel workflow adapted from DockString:
     https://github.com/dockstring/dockstring/blob/main/dockstring/utils.py#L330
 
-    Arguments
-    ---------
-    smiles : str SMILES string of molecule to be protonated
-    pH : float (default = 7.4) pH at which the molecule should be protonated
-    method : Literal['openbabel', 'molscrub', 'chemaxon'] (default = 'molscrub') method to use for protonation
-    ---------
-    path_to_bin : str (default = '') path to environment bin containing `mk_prepare_ligand.py`
-    cxcalc_exe : str | None (default = None) path to cxcalc executable
-    molconvert_exe : str | None (default = None) path to molconvert executable
-    chemaxon_license_path : str | None (default = None) path to chemaxon license file
+    Parameters
+    ----------
+    smiles : str
+        SMILES string of molecule to be protonated.
+    pH : float (default: 7.4)
+        pH at which the molecule should be protonated.
+    method : Literal['openbabel', 'molscrub', 'chemaxon']
+        Method to use for protonation. Defaults to 'molscrub'.
+    path_to_bin : str (default: '')
+        Path to environment bin containing `mk_prepare_ligand.py`.
+    cxcalc_exe : str | None (default: None)
+        Path to cxcalc executable.
+    molconvert_exe : str | None (default: None)
+        Path to molconvert executable.
+    chemaxon_license_path : str | None (default: None)
+        Path to chemaxon license file.
+        If ``None``, the ``CHEMAXON_LICENSE_URL`` environment variable is used.
 
     Returns
     -------
-    List of SMILES strings of tautomers/protomers
+    list[str]
+        List of SMILES strings of tautomers/protomers.
     """
     if method not in ['openbabel', 'molscrub', 'chemaxon']:
         raise ValueError(f'Invalid method: {method}')

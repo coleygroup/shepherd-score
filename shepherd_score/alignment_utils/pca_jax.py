@@ -91,20 +91,24 @@ vmap_quaternion_from_axis_angle_jax = vmap(quaternion_from_axis_angle_jax, (0, 0
 
 def quaternion_mult_jax(p: Array, q: Array) -> Array:
     """
-    Mulitplication of quaternions p and q. Jax implementation
-    https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
-    General use case:
-        The consequtive rotations of q_1 then q_2 is equivalent to q_3 = q_2*q_1. (order matters)
+    Multiplication of quaternions p and q. Jax implementation.
+
+    Reference: https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
+
+    General use case: The consecutive rotations of q_1 then q_2 is equivalent
+    to q_3 = q_2*q_1. (order matters)
+
     Parameters
     ----------
-    p : Array (4,)
-        The first quaternion.
-    q : Array (4,)
-        The second quaternion.
+    p : Array
+        The first quaternion with shape (4,).
+    q : Array
+        The second quaternion with shape (4,).
+
     Returns
     -------
-    pq : Array (4,)
-        The product of the two quaternions.
+    Array
+        The product of the two quaternions with shape (4,).
     """
     mat1 = jnp.array([[p[0], -p[1], -p[2], -p[3]],
                       [p[1],  p[0], -p[3],  p[2]],

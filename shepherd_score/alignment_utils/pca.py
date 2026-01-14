@@ -134,10 +134,24 @@ def quaternion_from_axis_angle(axis, angle):
 
 def quaternion_mult(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
     """
-    Mulitplication of quaternions p and q.
-    https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
-    General use case:
-        The consequtive rotations of q_1 then q_2 is equivalent to q_3 = q_2*q_1. (order matters)
+    Multiplication of quaternions p and q.
+
+    Reference: https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
+
+    General use case: The consecutive rotations of q_1 then q_2 is equivalent
+    to q_3 = q_2*q_1. (order matters)
+
+    Parameters
+    ----------
+    p : torch.Tensor
+        The first quaternion with shape (4,) or (batch, 4).
+    q : torch.Tensor
+        The second quaternion with shape (4,) or (batch, 4).
+
+    Returns
+    -------
+    torch.Tensor
+        The product of the two quaternions with shape (4,) or (batch, 4).
     """
     if len(p.shape) == 1 and len(q.shape) == 1:
         mat1 = torch.Tensor([[p[0], -p[1], -p[2], -p[3]],

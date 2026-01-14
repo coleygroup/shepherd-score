@@ -384,39 +384,47 @@ def get_overlap_pharm(ptype_1: torch.Tensor,
                       only_extended: bool = False
                       ) -> torch.Tensor:
     """
-    Computes pharmacophore score.
-    Accepts batching, but only if they are the same two molecules (or have the same number of features)
-     --> Specifically used for alignment.
+    Compute pharmacophore score.
 
-    Arguments
-    ---------
-    ptype_1 : torch.Tensor (N,) or (B,N)
-        Indices specifying the pharmacophore type based on order of P_TYPES
-    ptype_2 : torch.Tensor (M,) or (B,M)
-        Indices specifying the pharmacophore type based on order of P_TYPES
-    anchors_1 : torch.Tensor (N,3) or (B,N,3)
-        Coordinates for the anchor points of each pharmacophore of molecule 1
-    anchors_2 : torch.Tensor (M,3) or (B,M,3)
-        Coordinates for the anchor points of each pharmacophore of molecule 2
-    vectors_1 : torch.Tensor (N,3) or (B,N,3)
-        Relative unit vectors of each pharmacophore of molecule 1
-    vectors_2 : torch.Tensor (M,3) or (B,M,3)
-        Relative unit vectors of each pharmacophore of molecule 2
-    similarity : str
-        Specifies what similarity function to use.
-        'tanimoto' -- symmetric scoring function
-        'tversky' -- asymmetric -> Uses OpenEye's formulation 95% normalization by molec 1
-        'tversky_ref' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 1.
-        'tversky_fit' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 2.
-    extended_points : bool
+    Accepts batching, but only if they are the same two molecules (or have the same
+    number of features). Specifically used for alignment.
+
+    Parameters
+    ----------
+    ptype_1 : torch.Tensor
+        Indices specifying the pharmacophore type based on order of P_TYPES,
+        shape (N,) or (B, N).
+    ptype_2 : torch.Tensor
+        Indices specifying the pharmacophore type based on order of P_TYPES,
+        shape (M,) or (B, M).
+    anchors_1 : torch.Tensor
+        Coordinates for the anchor points of each pharmacophore of molecule 1,
+        shape (N, 3) or (B, N, 3).
+    anchors_2 : torch.Tensor
+        Coordinates for the anchor points of each pharmacophore of molecule 2,
+        shape (M, 3) or (B, M, 3).
+    vectors_1 : torch.Tensor
+        Relative unit vectors of each pharmacophore of molecule 1,
+        shape (N, 3) or (B, N, 3).
+    vectors_2 : torch.Tensor
+        Relative unit vectors of each pharmacophore of molecule 2,
+        shape (M, 3) or (B, M, 3).
+    similarity : str, optional
+        Specifies what similarity function to use. Options are:
+        'tanimoto' (symmetric), 'tversky' (OpenEye's 95% normalization by mol 1),
+        'tversky_ref' (Pharao's 100% normalization by mol 1),
+        'tversky_fit' (Pharao's 100% normalization by mol 2). Default is 'tanimoto'.
+    extended_points : bool, optional
         Whether to score HBA/HBD with gaussian overlaps of extended points.
-    only_extended : bool
-        When `extended_points` is True, decide whether to only score the extended points (ignore
-         anchor overlaps)
+        Default is ``False``.
+    only_extended : bool, optional
+        When ``extended_points`` is ``True``, decide whether to only score the
+        extended points (ignore anchor overlaps). Default is ``False``.
 
     Returns
     -------
-    torch.Tensor (1,) or (B,) : score(s)
+    torch.Tensor
+        Score(s) with shape (1,) or (B,).
     """
     if isinstance(ptype_1, np.ndarray):
         ptype_1 = torch.Tensor(ptype_1)
