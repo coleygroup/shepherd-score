@@ -53,7 +53,7 @@ def rotation_axis_jax(v1: Array, v2: Array) -> Array:
         v3 = jnp.zeros(v1.shape)
         if same_vectors_idx.size > 0:
             v3 = v3.at[same_vectors_idx].set(jnp.tile(jnp.array([1., 0., 0.]), (len(same_vectors_idx), 1)))
-        diff_vectors_idx = jnp.where(all_close == False)[0]
+        diff_vectors_idx = jnp.where(not all_close)[0]
         if diff_vectors_idx.size > 0:
             v3 = v3.at[diff_vectors_idx].set(jnp.cross(v1.at[diff_vectors_idx].get(),
                                                        v2.at[diff_vectors_idx].get(), axis=-1))
@@ -69,14 +69,14 @@ def quaternion_from_axis_angle_jax(axis: Array, angle: Array) -> Array:
     """
     Create a Quaternion from a rotation axis and an angle in radians.
     Jax implementation.
-    
+
     Parameters
     ----------
     axis : Array (3,)
         Axis to rotate about.
     angle: Array (1,)
         Angle in radians.
-    
+
     Returns
     -------
     quaternion : Array (4,)
@@ -91,20 +91,24 @@ vmap_quaternion_from_axis_angle_jax = vmap(quaternion_from_axis_angle_jax, (0, 0
 
 def quaternion_mult_jax(p: Array, q: Array) -> Array:
     """
-    Mulitplication of quaternions p and q. Jax implementation
-    https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
-    General use case:
-        The consequtive rotations of q_1 then q_2 is equivalent to q_3 = q_2*q_1. (order matters)
+    Multiplication of quaternions p and q. Jax implementation.
+
+    Reference: https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
+
+    General use case: The consecutive rotations of q_1 then q_2 is equivalent
+    to q_3 = q_2*q_1. (order matters)
+
     Parameters
     ----------
-    p : Array (4,)
-        The first quaternion.
-    q : Array (4,)
-        The second quaternion.
+    p : Array
+        The first quaternion with shape (4,).
+    q : Array
+        The second quaternion with shape (4,).
+
     Returns
     -------
-    pq : Array (4,)
-        The product of the two quaternions.
+    Array
+        The product of the two quaternions with shape (4,).
     """
     mat1 = jnp.array([[p[0], -p[1], -p[2], -p[3]],
                       [p[1],  p[0], -p[3],  p[2]],
@@ -123,7 +127,7 @@ def quaternions_for_principal_component_alignment_jax(ref_points: Array,
     Computes the 4 quaternions required for alignment of the fit mol along the
     principal components of the reference mol.
     NumPy implementation.
-    
+
     The computed quaternions assumes that fit_points will be rotated after being centered at COM.
 
     Parameters
@@ -140,7 +144,7 @@ def quaternions_for_principal_component_alignment_jax(ref_points: Array,
         four possible principal component combinations.
     """
     pmi_ref = compute_principal_moments_of_interia_jax(ref_points)
-    
+
     quaternions = jnp.zeros((4,4))
     for q_index in range(4):
         if q_index == 1:

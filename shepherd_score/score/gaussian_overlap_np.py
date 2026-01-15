@@ -1,4 +1,4 @@
-""" 
+"""
 Gaussian volume overlap scoring functions -- Shape-only (i.e., not color)
 NUMPY VERSION
 

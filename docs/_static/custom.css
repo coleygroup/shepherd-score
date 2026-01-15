@@ -1,0 +1,5 @@
+/* Make the sidebar logo smaller */
+.sidebar-brand img {
+    max-height: 40px;
+    width: auto;
+}

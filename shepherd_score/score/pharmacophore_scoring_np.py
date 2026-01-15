@@ -180,7 +180,7 @@ def get_volume_overlap_score_extended_points_np(ptype_str: str,
                                                 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Score both the anchor and extended point volume overlap instead of a vector similarity.
-    """    
+    """
     ptype_str = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str)
     VAB, VAA, VBB = 0., 0., 0.
@@ -287,7 +287,7 @@ def get_overlap_pharm_np(ptype_1: np.ndarray,
     elif similarity.lower() == 'tversky_fit':
         similarity_func = partial(tversky_func_np, sigma=0.05)
     else:
-        raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
+        raise ValueError('Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
     # Determine if single instance or batched
     if len(ptype_1.shape) == 1 and len(ptype_2.shape) == 1:
@@ -413,7 +413,7 @@ def get_overlap_pharm_np(ptype_1: np.ndarray,
         overlap += VAB
         ref_overlap += VAA
         fit_overlap += VBB
-    
+
     # Halogen
     if 'halogen' in ptype_key2ind:
         VAB, VAA, VBB = get_vector_volume_overlap_score_np(ptype_str='halogen',
@@ -456,7 +456,7 @@ def get_pharm_combo_score(centers_1: np.ndarray,
     elif similarity.lower() == 'tversky_fit':
         similarity_func = partial(tversky_func_np, sigma=0.05)
     else:
-        raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
+        raise ValueError('Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
     # Pharmacophore scoring
     pharm_score = get_overlap_pharm_np(ptype_1=ptype_1,

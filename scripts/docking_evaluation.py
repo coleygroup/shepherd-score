@@ -38,7 +38,7 @@ def docking_experiment_evaluation(pdb_id: str, sample_idx, file_path, save_path_
 
     with open(file_path, 'rb') as f:
         samples = pickle.load(f)
-    
+
     out_dir = save_path_dir / f'{pdb_id}_{sample_idx}'
     out_dir.mkdir(parents=True, exist_ok=True)
     assert out_dir.is_dir()
@@ -48,7 +48,7 @@ def docking_experiment_evaluation(pdb_id: str, sample_idx, file_path, save_path_
     smiles_list = []
     for sample in samples[-1]:
         smiles_list.append(get_smiles_from_atom_pos(sample['x1']['atoms'], sample['x1']['positions']))
-    
+
     this_smiles_ls = smiles_list[my_task_id:len(smiles_list):num_tasks]
 
     print('\n\n\nBEGIN DOCKING EVAL')
@@ -92,7 +92,7 @@ if __name__=='__main__':
                                   save_path_dir=working_dir,
                                   my_task_id=my_task_id,
                                   num_tasks=num_tasks)
-    
+
     # Docking screen conditioning
     working_dir = load_dir
     file_path_docking_screen = working_dir / f'samples_{sample_idx}.pickle'
@@ -104,7 +104,7 @@ if __name__=='__main__':
     else:
         pdb_id = docking_screen_pdb_order[sample_idx]
 
-    
+
     print(f'Loading from {file_path_docking_screen}')
     print(pdb_id)
     docking_experiment_evaluation(pdb_id=pdb_id,

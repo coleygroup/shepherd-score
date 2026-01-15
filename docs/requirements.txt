@@ -1,0 +1,5 @@
+# Documentation build dependencies for Read the Docs
+sphinx>=7.0
+sphinx-book-theme>=1.0
+sphinx-copybutton>=0.5
+myst-nb>=1.0

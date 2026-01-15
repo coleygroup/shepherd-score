@@ -1,4 +1,4 @@
-""" 
+"""
 Gaussian volume overlap scoring functions combined with continuous electrostatics
 PYTORCH VERSION.
 
@@ -38,7 +38,7 @@ def VAB_2nd_order_esp(centers_1: torch.Tensor,
         # Or if c1=(B,N,D) c2=(M,D) -> (B,N,M)
         # Or if c1=(B,N,D) c2=(B,M,D) -> (B,N,M)
         # We permute to (B, M, N) to match the batched summation logic
-        R2 = R2_sq.permute(0,2,1) 
+        R2 = R2_sq.permute(0,2,1)
         C2 = C2_sq.permute(0,2,1)
 
         VAB_2nd_order = torch.sum(torch.sum(np.pi**(1.5) \
@@ -75,12 +75,12 @@ def get_overlap_esp(centers_1: torch.Tensor,
                     ) -> torch.Tensor:
     """
     Torch implementation.
-    Compute electrostatic similarity which weights Gaussian volume overlap by electrostatics. 
+    Compute electrostatic similarity which weights Gaussian volume overlap by electrostatics.
     The Tanimoto score is used.
 
     Typically `lam=0.3*LAM_SCALING` is used for surface point clouds and `lam=0.1` for partial charge
     weighted volumetric overlap.
-    
+
     Parameters
     ----------
     centers_1 : torch.Tensor (batch, N, 3) or (N, 3)
@@ -95,7 +95,7 @@ def get_overlap_esp(centers_1: torch.Tensor,
         Parameter controlling the width of the Gaussians.
     lam : float
         Parameter controlling the influence of electrostatics.
-    
+
     Returns
     -------
     tanimoto_esp : torch.Tensor (batch, 1) or (1,)
@@ -149,21 +149,21 @@ def _esp_comparison(points_1: torch.Tensor,
     centers_w_H_2 : torch.Tensor (M + m_H, 3) or (batch, M + m_H, 3)
         Coordinates for atoms (including hydrogens) of molecule 2. Used in calculation of ESP at
         points_1 and masking out those within molecule 2's volume.
-    
+
     partial_charges_2 : torch.Tensor (M + m_H,) or (batch, M + m_H,)
         Partial charges corresponding to centers_w_H_2. Used to calculate ESP.
 
     points_charges_1 : torch.Tensor (N_surf,) or (batch, N_surf,)
         Precalculated ESP's of molecule 1 corresponding to points_1.
-    
+
     radii_2 : torch.Tensor (M + m_H,) or (batch, M + m_H,)
         Radii of each atom corresponding to centers_w_H_2. Used for masking operation.
-    
+
     probe_radius : float (default = 1.0)
         Probe radius (default is 1 angstrom). Surfaces assumed to be generated with vdW radius and
         a probe radius of 1.2 angstroms (vdW radius of hydrogen). 1.0 used rather than 1.2 as a
         tolerance.
-    
+
     lam : float (default = 0.001)
         Electrostatic potential weighting parameter (smaller = higher weight).
         0.001 was chosen as default based empirical observations of the distribution of scores
@@ -262,26 +262,26 @@ def esp_combo_score(centers_w_H_1: torch.Tensor,
         Coordinates of points for molecule 1 used to compute shape similarity.
         Use atom centers for volumentric similarity. Use surface centers for surface similarity.
         Same for centers except (M, 3) or (m_surf, 3).
-    
+
     points_1 : torch.Tensor (n_surf, 3) | (batch, n_surf, 3)
         Coordinates of surface points for molecule 1.
         Same for points_2 except (m_surf, 3).
-    
+
     partial_charges_1 : torch.Tensor (N + n_H,) | (batch, N + n_H,)
         Partial charges corresponding to the atoms in centers_w_H_1.
         Same for partial_charges_2 except (M + m_H,).
-    
+
     point_charges_1 : torch.Tensor (n_surf,) | (batch, n_surf,)
         The electrostatic potential calculated at each surface point (points_1).
         Same for point_charges_1 except (m_surf,)
-    
+
     radii_1 : torch.Tensor (N + n_H,) | (batch, N + n_H,)
         vdW radii corresponding to the atoms in centers_w_H_1 (angstroms)
         Same for radii_2 except (M + m_H,)
-    
+
     alpha : float
         Gaussian width parameter used for shape similarity.
-    
+
     lam : float (default = 0.001)
         Electrostatic potential weighting parameter (smaller = higher weight).
         0.001 was chosen as default based empirical observations of the distribution of scores
@@ -291,12 +291,12 @@ def esp_combo_score(centers_w_H_1: torch.Tensor,
         Surface points found within vdW radii + probe radius will be masked out. Surface generation
         uses a probe radius of 1.2 (radius of hydrogen) so we use a slightly lower radius for be
         more tolerant.
-    
+
     esp_weight : float (default = 0.5)
         Weight to be placed on electrostatic similarity with respect to shape similarity.
         0 = only shape similarity
         1 = only electrostatic similarity
-    
+
     Returns
     -------
     torch.Tensor (1,) or (batch, 1)

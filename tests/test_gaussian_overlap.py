@@ -4,7 +4,6 @@ Assumes the NumPy implementation is ground truth.
 
 Particularly for the batching functionality that complicates the pytorch implementation.
 """
-
 import pytest
 import torch
 import numpy as np
@@ -12,6 +11,7 @@ from scipy.spatial import distance
 import torch.nn.functional as F
 from shepherd_score.score import gaussian_overlap as go
 from shepherd_score.score import gaussian_overlap_np as go_np
+from .utils import _configure_jax_platform
 
 # Helper function for NumPy vector normalization (for 2D arrays)
 def _normalize_np_vectors_2d(vectors_np):
@@ -43,7 +43,7 @@ def _generate_data(batch_size=None, num_points1=10, num_points2=12, dim=3, fixed
     vectors_2_torch = torch.from_numpy(vectors_2_np)
     mask_1_torch = torch.from_numpy(mask_1_np)
     mask_2_torch = torch.from_numpy(mask_2_np)
-    
+
     return (centers_1_np, centers_2_np, vectors_1_np, vectors_2_np, mask_1_np, mask_2_np,
             centers_1_torch, centers_2_torch, vectors_1_torch, vectors_2_torch, mask_1_torch, mask_2_torch)
 
@@ -246,7 +246,7 @@ class TestGaussianOverlapTorch:
         c1_np_b, c2_np_b, v1_np_b, v2_np_b, m1_np_b, m2_np_b, c1_torch_b, c2_torch_b, v1_torch_b, v2_torch_b, m1_torch_b, m2_torch_b = _generate_data(
             batch_size=batch_size, num_points1=num_points1, num_points2=num_points2, fixed_seed=47
         )
-        
+
         cdist_21_torch = torch.cdist(c2_torch_b, c1_torch_b)**2.0 # (B,M,N)
         v1_torch_norm_b = F.normalize(v1_torch_b, p=2, dim=v1_torch_b.dim()-1)
         v2_torch_norm_b = F.normalize(v2_torch_b, p=2, dim=v2_torch_b.dim()-1)
@@ -260,7 +260,7 @@ class TestGaussianOverlapTorch:
             m1_np, m2_np = m1_np_b[i], m2_np_b[i]
 
             R2_dense_np = distance.cdist(c2_np, c1_np)**2.0  # (M,N)
-            
+
             v1n_np = _normalize_np_vectors_2d(v1_np) # (N,D)
             v2n_np = _normalize_np_vectors_2d(v2_np) # (M,D)
             VMM_dense_np = np.matmul(v2n_np, v1n_np.T) # (M,N)
@@ -270,56 +270,50 @@ class TestGaussianOverlapTorch:
             else:
                 VMM_dense_np = np.clip(VMM_dense_np, 0., 1.)
             VMM_weighted_np = (VMM_dense_np + 2.) / 3.
-            
+
             mask_mat_np = m2_np[:, np.newaxis] * m1_np[np.newaxis, :] # (M,N)
             exp_term_np = np.exp(-(alpha / 2) * R2_dense_np)
-            
+
             expected_val = np.sum(term_common * mask_mat_np * VMM_weighted_np * exp_term_np)
             expected_b_list.append(expected_val)
         expected = np.array(expected_b_list, dtype=np.float32)
-        
+
         actual = go.VAB_2nd_order_cosine_mask_batch(cdist_21_torch, vmm_21_torch, alpha, allow_antiparallel, m1_torch_b, m2_torch_b)
         np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5, atol=1e-7)
 
-# Try to import JAX and skip tests if not available
-import os
-# Configure JAX platform before import to avoid GPU errors
-def _configure_jax_platform():
-    """Configure JAX platform based on GPU availability."""
-    try:
-        # Try to detect GPU through other means first
-        import subprocess
-        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-        gpu_detected = result.returncode == 0
-    except (FileNotFoundError, subprocess.SubprocessError):
-        gpu_detected = False
+# Attempt to import JAX and related modules
+JAX_AVAILABLE = False
+jax = None
+jnp = None
+go_jax = None
 
-    if not gpu_detected:
-        # Force JAX to use CPU only if no GPU detected
-        os.environ['JAX_PLATFORMS'] = 'cpu'
+try:
+    # Configure JAX platform before import to avoid GPU initialization errors
+    _gpu_detected = _configure_jax_platform()
 
-    return gpu_detected
+    import jax
+    import jax.numpy as jnp
+    from shepherd_score.score import gaussian_overlap_jax as go_jax
 
-# Pre-configure JAX platform
-_gpu_detected_early = _configure_jax_platform()
+    JAX_AVAILABLE = True
+except ImportError:
+    # JAX not available - all tests in JAX test classes will be skipped
+    pass
 
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
-go_jax = pytest.importorskip("shepherd_score.score.gaussian_overlap_jax")
-
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 @pytest.mark.jax
 class TestGaussianOverlapJAX:
     def test_get_overlap_jax(self):
         alpha = 0.81
         # Using fixed_seed for reproducibility with JAX tests as well
         c1_np, c2_np, _, _, _, _, _, _, _, _, _, _ = _generate_data(fixed_seed=101)
-        
+
         c1_jnp = jnp.array(c1_np)
         c2_jnp = jnp.array(c2_np)
 
         expected_np = go_np.get_overlap_np(c1_np, c2_np, alpha=alpha)
         actual_jax = go_jax.get_overlap_jax(c1_jnp, c2_jnp, alpha=alpha)
-        
+
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
 
     def test_VAB_2nd_order_jax(self):
@@ -363,7 +357,7 @@ class TestGaussianOverlapJAX:
             expected_np = np.array(0.0, dtype=np.float32)
         else:
             expected_np = go_np.get_overlap_np(c1_np_filtered, c2_np_filtered, alpha=alpha)
-        
+
         actual_jax = go_jax.get_overlap_jax_mask(c1_jnp, c2_jnp, m1_jnp, m2_jnp, alpha=alpha)
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
 
@@ -383,7 +377,7 @@ class TestGaussianOverlapJAX:
             expected_np = np.array(0.0, dtype=np.float32)
         else:
             expected_np = go_np.VAB_2nd_order_np(c1_np_filtered, c2_np_filtered, alpha)
-        
+
         actual_jax = go_jax.VAB_2nd_order_jax_mask(c1_jnp, c2_jnp, m1_jnp, m2_jnp, alpha)
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
 
@@ -417,7 +411,7 @@ class TestGaussianOverlapJAX:
             VAB_np_mask = 0.0
         else:
             VAB_np_mask = go_np.VAB_2nd_order_np(c1_np_filtered_m1_for_VAB, c2_np_filtered_m2_for_VAB, alpha)
-        
+
         if (VAA_np_mask + VBB_np_mask - VAB_np_mask) == 0:
              # Avoid division by zero; Tanimoto is undefined or 0 depending on convention.
              # If VAB is also 0, 0/0 -> 0 is a common practical outcome. If VAB >0 and denom is 0, it's an issue.
@@ -437,7 +431,7 @@ class TestGaussianOverlapJAX:
     def test_VAB_2nd_order_cosine_jax(self, allow_antiparallel):
         alpha = 0.5
         c1_np, c2_np, v1_np, v2_np, _, _, _, _, _, _, _, _ = _generate_data(fixed_seed=107) # New fixed seed
-        
+
         c1_jnp = jnp.array(c1_np)
         c2_jnp = jnp.array(c2_np)
         v1_jnp = jnp.array(v1_np)
@@ -445,20 +439,21 @@ class TestGaussianOverlapJAX:
 
         expected_np = go_np.VAB_2nd_order_cosine_np(c1_np, c2_np, v1_np, v2_np, alpha, allow_antiparallel)
         actual_jax = go_jax.VAB_2nd_order_cosine_jax(c1_jnp, c2_jnp, v1_jnp, v2_jnp, alpha, allow_antiparallel)
-        
+
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
 
 #############################################################################
 ####################### JAX VMAP Batch Tests ##############################
 #############################################################################
 
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 @pytest.mark.jax
 class TestGaussianOverlapJAXBatched:
     def test_get_overlap_jax_vmap_batch(self):
         alpha = 0.81
         batch_size = 3
         c1_np_b, c2_np_b, _, _, _, _, _, _, _, _, _, _ = _generate_data(batch_size=batch_size, fixed_seed=201)
-        
+
         c1_jnp_b = jnp.array(c1_np_b)
         c2_jnp_b = jnp.array(c2_np_b)
 
@@ -469,7 +464,7 @@ class TestGaussianOverlapJAXBatched:
         for i in range(batch_size):
             expected_np_b.append(go_np.get_overlap_np(c1_np_b[i], c2_np_b[i], alpha=alpha))
         expected_np_array = np.array(expected_np_b)
-        
+
         actual_jax_b = vmapped_get_overlap_jax(c1_jnp_b, c2_jnp_b, alpha)
         np.testing.assert_allclose(np.array(actual_jax_b), expected_np_array, rtol=1e-5, atol=1e-7)
 
@@ -584,7 +579,7 @@ class TestGaussianOverlapJAXBatched:
             VBB_np_mask = go_np.VAB_2nd_order_np(c2_f_m2, c2_f_m2, alpha) if c2_f_m2.shape[0] > 0 else 0.0
             # Ground truth for VAB_mask
             VAB_np_mask = go_np.VAB_2nd_order_np(c1_f_m1, c2_f_m2, alpha) if (c1_f_m1.shape[0] > 0 and c2_f_m2.shape[0] > 0) else 0.0
-            
+
             denominator = VAA_np_mask + VBB_np_mask - VAB_np_mask
             if denominator == 0:
                 expected_val = np.array(0.0, dtype=np.float32) if VAB_np_mask == 0 else np.nan
@@ -594,7 +589,7 @@ class TestGaussianOverlapJAXBatched:
         expected_np_array = np.array(expected_np_b, dtype=np.float32) # Ensure dtype for comparison
 
         actual_jax_b = vmapped_tanimoto_mask_jax(c1_jnp_b, c2_jnp_b, m1_jnp_b, m2_jnp_b, alpha)
-        
+
         # Handle NaN comparisons for Tanimoto
         nan_mask_expected = np.isnan(expected_np_array)
         nan_mask_actual = np.isnan(np.array(actual_jax_b))
@@ -610,7 +605,7 @@ class TestGaussianOverlapJAXBatched:
         alpha = 0.5
         batch_size = 3
         c1_np_b, c2_np_b, v1_np_b, v2_np_b, _, _, _, _, _, _, _, _ = _generate_data(batch_size=batch_size, fixed_seed=207)
-        
+
         c1_jnp_b = jnp.array(c1_np_b)
         c2_jnp_b = jnp.array(c2_np_b)
         v1_jnp_b = jnp.array(v1_np_b)
@@ -619,7 +614,7 @@ class TestGaussianOverlapJAXBatched:
         # allow_antiparallel is static so it's not in in_axes, but passed to the vmapped function
         # The JAX function _VAB_2nd_order_cosine_jax_impl itself is JITted with static_argnames
         # So vmap will operate on these specialized JITted functions.
-        vmapped_VAB_cosine_jax = jax.vmap(go_jax.VAB_2nd_order_cosine_jax, 
+        vmapped_VAB_cosine_jax = jax.vmap(go_jax.VAB_2nd_order_cosine_jax,
                                           in_axes=(0, 0, 0, 0, None, None) # c1, c2, v1, v2, alpha, allow_antiparallel
                                          )
         # Simpler: JAX's vmap is smart enough about static args from the underlying JITted function.
@@ -633,7 +628,7 @@ class TestGaussianOverlapJAXBatched:
         for i in range(batch_size):
             expected_np_b.append(go_np.VAB_2nd_order_cosine_np(c1_np_b[i], c2_np_b[i], v1_np_b[i], v2_np_b[i], alpha, allow_antiparallel))
         expected_np_array = np.array(expected_np_b)
-        
+
         # Pass allow_antiparallel as a normal argument. JAX handles its static nature due to original @jit.
         actual_jax_b = vmapped_VAB_cosine_jax(c1_jnp_b, c2_jnp_b, v1_jnp_b, v2_jnp_b, alpha, allow_antiparallel)
         np.testing.assert_allclose(np.array(actual_jax_b), expected_np_array, rtol=1e-5, atol=1e-7)

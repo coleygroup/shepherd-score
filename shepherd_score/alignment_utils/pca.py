@@ -97,14 +97,14 @@ def rotation_axis(v1, v2):
 def quaternion_from_axis_angle(axis, angle):
     """
     Create a Quaternion from a rotation axis and an angle in radians.
-    
+
     Parameters
     ----------
     axis : torch.Tensor (3,)
         Axis to rotate about.
     angle: torch.Tensor (1,)
         Angle in radians.
-    
+
     Returns
     -------
     quaternion : torch.Tensor (4,)
@@ -134,10 +134,24 @@ def quaternion_from_axis_angle(axis, angle):
 
 def quaternion_mult(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
     """
-    Mulitplication of quaternions p and q.
-    https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
-    General use case:
-        The consequtive rotations of q_1 then q_2 is equivalent to q_3 = q_2*q_1. (order matters)
+    Multiplication of quaternions p and q.
+
+    Reference: https://academicflight.com/articles/kinematics/rotation-formalisms/quaternions/
+
+    General use case: The consecutive rotations of q_1 then q_2 is equivalent
+    to q_3 = q_2*q_1. (order matters)
+
+    Parameters
+    ----------
+    p : torch.Tensor
+        The first quaternion with shape (4,) or (batch, 4).
+    q : torch.Tensor
+        The second quaternion with shape (4,) or (batch, 4).
+
+    Returns
+    -------
+    torch.Tensor
+        The product of the two quaternions with shape (4,) or (batch, 4).
     """
     if len(p.shape) == 1 and len(q.shape) == 1:
         mat1 = torch.Tensor([[p[0], -p[1], -p[2], -p[3]],
@@ -157,11 +171,11 @@ def quaternion_mult(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
 
 
 def quaternions_for_principal_component_alignment(ref_points: torch.Tensor, fit_points: torch.Tensor) -> torch.Tensor:
-    """ 
+    """
     Computes the 4 quaternions required for alignment of the fit mol along the
     principal components of the reference mol.
-    
-    The computed quaternions assumes that fit_points will be rotated after being centered at COM. 
+
+    The computed quaternions assumes that fit_points will be rotated after being centered at COM.
     """
     pmi_ref = compute_principal_moments_of_interia(ref_points)
 
@@ -203,7 +217,7 @@ def quaternions_for_principal_component_alignment(ref_points: torch.Tensor, fit_
         pmi_refs[1][0] = -pmi_refs[1][0] # flip orientation of longest axis
         pmi_refs[2][1] = -pmi_refs[2][1] # flip orientation of 2nd longest axis
         # flip orientation of longest and 2nd longest axes
-        pmi_refs[3][0] = -pmi_refs[3][0] 
+        pmi_refs[3][0] = -pmi_refs[3][0]
         pmi_refs[3][1] = -pmi_refs[3][1]
 
         fit_points_adjust = fit_points.repeat((4,1,1))

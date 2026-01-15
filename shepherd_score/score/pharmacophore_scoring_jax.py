@@ -2,7 +2,6 @@
 Pharmacophore scoring with JAX.
 
 This module may not be as fast as the NumPy version.
-TODO: Try to optimize this module.
 """
 from typing import Union, Callable, Literal, Tuple
 from functools import partial
@@ -11,7 +10,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, Array
 
-from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax, VAB_2nd_order_cosine_jax
+from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax, VAB_2nd_order_cosine_jax # noqa: F401
 from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax_mask, VAB_2nd_order_cosine_jax_mask
 from shepherd_score.score.constants import P_TYPES, P_ALPHAS
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
@@ -77,7 +76,7 @@ def tversky_func_jax(VAB: Array,
 
     Similarity(Tversky) = Overlap{1,2} / (sigma*Overlap{1,1} + (1-sigma)*Overlap{2,2})
     """
-    return jnp.clip(VAB / (sigma * VAA + (1 - sigma) * VBB), min=None, max=1.0) 
+    return jnp.clip(VAB / (sigma * VAA + (1 - sigma) * VBB), min=None, max=1.0)
 
 
 def get_vector_volume_overlap_score_jax(ptype_str: str,
@@ -94,7 +93,7 @@ def get_vector_volume_overlap_score_jax(ptype_str: str,
     """
     ptype_str_lwr = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str_lwr)
-    
+
     mask_1 = ptype_1 == ptype_idx
     mask_2 = ptype_2 == ptype_idx
 
@@ -116,7 +115,7 @@ def get_volume_overlap_score_jax(ptype_str: str,
     """
     ptype_str_lwr = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str_lwr)
-    
+
     mask_1 = ptype_1 == ptype_idx
     mask_2 = ptype_2 == ptype_idx
 
@@ -145,7 +144,7 @@ def get_volume_overlap_score_extended_points_jax(ptype_str: str,
 
     mask_1 = ptype_1 == ptype_idx
     mask_2 = ptype_2 == ptype_idx
-    
+
     VAB, VAA, VBB = jnp.array(0.0), jnp.array(0.0), jnp.array(0.0)
 
     # Score extended points
@@ -156,13 +155,13 @@ def get_volume_overlap_score_extended_points_jax(ptype_str: str,
     VAB += VAB_extended
     VAA += VAA_extended
     VBB += VBB_extended
-    
+
     # Score anchors if not only_extended
     if not only_extended:
         VAB_anchor = VAB_2nd_order_jax_mask(anchors_1, anchors_2, mask_1, mask_2, alpha)
         VAA_anchor = VAB_2nd_order_jax_mask(anchors_1, anchors_1, mask_1, mask_1, alpha)
         VBB_anchor = VAB_2nd_order_jax_mask(anchors_2, anchors_2, mask_2, mask_2, alpha)
-        
+
         VAB += VAB_anchor
         VAA += VAA_anchor
         VBB += VBB_anchor
@@ -226,7 +225,7 @@ def get_overlap_pharm_jax(ptype_1: Array,
         # JAX jit doesn't like dynamic error raising based on string values well.
         # Consider validating this outside or ensuring `similarity` is from a known set.
         # For now, assume valid input due to _SIM_TYPE or raise error outside jit scope.
-        raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
+        raise ValueError('Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
     overlap, ref_overlap, fit_overlap = jnp.array(0.0), jnp.array(0.0), jnp.array(0.0)
 
@@ -234,25 +233,33 @@ def get_overlap_pharm_jax(ptype_1: Array,
     VAB_h, VAA_h, VBB_h = get_volume_overlap_score_jax(ptype_str='hydrophobe',
                                                        ptype_1=ptype_1, ptype_2=ptype_2,
                                                        anchors_1=anchors_1, anchors_2=anchors_2)
-    overlap += VAB_h; ref_overlap += VAA_h; fit_overlap += VBB_h
+    overlap += VAB_h
+    ref_overlap += VAA_h
+    fit_overlap += VBB_h
 
     # ZnBinder
     VAB_z, VAA_z, VBB_z = get_volume_overlap_score_jax(ptype_str='znbinder',
                                                        ptype_1=ptype_1, ptype_2=ptype_2,
                                                        anchors_1=anchors_1, anchors_2=anchors_2)
-    overlap += VAB_z; ref_overlap += VAA_z; fit_overlap += VBB_z
-    
+    overlap += VAB_z
+    ref_overlap += VAA_z
+    fit_overlap += VBB_z
+
     # Anion
     VAB_an, VAA_an, VBB_an = get_volume_overlap_score_jax(ptype_str='anion',
                                                           ptype_1=ptype_1, ptype_2=ptype_2,
                                                           anchors_1=anchors_1, anchors_2=anchors_2)
-    overlap += VAB_an; ref_overlap += VAA_an; fit_overlap += VBB_an
+    overlap += VAB_an
+    ref_overlap += VAA_an
+    fit_overlap += VBB_an
 
     # Cation
     VAB_cat, VAA_cat, VBB_cat = get_volume_overlap_score_jax(ptype_str='cation',
                                                              ptype_1=ptype_1, ptype_2=ptype_2,
                                                              anchors_1=anchors_1, anchors_2=anchors_2)
-    overlap += VAB_cat; ref_overlap += VAA_cat; fit_overlap += VBB_cat
+    overlap += VAB_cat
+    ref_overlap += VAA_cat
+    fit_overlap += VBB_cat
 
     # Aromatic
     VAB_ar, VAA_ar, VBB_ar = get_vector_volume_overlap_score_jax(ptype_str='aromatic',
@@ -260,8 +267,10 @@ def get_overlap_pharm_jax(ptype_1: Array,
                                                                  anchors_1=anchors_1, anchors_2=anchors_2,
                                                                  vectors_1=vectors_1, vectors_2=vectors_2,
                                                                  allow_antiparallel=True)
-    overlap += VAB_ar; ref_overlap += VAA_ar; fit_overlap += VBB_ar
-    
+    overlap += VAB_ar
+    ref_overlap += VAA_ar
+    fit_overlap += VBB_ar
+
     # Acceptor
     if extended_points:
         VAB_acc, VAA_acc, VBB_acc = get_volume_overlap_score_extended_points_jax(
@@ -275,7 +284,9 @@ def get_overlap_pharm_jax(ptype_1: Array,
                                         anchors_1=anchors_1, anchors_2=anchors_2,
                                         vectors_1=vectors_1, vectors_2=vectors_2,
                                         allow_antiparallel=False)
-    overlap += VAB_acc; ref_overlap += VAA_acc; fit_overlap += VBB_acc
+    overlap += VAB_acc
+    ref_overlap += VAA_acc
+    fit_overlap += VBB_acc
 
     # Donor
     if extended_points:
@@ -290,7 +301,9 @@ def get_overlap_pharm_jax(ptype_1: Array,
                                         anchors_1=anchors_1, anchors_2=anchors_2,
                                         vectors_1=vectors_1, vectors_2=vectors_2,
                                         allow_antiparallel=False)
-    overlap += VAB_don; ref_overlap += VAA_don; fit_overlap += VBB_don
+    overlap += VAB_don
+    ref_overlap += VAA_don
+    fit_overlap += VBB_don
 
     # Halogen
     VAB_hal, VAA_hal, VBB_hal = get_vector_volume_overlap_score_jax(
@@ -298,8 +311,10 @@ def get_overlap_pharm_jax(ptype_1: Array,
                                     anchors_1=anchors_1, anchors_2=anchors_2,
                                     vectors_1=vectors_1, vectors_2=vectors_2,
                                     allow_antiparallel=False)
-    overlap += VAB_hal; ref_overlap += VAA_hal; fit_overlap += VBB_hal
-    
+    overlap += VAB_hal
+    ref_overlap += VAA_hal
+    fit_overlap += VBB_hal
+
     scores = similarity_func(VAB=overlap, VAA=ref_overlap, VBB=fit_overlap)
     return scores
 
@@ -329,7 +344,7 @@ def get_pharm_combo_score_jax(centers_1: Array,
     elif similarity.lower() == 'tversky_fit':
         similarity_func = partial(tversky_func_jax, sigma=0.05)
     else:
-        raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
+        raise ValueError('Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
     # Pharmacophore scoring
     pharm_score = get_overlap_pharm_jax(ptype_1=ptype_1,
@@ -341,7 +356,7 @@ def get_pharm_combo_score_jax(centers_1: Array,
                                         similarity=similarity,
                                         extended_points=extended_points,
                                         only_extended=only_extended)
-    
+
     # Shape scoring
     VAB_shape = VAB_2nd_order_jax(centers_1=centers_1,
                                   centers_2=centers_2,
@@ -357,4 +372,4 @@ def get_pharm_combo_score_jax(centers_1: Array,
                                   VBB=VBB_shape)
 
     score = (pharm_score + shape_score) / 2.0
-    return score 
+    return score

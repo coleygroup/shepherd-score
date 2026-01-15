@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} (${{ matrix.test-type }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        test-type: [core]
+        include:
+          # Add JAX tests for Python 3.10, 3.11, and 3.12 (JAX has better support)
+          - python-version: "3.10"
+            test-type: jax
+          - python-version: "3.11"
+            test-type: jax
+          - python-version: "3.12"
+            test-type: jax
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
+
+      - name: Install core dependencies
+        run: |
+          uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -e ".[dev]"
+
+      - name: Install JAX (CPU)
+        if: matrix.test-type == 'jax'
+        run: uv pip install "jax[cpu]" optax
+
+      - name: Run tests (core)
+        if: matrix.test-type == 'core'
+        run: uv run pytest tests/ -v --tb=short -m "not jax"
+
+      - name: Run tests (with JAX)
+        if: matrix.test-type == 'jax'
+        run: uv run pytest tests/ -v --tb=short
+
+  lint:
+    name: Lint Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Ruff lint
+        run: uvx ruff check shepherd_score/ tests/
+
+  # Summary job for branch protection
+  ci-success:
+    name: CI Success
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.test.result }}" != "success" ]] || [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All jobs passed!"
+

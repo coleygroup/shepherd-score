@@ -18,13 +18,13 @@ def quaternions_to_rotation_matrix(quaternions: torch.Tensor) -> torch.Tensor:
     Converts quaternion to a rotation matrix. Supports batched and non-batched inputs.
     Adapted from PyTorch3D:
     https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/transforms/rotation_conversions.html#quaternion_to_matrix
-    
+
     Parameters
     ----------
     quaternions : torch.Tensor (batch, 4) or (4,)
         Quaternion parameters in (r,i,j,k) order. Accepts single set of parameters or a batched
         set.
-    
+
     Returns
     -------
     rotation_matrix : torch.Tensor (batch, 3, 3) or (3,3)
@@ -81,14 +81,14 @@ def get_SE3_transform(se3_params: torch.Tensor
                      ) -> torch.Tensor:
     """ Constructs an SE(3) transformtion matrix from parameters.
     Supports batched and non-batched inputs.
-    
+
     Parameters
     ----------
     se3_params : torch.Tensor (batch, 7) or (7,)
         Parameters for SE(3) transformation.
         The first 4 values in the last dimension are quaternions of form (r,i,j,k)
         and the last 3 values of the last dimension are the translations in (x,y,z).
-    
+
     Returns
     -------
     se3_matrix : torch.Tensor (batch, 4, 4) or (4, 4)
@@ -139,14 +139,14 @@ def apply_SE3_transform(points: torch.Tensor,
     """
     Takes a point cloud and transforms it according to the provided SE3 transformation matrix.
     Supports batched and non-batched inputs.
-    
+
     Parameters
     ----------
     points : torch.Tensor (batch, N, 3) or (N, 3)
         Set of coordinates representing a point cloud.
     SE3_transform : torch.Tensor (batch, 4, 4) or (4, 4)
         SE(3) transformation matrix. If 'points' argument is batched, this one should be too.
-    
+
     Returns
     -------
     transformed_points : torch.Tensor (batch, N, 3) or (N, 3)
@@ -173,7 +173,7 @@ def apply_SE3_transform(points: torch.Tensor,
     else:
         raise ValueError(f'"points" and "SE3_transform" must be either batched or a single instance. \
         The expected length of shape for both should be 2 (single instance or 3 (batch) but {len(SE3_transform)} was given.')
-    
+
 
 def apply_SO3_transform(points: torch.Tensor,
                         SE3_transform: torch.Tensor
@@ -181,14 +181,14 @@ def apply_SO3_transform(points: torch.Tensor,
     """
     Takes a point cloud and ONLY ROTATES it according to the provided SE3 transformation matrix.
     Supports batched and non-batched inputs.
-    
+
     Parameters
     ----------
     points : torch.Tensor (batch, N, 3) or (N, 3)
         Set of coordinates representing a point cloud.
     SE3_transform : torch.Tensor (batch, 4, 4) or (4, 4)
         SE(3) transformation matrix. If 'points' argument is batched, this one should be too.
-    
+
     Returns
     -------
     rotated_points : torch.Tensor (batch, N, 3) or (N, 3)

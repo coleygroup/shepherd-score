@@ -1,9 +1,9 @@
-""" 
+"""
 Alignment algorithms using Torch-based scoring functions.
 Torch based functions can perform on batches as well as single instances.
 """
 from copy import deepcopy
-from typing import Union, List, Tuple
+from typing import Union, Tuple
 import torch
 import torch.nn.functional as F
 from torch import optim
@@ -27,7 +27,7 @@ def objective_ROCS_overlay(se3_params: torch.Tensor,
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
     If the inputs are batched, the loss is the average across the batch.
-    
+
     Parameters
     ----------
     se3_params : torch.Tensor (batch, 7) or (7,)
@@ -43,7 +43,7 @@ def objective_ROCS_overlay(se3_params: torch.Tensor,
         se3_params, try use torch.Tensor.repeat((batch, 1, 1)).
     alpha : float
         Gaussian width parameter used in scoring function.
-    
+
     Returns
     -------
     loss : torch.Tensor (1,)
@@ -55,11 +55,11 @@ def objective_ROCS_overlay(se3_params: torch.Tensor,
             raise ValueError(f'Since "fit_points" is a single point cloud, there should only be one set of "se3_params" for each batch. {err_mssg}')
         elif len(fit_points.shape) == 3: # expect batch
             raise ValueError(f'Since "fit_points" is batched, there should be a row of "se3_params" for each batch. {err_mssg}')
-    
+
     se3_matrix = get_SE3_transform(se3_params)
     fit_points = apply_SE3_transform(fit_points, se3_matrix)
     score = get_overlap(ref_points, fit_points, alpha)
-    
+
     # Single instance
     if len(se3_params.shape) == 1:
         return 1-score # maximize overlap
@@ -87,7 +87,7 @@ def _quats_from_fibo(num_samples: int):
     """
     fibo = torch.Tensor(_get_points_fibonacci(num_samples))
     unit_v = torch.Tensor([1., 0., 0.]).repeat((num_samples, 1))
-    
+
     angles = angle_between_vecs(unit_v, fibo)
     axes = rotation_axis(unit_v, fibo)
     quaternions = quaternion_from_axis_angle(axes, angles)
@@ -170,7 +170,7 @@ def _initialize_se3_params(ref_points: torch.Tensor,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     num_repeats : int (default=50)
         Number of different random initializations of SE(3) transformation parameters.
-    
+
     Returns
     -------
     se3_params : torch.Tensor (num_repeats, 7)
@@ -188,12 +188,12 @@ def _initialize_se3_params(ref_points: torch.Tensor,
     # Switch to just local optimization, no COM alignment
     if num_repeats == 1:
         se3_params = torch.zeros(7, device=ref_points.device)
-        se3_params[:4] = torch.tensor([1.0, 0.0, 0.0, 0.0]) 
+        se3_params[:4] = torch.tensor([1.0, 0.0, 0.0, 0.0])
         # se3_params[4:] = -fit_points_com + ref_points_com
     else:
         # First guess keeps the original orientation but aligns the COMs
         se3_params = torch.zeros((num_repeats, 7), device=ref_points.device)
-        se3_params[0, :4] = torch.tensor([1.0, 0.0, 0.0, 0.0]) 
+        se3_params[0, :4] = torch.tensor([1.0, 0.0, 0.0, 0.0])
         se3_params[0, 4:] = -fit_points_com + ref_points_com
 
         # Align the principal components for the next 4
@@ -205,7 +205,7 @@ def _initialize_se3_params(ref_points: torch.Tensor,
             T = apply_SE3_transform(fit_points_com.repeat(4,1).unsqueeze(1), SE3_rotation).squeeze()
             # Apply translation to center COMs by taking into account implicit translation done in PCA
             se3_params[1:5, 4:] = - T + ref_points_com
-        # Do random rotations 
+        # Do random rotations
         if num_repeats > 5:
             if num_repeats == 50:
                 # Precomputed se3_params from fibonacci sampling of 45
@@ -247,7 +247,7 @@ def _initialize_se3_params_with_translations(ref_points: torch.Tensor,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     num_repeats : int (default=50)
         Number of different random initializations of SE(3) transformation parameters.
-    
+
     Returns
     -------
     se3_params : torch.Tensor (num_repeats, 7)
@@ -261,7 +261,7 @@ def _initialize_se3_params_with_translations(ref_points: torch.Tensor,
 
     # First guess keeps the original orientation but aligns the COMs
     se3_params = torch.zeros((num_repeats, 7), device=ref_points.device)
-    se3_params[0, :4] = torch.tensor([1.0, 0.0, 0.0, 0.0]) 
+    se3_params[0, :4] = torch.tensor([1.0, 0.0, 0.0, 0.0])
     se3_params[0, 4:] = -fit_points_com + ref_points_com
 
     pca_quats = quaternions_for_principal_component_alignment_np(ref_points.cpu().numpy(), fit_points.cpu().numpy())
@@ -314,7 +314,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
 
     If num_repeats is 1, the initial guess for alignment is an identity rotation and aligned COMs.
     If num_repeats is 5 or greater, four initial guesses are aligned using principal components.
-    
+
     Parameters
     ----------
     ref_points : torch.Tensor (N,3)
@@ -358,7 +358,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
             fit_points=fit_points,
             trans_centers=trans_centers,
             num_repeats_per_trans=10)
-    
+
     num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
     # Create optimizer
     optimizer = optim.Adam([se3_params], lr=lr)
@@ -370,8 +370,8 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
     counter = 0
     # ref_points will be broadcast by the objective/scoring function
     if num_repeats == 1:
-        fit_points_to_transform = fit_points 
-    else: 
+        fit_points_to_transform = fit_points
+    else:
         fit_points_to_transform = fit_points.repeat((num_repeats,1,1))
 
     for step in range(max_num_steps):
@@ -387,7 +387,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
         # Print progress
         if verbose and step % 100 == 0:
             print(f"Step {step}, Score: {1-loss.item()}")
-        
+
         # early stopping
         if abs(loss - last_loss) > 1e-5:
             counter = 0
@@ -431,7 +431,7 @@ def objective_ROCS_esp_overlay(se3_params: torch.Tensor,
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
     If the inputs are batched, the loss is the average across the batch.
-    
+
     Parameters
     ----------
     se3_params : torch.Tensor (batch, 7) or (7,)
@@ -450,7 +450,7 @@ def objective_ROCS_esp_overlay(se3_params: torch.Tensor,
         Gaussian width parameter used in scoring function.
     lam : float
         Scaling term for charges used in the exponential kernel of the ESP scoring function.
-    
+
     Returns
     -------
     loss : torch.Tensor (1,)
@@ -462,13 +462,13 @@ def objective_ROCS_esp_overlay(se3_params: torch.Tensor,
             raise ValueError(f'Since "fit_points" is a single point cloud, there should only be one set of "se3_params". {err_mssg}')
         elif len(fit_points.shape) == 3: # expect batch
             raise ValueError(f'Since "fit_points" is batched, there should be a row of "se3_params" for each batch. {err_mssg}')
-    
+
     # Validate correspondence of points and charges dimensions.
     if len(fit_points.shape) -1 != len(fit_charges.shape) and not (fit_points.shape[:-1] == fit_charges.shape): # Check for (B,M,3) vs (B,M) or (M,3) vs (M,)
         raise ValueError(f'fit_charges should correspond to fit_points point-wise. Instead these shapes were given: fit_points {fit_points.shape} and fit_charges {fit_charges.shape}')
     if len(ref_points.shape) - 1 != len(ref_charges.shape) and not (ref_points.shape[:-1] == ref_charges.shape): # Check for (B,N,3) vs (B,N) or (N,3) vs (N,)
         raise ValueError(f'ref_charges should correspond to ref_points point-wise. Instead these shapes were given: ref_points {ref_points.shape} and ref_charges {ref_charges.shape}')
-        
+
     se3_matrix = get_SE3_transform(se3_params)
     transformed_fit_points = apply_SE3_transform(fit_points, se3_matrix)
     score = get_overlap_esp(centers_1=ref_points,
@@ -477,7 +477,7 @@ def objective_ROCS_esp_overlay(se3_params: torch.Tensor,
                             charges_2=fit_charges,
                             alpha=alpha,
                             lam=lam)
-    
+
     # Single instance
     if len(se3_params.shape) == 1:
         return 1-score # maximize overlap
@@ -501,7 +501,7 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
     """
     Optimize alignment of fit_points with respect to ref_points using SE(3) transformations and
     maximizing electrostatic-weighted gaussian overlap score.
-    
+
     Parameters
     ----------
     ref_points : torch.Tensor (N,3)
@@ -551,7 +551,7 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
             fit_points=fit_points,
             trans_centers=trans_centers,
             num_repeats_per_trans=10)
-    
+
     current_num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
 
     # Create optimizer
@@ -560,7 +560,7 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
     # Optimization loop
     if verbose:
         print(f'Initial ESP similarity score: {get_overlap_esp(ref_points, fit_points, ref_charges, fit_charges, alpha, lam):.3f}')
-    
+
     last_loss = torch.tensor(float('inf'), device=ref_points.device) # Initialize with a high value
     counter = 0
 
@@ -595,7 +595,7 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
 
         if verbose and step % 100 == 0:
             print(f"Step {step}, Score: {1-loss.item():.3f}")
-        
+
         # early stopping
         if torch.abs(loss - last_loss) > 1e-5:
             counter = 0
@@ -608,14 +608,14 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
     optimized_se3_params = se3_params.detach()
     SE3_transform = get_SE3_transform(optimized_se3_params)
     aligned_points = apply_SE3_transform(fit_points_to_transform, SE3_transform)
-    
-    scores = get_overlap_esp(centers_1=ref_points,  
-                             charges_1=ref_charges, 
+
+    scores = get_overlap_esp(centers_1=ref_points,
+                             charges_1=ref_charges,
                              centers_2=aligned_points,
                              charges_2=fit_charges_for_objective,
                              alpha=alpha,
                              lam=lam)
-    
+
     if current_num_repeats == 1:
         if verbose:
             print(f'Optimized ESP similarity score: {scores.item():.3f}')
@@ -629,7 +629,7 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
         best_alignment = aligned_points.cpu()[best_idx]
         best_transform = SE3_transform.cpu()[best_idx]
         best_score = scores.cpu()[best_idx]
-        
+
     return best_alignment, best_transform, best_score
 
 
@@ -667,7 +667,7 @@ def objective_esp_combo_score_overlay(se3_params: torch.Tensor,
     transformed_fit_centers_w_H = apply_SE3_transform(fit_centers_w_H, se3_matrix)
     transformed_fit_centers = apply_SE3_transform(fit_centers, se3_matrix)
     transformed_fit_points = apply_SE3_transform(fit_points, se3_matrix)
-    
+
     score = esp_combo_score(centers_w_H_1=ref_centers_w_H,
                             centers_w_H_2=transformed_fit_centers_w_H,
                             centers_1=ref_centers,
@@ -725,7 +725,7 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
             fit_points=fit_points,
             trans_centers=trans_centers,
             num_repeats_per_trans=10)
-    
+
     current_num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
 
     optimizer = optim.Adam([se3_params], lr=lr)
@@ -750,7 +750,7 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
             esp_weight=esp_weight
         )
         print(f'Initial ESP-combo score: {init_score.item():.3f}')
-    
+
     last_loss = torch.tensor(float('inf'), device=ref_points.device)
     counter = 0
 
@@ -797,7 +797,7 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
 
         if verbose and step % 100 == 0:
             print(f"Step {step}, Score: {1-loss.item():.3f}")
-        
+
         if torch.abs(loss - last_loss) > 1e-5:
             counter = 0
         else:
@@ -813,7 +813,7 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
     aligned_fit_centers_w_H = apply_SE3_transform(fit_centers_w_H_obj, SE3_transform)
     aligned_fit_centers = apply_SE3_transform(fit_centers_obj, SE3_transform)
     aligned_fit_points = apply_SE3_transform(fit_points_obj, SE3_transform)
-    
+
     scores = esp_combo_score(
         centers_w_H_1=ref_centers_w_H,
         centers_w_H_2=aligned_fit_centers_w_H,
@@ -846,7 +846,7 @@ def optimize_esp_combo_score_overlay(ref_centers_w_H: torch.Tensor,
         best_alignment = aligned_fit_points.cpu()[best_idx]
         best_transform = SE3_transform.cpu()[best_idx]
         best_score = scores.cpu()[best_idx]
-        
+
     return best_alignment, best_transform, best_score
 
 
@@ -855,7 +855,7 @@ def crippen_align(ref_rdmol: Chem.rdchem.Mol,
                   ) -> Chem.rdchem.Mol:
     """
     Align fit_rdmol with respect to ref_rdmol with rdkit's Crippen Alignment algorithm.
-    
+
     Parameters
     ----------
     ref_rdmol : rdkit.Chem.rdchem.Mol
@@ -891,7 +891,7 @@ def objective_pharm_overlay(se3_params: torch.Tensor,
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
     If the inputs are batched, the loss is the average across the batch.
-    
+
     Parameters
     ----------
     se3_params : torch.Tensor (batch, 7) or (7,)
@@ -913,7 +913,7 @@ def objective_pharm_overlay(se3_params: torch.Tensor,
         Gaussian width parameter used in scoring function.
     lam : float
         Scaling term for charges used in the exponential kernel of the ESP scoring function.
-    
+
     Returns
     -------
     loss : torch.Tensor (1,)
@@ -926,7 +926,7 @@ def objective_pharm_overlay(se3_params: torch.Tensor,
 
         elif len(fit_anchors.shape) == 3: # expect batch
             raise ValueError(f'Since "fit_anchors" is batched, there should be a row of "se3_params" for each batch. {err_mssg}')
-        
+
     se3_matrix = get_SE3_transform(se3_params)
     fit_anchors = apply_SE3_transform(fit_anchors, se3_matrix)
     fit_vectors = apply_SO3_transform(fit_vectors, se3_matrix)
@@ -965,7 +965,7 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
     """
     Optimize alignment of fit_anchors with respect to ref_anchors using SE(3) transformations and
     maximizing electrostatic-weighted gaussian overlap score.
-    
+
     Parameters
     ----------
     ref_pharms : torch.Tensor (N,) Indices reflecting pharmacophore type of reference molecule
@@ -1067,7 +1067,7 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
         # Print progress
         if verbose and step % 100 == 0:
             print(f"Step {step}, Score: {1-loss.item()}")
-        
+
         # early stopping
         if abs(loss - last_loss) > 1e-5:
             counter = 0

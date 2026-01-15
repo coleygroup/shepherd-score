@@ -4,11 +4,9 @@ Evaluation pipeline classes for generated molecules.
 
 import sys
 import os
-from typing import Union, List, Tuple, Optional
+from typing import Tuple, Optional
 from pathlib import Path
-from tqdm import tqdm
 from copy import deepcopy
-import itertools
 from importlib.metadata import distributions
 
 import numpy as np
@@ -16,18 +14,18 @@ import pandas as pd
 from rdkit import Chem
 
 if any(d.metadata["Name"] == 'rdkit' for d in distributions()):
-    from rdkit.Contrib.SA_Score import sascorer
+    from rdkit.Contrib.SA_Score import sascorer # type: ignore
 else:
     sys.path.append(os.path.join(os.environ['CONDA_PREFIX'],'share','RDKit','Contrib'))
-    from SA_Score import sascorer
+    from SA_Score import sascorer # type: ignore
 
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
-from rdkit.DataStructs import TanimotoSimilarity
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos 
+from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
+from shepherd_score.score.constants import P_TYPES
 
 from shepherd_score.conformer_generation import optimize_conformer_with_xtb_from_xyz_block, single_point_xtb_from_xyz
 
@@ -42,6 +40,26 @@ morgan_fp_gen = rdFingerprintGenerator.GetMorganGenerator(radius=3, includeChira
 TMPDIR = Path('./')
 if 'TMPDIR' in os.environ:
     TMPDIR = Path(os.environ['TMPDIR'])
+
+
+def _clean_dummy_atom_arrays(
+    atomic_numbers: np.ndarray, positions: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Clean dummy atoms from the molecule.
+    """
+    non_dummy_inds = np.where(atomic_numbers != 0)[0]
+    return atomic_numbers[non_dummy_inds], positions[non_dummy_inds]
+
+
+def _clean_dummy_pharm_arrays(
+    pharm_types: np.ndarray, pharm_ancs: np.ndarray, pharm_vecs: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Clean dummy pharmacophores from the molecule.
+    """
+    non_dummy_inds = np.where(pharm_types != P_TYPES.index('Dummy'))[0]
+    return pharm_types[non_dummy_inds], pharm_ancs[non_dummy_inds], pharm_vecs[non_dummy_inds]
 
 
 class ConfEval:
@@ -108,6 +126,7 @@ class ConfEval:
         self.rmsd = None
 
         # 1. Converts coords + atom_ids -> xyz block
+        atoms, positions = _clean_dummy_atom_arrays(atoms, positions)
         # 2. Get mol from xyz block
         self.mol, self.charge, self.xyz_block = get_mol_from_atom_pos(atoms=atoms, positions=positions)
 
@@ -119,7 +138,7 @@ class ConfEval:
                                                                           num_cores=num_processes,
                                                                           temp_dir=TMPDIR)
             self.partial_charges = np.array(self.partial_charges)
-        except Exception as e:
+        except Exception:
             pass
         self.is_valid = self.mol is not None and self.partial_charges is not None
         if self.is_valid:
@@ -139,7 +158,7 @@ class ConfEval:
             # 5. Check if relaxed_structure is valid
             self.mol_post_opt = extract_mol_from_xyz_block(xyz_block=self.xyz_block_post_opt,
                                                            charge=self.charge)
-        except Exception as e:
+        except Exception:
             pass
 
         self.is_valid_post_opt = self.mol_post_opt is not None and self.partial_charges_post_opt is not None
@@ -173,7 +192,7 @@ class ConfEval:
             self.logP = Crippen.MolLogP(self.mol)
             self.fsp3 = Lipinski.FractionCSP3(self.mol)
             self.morgan_fp = morgan_fp_gen.GetFingerprint(mol=Chem.RemoveHs(self.mol))
-        
+
         # 10. 2D graph properties post optimization
         if self.is_valid_post_opt:
             self.SA_score_post_opt = sascorer.calculateScore(Chem.RemoveHs(self.mol_post_opt))
@@ -221,36 +240,48 @@ class ConsistencyEval(ConfEval):
                  probe_radius: float = 1.2,
                  num_processes: int = 1):
         """
-        Consistency evaluation class for jointly generated molecule and features
-        using 3D similarity scoring functions. Inherits from ConfEval so that it
+        Consistency evaluation class for jointly generated molecule and features.
+
+        Uses 3D similarity scoring functions. Inherits from ConfEval so that it
         can first run a conformer evaluation on the generated molecule.
 
-        Must supply `atoms` and `positions` AND at least one of the features necessary for
+        Must supply ``atoms`` and ``positions`` AND at least one of the features necessary for
         similarity scoring.
 
-        IMPORTANT ASSUMPTIONS
-        1. Gaussian width parameter (alpha) for surface similarity was fitted to a probe radius of
-            1.2 A.
-        2. ESP weighting parameter (lam) for electrostatic similarity is set to 0.3 which was
-            tested for assumption 1.
+        Notes
+        -----
+        Important assumptions:
 
-        Arguments
-        ---------
-        atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M)
+        - Gaussian width parameter (alpha) for surface similarity was fitted to a probe
+          radius of 1.2 A.
+        - ESP weighting parameter (lam) for electrostatic similarity is set to 0.3 which
+          was tested for the above assumption.
+
+        Parameters
+        ----------
+        atoms : np.ndarray
+            Array of shape (N,) of atomic numbers of the generated molecule or (N, M)
             one-hot encoding.
-        positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
-        surf_points : Optional[np.ndarray] (M,3) generated surface point cloud.
-        surf_esp : Optional[np.ndarray] (M,) generated electrostatic potential on surface.
-        pharm_feats : Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] where the arrays are as follows:
-            pharm_types : Optional[np.ndarray] (P,) type of pharmacophore defined by
-                shepherd_score.score.utils.constants.P_TYPES
-            pharm_ancs : Optional[np.ndarray] (P,3) anchor positions of pharmacophore
-            pharm_vecs : Optional[np.ndarray] (P,3) unit vector of each pharmacophore relative to anchor
-        pharm_multi_vector : Optional[bool] Use multiple vectors to represent Aro/HBA/HBD or single
-        solvent : str solvent type for xtb relaxation
-        probe_radius : Optional[float] radius of probe atom used to generate solvent accessible
-            surface. (default = 1.2) which is the VdW radius of a hydrogen
-        num_processes : int number of processors to use for xtb relaxation
+        positions : np.ndarray
+            Array of shape (N, 3) of coordinates for the generated molecule's atoms.
+        surf_points : np.ndarray, optional
+            Array of shape (M, 3) of generated surface point cloud.
+        surf_esp : np.ndarray, optional
+            Array of shape (M,) of generated electrostatic potential on surface.
+        pharm_feats : tuple, optional
+            Tuple of (pharm_types, pharm_ancs, pharm_vecs) where pharm_types is (P,)
+            type of pharmacophore defined by shepherd_score.score.constants.P_TYPES,
+            pharm_ancs is (P, 3) anchor positions, and pharm_vecs is (P, 3) unit vectors
+            relative to anchor.
+        pharm_multi_vector : bool, optional
+            Use multiple vectors to represent Aro/HBA/HBD or single.
+        solvent : str, optional
+            Solvent type for xTB relaxation.
+        probe_radius : float, optional
+            Radius of probe atom used to generate solvent accessible surface.
+            Default is 1.2 (vdW radius of hydrogen).
+        num_processes : int, optional
+            Number of processors to use for xTB relaxation. Default is 1.
         """
         if not (isinstance(atoms, np.ndarray) or isinstance(positions, np.ndarray)):
             raise ValueError(f"Must provide `atoms` and `positions` as np.ndarrays. Instead {type(atoms)} and {type(positions)} were given.")
@@ -273,7 +304,7 @@ class ConsistencyEval(ConfEval):
         self.sim_surf_consistent_relax_optimal = None
         self.sim_esp_consistent_relax_optimal = None
         self.sim_pharm_consistent_relax_optimal = None
-        
+
         if pharm_feats is not None:
             pharm_types, pharm_ancs, pharm_vecs = pharm_feats
             num_pharms = len(pharm_types)
@@ -282,6 +313,7 @@ class ConsistencyEval(ConfEval):
                 raise ValueError(
                     f'Provided pharmacophore features do not match dimensions: pharm_types {pharm_types.shape}, pharm_ancs {pharm_ancs.shape}, pharm_vecs {pharm_vecs.shape}'
                 )
+            pharm_types, pharm_ancs, pharm_vecs = _clean_dummy_pharm_arrays(pharm_types, pharm_ancs, pharm_vecs)
         else:
             pharm_types, pharm_ancs, pharm_vecs = None, None, None
 
@@ -292,8 +324,8 @@ class ConsistencyEval(ConfEval):
             print('WARNING: Generated pharmacophore features provided, but `pharm_multi_vector` is None.')
             print('         Pharmacophore similarity not computed.')
         if not isinstance(surf_points, np.ndarray) and not isinstance(surf_esp, np.ndarray) and not has_pharm_features:
-            raise ValueError(f'Must provide at least one of the generated representations: surface, electrostatics, or pharmacophores.')
-        
+            raise ValueError('Must provide at least one of the generated representations: surface, electrostatics, or pharmacophores.')
+
         # Scoring parameters
         self.num_surf_points = len(surf_points) if surf_points is not None else None
         # Assumes no radius scaling with probe_radius=1.2
@@ -352,7 +384,7 @@ class ConsistencyEval(ConfEval):
                 )
 
         # Consistency between generated molecule and relaxed structure and features
-        if self.is_valid and self.is_valid_post_opt: 
+        if self.is_valid and self.is_valid_post_opt:
             # Generate a Molecule object of relaxed structure
             self.molec_post_opt = Molecule(
                 self.mol_post_opt,
@@ -369,7 +401,7 @@ class ConsistencyEval(ConfEval):
                     self.molec_post_opt.surf_pos,
                     alpha=self.alpha
                 )
-            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:            
+            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:
                 self.sim_esp_consistent_relax = get_overlap_esp_np(
                     self.molec.surf_pos, self.molec_post_opt.surf_pos,
                     self.molec.surf_esp, self.molec_post_opt.surf_esp,
@@ -396,7 +428,7 @@ class ConsistencyEval(ConfEval):
                                               do_center=False)
             if self.molec_post_opt.surf_pos is not None:
                 self.sim_surf_consistent_relax_optimal = self._align_with_surface(mp_ref_and_relaxed=mp_ref_and_relaxed)
-            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:            
+            if self.molec_post_opt.surf_pos is not None and self.molec_post_opt.surf_esp is not None:
                 self.sim_esp_consistent_relax_optimal = self._align_with_esp(mp_ref_and_relaxed=mp_ref_and_relaxed)
             if isinstance(pharm_multi_vector, bool) and self.molec_post_opt.pharm_ancs is not None and self.molec.pharm_ancs is not None:
                 self.sim_pharm_consistent_relax_optimal = self._align_with_pharm(mp_ref_and_relaxed=mp_ref_and_relaxed)
@@ -410,7 +442,7 @@ class ConsistencyEval(ConfEval):
         -------
         float : Surface similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_surf(
+        _ = mp_ref_and_relaxed.align_with_surf(
             self.alpha,
             num_repeats=1,
             trans_init=False,
@@ -418,7 +450,7 @@ class ConsistencyEval(ConfEval):
         )
         surf_similarity = mp_ref_and_relaxed.sim_aligned_surf
         return float(surf_similarity)
-    
+
 
     def _align_with_esp(self, mp_ref_and_relaxed: MoleculePair) -> float:
         """
@@ -428,13 +460,13 @@ class ConsistencyEval(ConfEval):
         -------
         float : ESP similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_esp(
+        _ = mp_ref_and_relaxed.align_with_esp(
             self.alpha,
             lam=self.lam,
             num_repeats=1,
             trans_init=False,
             use_jax=False
-        ) 
+        )
         esp_similarity = mp_ref_and_relaxed.sim_aligned_esp
         return float(esp_similarity)
 
@@ -473,27 +505,41 @@ class ConditionalEval(ConfEval):
                  num_processes: int = 1):
         """
         Evaluation pipeline for conditionally-generated molecules.
-        Inherits from ConfEval so that it can first run a conformer evaluation on the generated
-        molecule.
 
-        IMPORTANT ASSUMPTIONS
-        1. Gaussian width parameter (alpha) for surface similarity assumes a probe radius of 1.2A.
-        2. ESP weighting parameter (lam) for electrostatic similarity is set to 0.3 which was
-           tested for assumption 1.
+        Inherits from ConfEval so that it can first run a conformer evaluation on the
+        generated molecule.
 
-        Arguments
-        ---------
-        ref_molec : Molecule object of reference/target molecule. Must contain the representation
-            that was used for conditioning
-        atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M) one-hot encoding.
-        positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
-        condition : str for which the molecule was conditioned on out of ('surface', 'esp', 'pharm',
-            'all'). Used for alignment. Choose 'esp' or 'all' if you want to compute ESP-aligned
-            scores for other profiles.
-        num_surf_points : int (default = 400) Number of surface points to sample for similiarity scoring.
-        pharm_multi_vector : Optional[bool] Use multiple vectors to represent Aro/HBA/HBD or single
-        solvent : str solvent type for xtb relaxation
-        num_processes : int number of processors to use for xtb relaxation
+        Notes
+        -----
+        Important assumptions:
+
+        - Gaussian width parameter (alpha) for surface similarity assumes a probe radius
+          of 1.2A.
+        - ESP weighting parameter (lam) for electrostatic similarity is set to 0.3 which
+          was tested for the above assumption.
+
+        Parameters
+        ----------
+        ref_molec : Molecule
+            Molecule object of reference/target molecule. Must contain the representation
+            that was used for conditioning.
+        atoms : np.ndarray
+            Array of shape (N,) of atomic numbers of the generated molecule or (N, M)
+            one-hot encoding.
+        positions : np.ndarray
+            Array of shape (N, 3) of coordinates for the generated molecule's atoms.
+        condition : str
+            Condition that the molecule was conditioned on. One of 'surface', 'esp',
+            'pharm', or 'all'. Used for alignment. Choose 'esp' or 'all' if you want
+            to compute ESP-aligned scores for other profiles.
+        num_surf_points : int, optional
+            Number of surface points to sample for similarity scoring. Default is 400.
+        pharm_multi_vector : bool, optional
+            Use multiple vectors to represent Aro/HBA/HBD or single.
+        solvent : str, optional
+            Solvent type for xTB relaxation.
+        num_processes : int, optional
+            Number of processors to use for xTB relaxation. Default is 1.
         """
         condition = condition.lower()
         self.condition = None
@@ -527,7 +573,7 @@ class ConditionalEval(ConfEval):
 
         self.sim_surf_target_relax_esp_aligned = None
         self.sim_pharm_target_relax_esp_aligned = None
-        
+
         # Scoring parameters
         self.num_surf_points = num_surf_points
         self.alpha = ALPHA(self.num_surf_points) # Fitted to probe_radius=1.2
@@ -655,7 +701,7 @@ class ConditionalEval(ConfEval):
         -------
         float : Surface similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_surf(
+        _ = mp_ref_and_relaxed.align_with_surf(
             self.alpha,
             num_repeats=1,
             trans_init=False,
@@ -664,7 +710,7 @@ class ConditionalEval(ConfEval):
 
         surf_similarity = mp_ref_and_relaxed.sim_aligned_surf
         return float(surf_similarity)
-    
+
 
     def _align_with_esp(self, mp_ref_and_relaxed: MoleculePair) -> float:
         """
@@ -674,13 +720,13 @@ class ConditionalEval(ConfEval):
         -------
         float : ESP similarity score of optimally aligned molecule.
         """
-        aligned_surf_points = mp_ref_and_relaxed.align_with_esp(
+        _ = mp_ref_and_relaxed.align_with_esp(
             self.alpha,
             lam=self.lam,
             num_repeats=1,
             trans_init=False,
             use_jax=False
-        ) 
+        )
         esp_similarity = mp_ref_and_relaxed.sim_aligned_esp
         return float(esp_similarity)
 

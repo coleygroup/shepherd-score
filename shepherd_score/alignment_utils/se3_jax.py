@@ -16,13 +16,13 @@ def quaternions_to_rotation_matrix_jax(quaternions: Array) -> Array:
     Converts quaternion to a rotation matrix. Jax implementation
     Adapted from PyTorch3D:
     https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/transforms/rotation_conversions.html#quaternion_to_matrix
-    
+
     Parameters
     ----------
     quaternions : Array (4,)
         Quaternion parameters in (r,i,j,k) order.
         set.
-    
+
     Returns
     -------
     rotation_matrix : Array (3,3)
@@ -52,14 +52,14 @@ def quaternions_to_rotation_matrix_jax(quaternions: Array) -> Array:
 def get_SE3_transform_jax(se3_params: Array) -> Array:
     """
     Constructs an SE(3) transformtion matrix from parameters. Jax implementation
-    
+
     Parameters
     ----------
     se3_params : Array (7,)
         Parameters for SE(3) transformation.
         The first 4 values in the last dimension are quaternions of form (r,i,j,k)
         and the last 3 values of the last dimension are the translations in (x,y,z).
-    
+
     Returns
     -------
     se3_matrix : Array (4, 4)
@@ -86,14 +86,14 @@ def apply_SE3_transform_jax(points: Array,
     """
     Takes a point cloud and transforms it according to the provided SE3 transformation matrix.
     Jax implementation.
-    
+
     Parameters
     ----------
     points : Array (N, 3)
         Set of coordinates representing a point cloud.
     SE3_transform : Array (4, 4)
         SE(3) transformation matrix.
-    
+
     Returns
     -------
     transformed_points : Array (N, 3)

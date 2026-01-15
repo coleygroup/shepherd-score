@@ -2,7 +2,6 @@
 Helper functions to convert different data types.
 """
 
-import os
 from typing import Union, Tuple, List
 from pathlib import Path
 
@@ -19,13 +18,13 @@ def write_xyz_file(atomic_numbers: np.ndarray,
                    ) -> str:
     """
     Writes an xyz file of an atomistic structure, given np.ndarray of atomic numbers and coordinates.
-    
+
     Arguments
     ---------
     atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
     positions : np.ndarray of shape (N,3) containing atomic coordinates
     path_to_file : str specifying file path -- e.g. path_to_file = 'examples/molecule.xyz'. If None, then no output file is written.
-    
+
     Returns
     -------
     str : xyz block
@@ -46,6 +45,48 @@ def write_xyz_file(atomic_numbers: np.ndarray,
     return xyz
 
 
+def write_xyz_file_with_dummy(
+    atomic_numbers: np.ndarray,
+    positions: np.ndarray,
+    path_to_file: Union[str, None] = None
+    ) -> Tuple[str, Union[np.ndarray, None]]:
+    """
+    Writes an xyz file of an atomistic structure, given np.ndarray of atomic numbers and coordinates.
+    Accounts for the presence of dummy atoms.
+
+    Arguments
+    ---------
+    atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
+    positions : np.ndarray of shape (N,3) containing atomic coordinates
+    path_to_file : str specifying file path -- e.g. path_to_file = 'examples/molecule.xyz'. If None, then no output file is written.
+
+    Returns
+    -------
+    Tuple
+        xyz : str : xyz block
+        dummy_atom_pos : np.ndarray : positions of dummy atoms
+    """
+    real_atom_inds = np.where(atomic_numbers != 0)[0]
+    N = len(real_atom_inds)
+
+    xyz = ''
+    xyz += f'{N}\n\n'
+    for i in real_atom_inds:
+        a = int(atomic_numbers[i])
+        p = positions[i]
+        xyz+= f'{rdkit.Chem.Atom(a).GetSymbol()} {p[0]:>15.8f} {p[1]:>15.8f} {p[2]:>15.8f}\n'
+    xyz+= '\n'
+
+    if path_to_file is not None:
+        with open(f'{path_to_file}', 'w') as f:
+            f.write(xyz)
+
+    dummy_atom_pos = None
+    if len(atomic_numbers) - len(real_atom_inds) > 0:
+        dummy_atom_pos = positions[np.where(atomic_numbers == 0)[0]]
+    return xyz, dummy_atom_pos
+
+
 def get_xyz_content(atomic_numbers: np.ndarray,
                     positions: np.ndarray
                     ) -> str:
@@ -54,6 +95,28 @@ def get_xyz_content(atomic_numbers: np.ndarray,
     """
     xyz = write_xyz_file(atomic_numbers, positions, path_to_file=None)
     return xyz
+
+
+def get_xyz_content_with_dummy(
+    atomic_numbers: np.ndarray,
+    positions: np.ndarray
+    ) -> Tuple[str, Union[np.ndarray, None]]:
+    """
+    Get the xyz block of an atomistic structure and remove dummy atoms from the xyz block.
+
+    Arguments
+    ---------
+    atomic_numbers : np.ndarray of shape (N,) containing atomic numbers
+    positions : np.ndarray of shape (N,3) containing atomic coordinates
+
+    Returns
+    -------
+    Tuple
+        xyz : str : xyz block (without dummy atoms)
+        dummy_atom_pos : np.ndarray : positions of dummy atoms
+    """
+    xyz, dummy_atom_pos = write_xyz_file_with_dummy(atomic_numbers, positions, path_to_file=None)
+    return xyz, dummy_atom_pos
 
 
 def extract_mol_from_xyz_block(xyz_block: str,
@@ -140,7 +203,7 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
     for charge in [0, 1, -1, 2, -2]:
         try:
             mol = extract_mol_from_xyz_block(xyz_block=xyz_block, charge=charge)
-        except Exception as e:
+        except Exception:
             mol = None
 
         if mol is not None:
@@ -187,15 +250,15 @@ def load_npz_to_df(npz_path: Union[Path, str],
     # Find the first non-zero dimensional array length (assumed to be N_i)
     length = None
     for key, arr in data.items():
-        
+
         if arr.ndim == 1 and len(arr) < 50:  # Non-zero dimensional array
             length = len(arr)
             break
-    
+
     # Ensure we have a valid length for the file
     if length is None:
         raise ValueError(f"No 1D array found in {npz_path}")
-    
+
     # Fill in the dictionary with arrays
     for key, arr in data.items():
         if key in ('ref_surf_resampling_scores', 'ref_surf_esp_resampling_scores', 'ref_mol_morgan_fp'):
@@ -206,14 +269,14 @@ def load_npz_to_df(npz_path: Union[Path, str],
             df_dict[key] = arr
         else:
             raise ValueError(f"Inconsistent array length for {key} in {npz_path}")
-    
+
     if file_id is not None:
         df_dict['file_id'] = np.repeat(file_id, length)
-    
+
     return pd.DataFrame(df_dict)
 
 
-def collate_npz_files(npz_files: List[Union[str, Path]], 
+def collate_npz_files(npz_files: List[Union[str, Path]],
                       include_file_id: bool
                       ) -> pd.DataFrame:
     """
@@ -224,7 +287,7 @@ def collate_npz_files(npz_files: List[Union[str, Path]],
     npz_files : list of file paths
     include_file_id : bool Whether to include a column called "file_id" that groups together
         rows that came from the same file.
-    
+
     Returns
     -------
     pd.DataFrame : rows are each sample, columns are each property, and it repeats any 0d arrays.
@@ -236,6 +299,6 @@ def collate_npz_files(npz_files: List[Union[str, Path]],
         else:
             df = load_npz_to_df(npz_file, file_id=None)
         dfs.append(df)
-    
+
     # Concatenate all dataframes
     return pd.concat(dfs, ignore_index=True)

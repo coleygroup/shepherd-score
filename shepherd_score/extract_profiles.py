@@ -1,6 +1,7 @@
 """
 Convenience module to hold functions used to extract interaction profiles.
 """
+# noqa: F401
 import numpy as np
 import open3d
 from rdkit import Chem
@@ -32,5 +33,5 @@ def get_electrostatic_potential(mol: Chem.Mol,
     # Calculate the potentials
     E_pot = np.dot(partial_charges, 1 / distances.T) * COULOMB_SCALING
     # Ensure that invalid distances (where distance is 0) are handled
-    E_pot[np.isinf(E_pot)] = 0    
+    E_pot[np.isinf(E_pot)] = 0
     return E_pot.astype(np.float32)

@@ -15,13 +15,13 @@ def quaternions_to_rotation_matrix_np(quaternions: np.ndarray) -> np.ndarray:
     Converts quaternion to a rotation matrix.
     Adapted from PyTorch3D:
     https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/transforms/rotation_conversions.html#quaternion_to_matrix
-    
+
     Parameters
     ----------
     quaternions : np.ndarray (4,)
         Quaternion parameters in (r,i,j,k) order.
         set.
-    
+
     Returns
     -------
     rotation_matrix : np.ndarray (3,3)
@@ -55,14 +55,14 @@ def get_SE3_transform_np(se3_params: np.ndarray
                          ) -> np.ndarray:
     """
     Constructs an SE(3) transformtion matrix from parameters. NumPy implementation
-    
+
     Parameters
     ----------
     se3_params : np.ndarray (7,)
         Parameters for SE(3) transformation.
         The first 4 values in the last dimension are quaternions of form (r,i,j,k)
         and the last 3 values of the last dimension are the translations in (x,y,z).
-    
+
     Returns
     -------
     se3_matrix : np.ndarray (4, 4)
@@ -92,14 +92,14 @@ def apply_SE3_transform_np(points: np.ndarray,
     """
     Takes a point cloud and transforms it according to the provided SE3 transformation matrix.
     NumPy implementation.
-    
+
     Parameters
     ----------
     points : np.ndarray (N, 3)
         Set of coordinates representing a point cloud.
     SE3_transform : np.ndarray (4, 4)
         SE(3) transformation matrix.
-    
+
     Returns
     -------
     transformed_points : np.ndarray (N, 3)
@@ -126,14 +126,14 @@ def apply_SO3_transform_np(points: np.ndarray,
     """
     Takes a point cloud and ONLY ROTATES it according to the provided SE3 transformation matrix.
     Supports batched and non-batched inputs.
-    
+
     Parameters
     ----------
     points : np.array (N, 3)
         Set of coordinates representing a point cloud.
     SE3_transform : (4, 4)
         SE(3) transformation matrix. If 'points' argument is batched, this one should be too.
-    
+
     Returns
     -------
     rotated_points : torch.Tensor (batch, N, 3) or (N, 3)

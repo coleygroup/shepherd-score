@@ -46,12 +46,12 @@ def _get_points_fibonacci_jax(num_samples: int) -> Array:
     Generate points on unit sphere using fibonacci approach. Jax implementation.
     Adapted from Morfeus:
      https://github.com/digital-chemistry-laboratory/morfeus/blob/main/morfeus/geometry.py
-    
+
     Parameters
     ----------
     num_samples : int
         Number of points to sample from the surface of a sphere
-    
+
     Returns
     -------
     Array (num_samples,3)
@@ -79,7 +79,7 @@ def _objective_ROCS_overlay_jax(se3_params: Array,
     """
     Objective function to optimize ROCS overlay.
     Jax implementation.
-    
+
     Parameters
     ----------
     se3_params : Array (7,)
@@ -92,12 +92,12 @@ def _objective_ROCS_overlay_jax(se3_params: Array,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     alpha : float
         Gaussian width parameter used in scoring function.
-    
+
     Returns
     -------
     loss : Array (1,)
         1 - Tanimoto score
-    """        
+    """
     se3_matrix = get_SE3_transform_jax(se3_params)
     fit_points = apply_SE3_transform_jax(fit_points, se3_matrix)
     score = get_overlap_jax(ref_points, fit_points, alpha)
@@ -113,7 +113,7 @@ def objective_ROCS_overlay_jax(se3_params: Array,
     """
     Objective function to optimize ROCS overlay.
     Jax implementation.
-    
+
     Parameters
     ----------
     se3_params : Array (batch, 7)
@@ -129,7 +129,7 @@ def objective_ROCS_overlay_jax(se3_params: Array,
         se3_params, try use jnp.tile(fit_points, (batch, 1, 1)).
     alpha : float
         Gaussian width parameter used in scoring function.
-    
+
     Returns
     -------
     loss : Array (1,)
@@ -140,7 +140,7 @@ def objective_ROCS_overlay_jax(se3_params: Array,
                                              fit_points,
                                              alpha)
     return 1 - scores.mean()
-    
+
 
 def _quats_from_fibo_jax(num_samples: int):
     """
@@ -163,7 +163,7 @@ def _quats_from_fibo_jax(num_samples: int):
     fibo = _get_points_fibonacci_jax(num_samples)
     unit_v = jnp.tile(jnp.array([1., 0., 0.]),
                       (num_samples, 1))
-    
+
     # quaternions = __quats_from_fibo_jax(unit_v, fibo)
     angles = vmap_angle_between_vecs_jax(unit_v, fibo)
     axes = rotation_axis_jax(unit_v, fibo)
@@ -232,9 +232,9 @@ def _initialize_se3_params_jax(ref_points: Array,
     """
     Initialize SE(3) parameter guesses. Jax implementation.
     SLOWER THAN TORCH.
-    
+
     First four values are the quaternion and the last three
-    are the translation. 
+    are the translation.
     All initial translations are to align fit_points COM with ref_points' COM.
 
     The first set corresponds to no rotation.
@@ -250,7 +250,7 @@ def _initialize_se3_params_jax(ref_points: Array,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     num_repeats : int (default=50)
         Number of different random initializations of SE(3) transformation parameters.
-    
+
     Returns
     -------
     se3_params : Array (num_repeats, 7)
@@ -278,7 +278,7 @@ def _initialize_se3_params_jax(ref_points: Array,
     T = vmap_apply_SE3_transform_jax(fit_points_com, SE3_rotation).squeeze()
     # Apply translation to center COMs by taking into account implicit translation done in PCA
     se3_params = se3_params.at[1:5, 4:].set(- T + ref_points_com)
-    # Do random rotations 
+    # Do random rotations
     if num_repeats > 5:
         if num_repeats == 50:
             # Precomputed se3_params from fibonacci sampling of 45
@@ -313,7 +313,7 @@ def _initialize_se3_params_jax(ref_points: Array,
 #     """
 #     fibo = _get_points_fibonacci(num_samples)
 #     unit_v = np.array([1., 0., 0.])
-    
+
 #     quaternions = np.zeros((num_samples, 4))
 #     for i in range(num_samples):
 #         angles = angle_between_vecs_np(unit_v, fibo[i])
@@ -337,7 +337,7 @@ def _initialize_se3_params_jax(ref_points: Array,
 
 #     # First guess keeps the original orientation but aligns the COMs
 #     se3_params = np.zeros((num_repeats, 7))
-#     se3_params[0, :4] = np.array([1.0, 0.0, 0.0, 0.0]) 
+#     se3_params[0, :4] = np.array([1.0, 0.0, 0.0, 0.0])
 #     se3_params[0, 4:] = -fit_points_com + ref_points_com
 
 #     pca_quats = quaternions_for_principal_component_alignment_np(ref_points, fit_points)
@@ -388,7 +388,7 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
 
     If num_repeats is 1, the initial guess for alignment is an identity rotation and aligned COMs.
     If num_repeats is 5 or greater, four initial guesses are aligned using principal components.
-    
+
     Parameters
     ----------
     ref_points : Array (N,3)
@@ -439,7 +439,7 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
             fit_points=torch.Tensor(np.array(fit_points)),
             trans_centers=torch.Tensor(np.array(trans_centers)),
             num_repeats_per_trans=10).detach()
-    
+
     if len(se3_params.shape) == 1:
         se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
@@ -458,7 +458,7 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
         loss, grads = jit_val_grad_obj_ROCS(se3_params, ref_points, fit_points, alpha)
         updates, opt_state = optimizer.update(grads, opt_state, se3_params)
         se3_params = optax.apply_updates(se3_params, updates)
-        
+
         # early stopping
         if abs(loss - last_loss) > 1e-5:
             counter = 0
@@ -501,7 +501,7 @@ def _objective_ROCS_esp_overlay_jax(se3_params: Array,
     """
     Objective function to optimize ROCS esp overlay.
     Jax implementation.
-    
+
     Parameters
     ----------
     se3_params : Array (7,)
@@ -514,12 +514,12 @@ def _objective_ROCS_esp_overlay_jax(se3_params: Array,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     alpha : float
         Gaussian width parameter used in scoring function.
-    
+
     Returns
     -------
     loss : Array (1,)
         1 - Tanimoto score
-    """        
+    """
     se3_matrix = get_SE3_transform_jax(se3_params)
     fit_points = apply_SE3_transform_jax(fit_points, se3_matrix)
     score = get_overlap_esp_jax(ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
@@ -537,8 +537,8 @@ def objective_ROCS_esp_overlay_jax(se3_params: Array,
                                    lam: float
                                    ) -> Array:
     """
-    Objective function to optimize ROCS esp overlay. 
-    
+    Objective function to optimize ROCS esp overlay.
+
     Parameters
     ----------
     se3_params : Array (batch, 7)
@@ -557,12 +557,12 @@ def objective_ROCS_esp_overlay_jax(se3_params: Array,
         Gaussian width parameter used in scoring function.
     lam : float
         Scaling term for charges used in the exponential kernel of the ESP scoring function.
-    
+
     Returns
     -------
     loss : Array (1,)
         1 - mean(ESP Tanimoto score).
-    """        
+    """
     scores = batched_obj_ROCS_esp_overlay_helper(se3_params, ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
     return 1-scores.mean()
 
@@ -584,7 +584,7 @@ def optimize_ROCS_esp_overlay_jax(ref_points: Array,
     """
     Optimize alignment of fit_points with respect to ref_points using SE(3) transformations and
     maximizing electrostatic-weighted gaussian overlap score.
-    
+
     Parameters
     ----------
     ref_points : Array (N,3)
@@ -641,7 +641,7 @@ def optimize_ROCS_esp_overlay_jax(ref_points: Array,
             fit_points=torch.Tensor(np.array(fit_points)),
             trans_centers=torch.Tensor(np.array(trans_centers)),
             num_repeats_per_trans=10).detach()
-    
+
     if len(se3_params.shape) == 1:
         se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
@@ -659,7 +659,7 @@ def optimize_ROCS_esp_overlay_jax(ref_points: Array,
         loss, grads = jit_val_grad_obj_ROCS_esp(se3_params, ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
         updates, opt_state = optimizer.update(grads, opt_state, se3_params)
         se3_params = optax.apply_updates(se3_params, updates)
-        
+
         # early stopping
         if abs(loss - last_loss) > 1e-5:
             counter = 0
@@ -822,7 +822,7 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
     """
     Optimize alignment of fit_points with respect to ref_points using SE(3) transformations and
     maximizing ShaEP score.
-    
+
     Parameters
     ----------
     ref_centers_w_H : Array (N + n_H, 3)
@@ -834,19 +834,19 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
         Coordinates of points for reference molecule used to compute shape similarity.
         Use atom centers for volumentric similarity. Use surface centers for surface similarity.
         Same for fit_centers except (M, 3) or (m_surf, 3).
-    
+
     ref_points : Array (n_surf, 3)
         Coordinates of surface points for referencemolecule.
         Same for fit_points except (m_surf, 3).
-    
+
     ref_partial_charges : Array (N + n_H,)
         Partial charges corresponding to the atoms in ref_centers_w_H.
         Same for fit_partial_charges except (M + m_H,).
-    
+
     ref_surf_esp : Array (n_surf,)
         The electrostatic potential calculated at each surface point (ref_points).
         Same for fit_surf_esp except (m_surf,)
-    
+
     ref_radii : Array (N + n_H,)
         vdW radii corresponding to the atoms in centers_w_H_1 (angstroms)
         Same for fit_radii except (M + m_H,)
@@ -863,7 +863,7 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
         Surface points found within vdW radii + probe radius will be masked out. Surface generation
         uses a probe radius of 1.2 (radius of hydrogen) so we use a slightly lower radius for be
         more tolerant.
-    
+
     esp_weight : float (default = 0.5)
         Weight to be placed on electrostatic similarity with respect to shape similarity.
         0 = only shape similarity
@@ -915,11 +915,11 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
             fit_points=torch.Tensor(np.array(fit_points)),
             trans_centers=torch.Tensor(np.array(trans_centers)),
             num_repeats_per_trans=10).detach()
-    
+
     if len(se3_params.shape) == 1:
         se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
-    
+
     ref_centers_w_H = convert_to_jnp_array(ref_centers_w_H)
     fit_centers_w_H = convert_to_jnp_array(fit_centers_w_H)
     ref_centers = convert_to_jnp_array(ref_centers)
@@ -978,7 +978,7 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
                                                                esp_weight)
         updates, opt_state = optimizer.update(grads, opt_state, se3_params)
         se3_params = optax.apply_updates(se3_params, updates)
-        
+
         # early stopping
         if abs(loss - last_loss) > 1e-5:
             counter = 0
@@ -1129,7 +1129,7 @@ def optimize_pharm_overlay_jax(ref_pharms: Array,
     if verbose:
         init_score = get_overlap_pharm_jax(ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors, similarity, extended_points, only_extended)
         print(f'Initial pharmacophore similarity score: {init_score:.3f}')
-    
+
     last_loss = 1
     counter = 0
 
@@ -1145,7 +1145,7 @@ def optimize_pharm_overlay_jax(ref_pharms: Array,
         last_loss = loss
         if counter > 10:
             break
-    
+
     SE3_transform = vmap_get_SE3_transform_jax(se3_params)
     aligned_anchors = vmap_apply_SE3_transform_jax(fit_anchors, SE3_transform)
     aligned_vectors = vmap_apply_SO3_transform_jax(fit_vectors, SE3_transform)
@@ -1169,5 +1169,5 @@ def optimize_pharm_overlay_jax(ref_pharms: Array,
         best_aligned_vectors = aligned_vectors[best_idx]
         best_transform = SE3_transform[best_idx]
         best_score = scores[best_idx]
-        
+
     return best_alignment, best_aligned_vectors, best_transform, best_score

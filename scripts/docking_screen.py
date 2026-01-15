@@ -42,7 +42,7 @@ if __name__=='__main__':
                                           protonate=False,
                                           save_poses_dir_path=None,
                                           verbose=True)
-        
+
         smi_energies = [subset_smiles, [float(e) for e in energies]]
 
         # Save smiles and attributed energies

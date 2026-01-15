@@ -292,7 +292,7 @@ def get_volume_overlap_score_extended_points(ptype_str: str,
                                              ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Score both the anchor and extended point volume overlap instead of a vector similarity.
-    """    
+    """
     ptype_str = ptype_str.lower()
     ptype_idx = P_TYPES_LWRCASE.index(ptype_str)
     # single instance
@@ -384,39 +384,47 @@ def get_overlap_pharm(ptype_1: torch.Tensor,
                       only_extended: bool = False
                       ) -> torch.Tensor:
     """
-    Computes pharmacophore score.
-    Accepts batching, but only if they are the same two molecules (or have the same number of features)
-     --> Specifically used for alignment.
+    Compute pharmacophore score.
 
-    Arguments
-    ---------
-    ptype_1 : torch.Tensor (N,) or (B,N)
-        Indices specifying the pharmacophore type based on order of P_TYPES
-    ptype_2 : torch.Tensor (M,) or (B,M)
-        Indices specifying the pharmacophore type based on order of P_TYPES
-    anchors_1 : torch.Tensor (N,3) or (B,N,3)
-        Coordinates for the anchor points of each pharmacophore of molecule 1
-    anchors_2 : torch.Tensor (M,3) or (B,M,3)
-        Coordinates for the anchor points of each pharmacophore of molecule 2
-    vectors_1 : torch.Tensor (N,3) or (B,N,3)
-        Relative unit vectors of each pharmacophore of molecule 1
-    vectors_2 : torch.Tensor (M,3) or (B,M,3)
-        Relative unit vectors of each pharmacophore of molecule 2
-    similarity : str
-        Specifies what similarity function to use.
-        'tanimoto' -- symmetric scoring function
-        'tversky' -- asymmetric -> Uses OpenEye's formulation 95% normalization by molec 1
-        'tversky_ref' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 1.
-        'tversky_fit' -- asymmetric -> Uses Pharao's formulation 100% normalization by molec 2.
-    extended_points : bool
+    Accepts batching, but only if they are the same two molecules (or have the same
+    number of features). Specifically used for alignment.
+
+    Parameters
+    ----------
+    ptype_1 : torch.Tensor
+        Indices specifying the pharmacophore type based on order of P_TYPES,
+        shape (N,) or (B, N).
+    ptype_2 : torch.Tensor
+        Indices specifying the pharmacophore type based on order of P_TYPES,
+        shape (M,) or (B, M).
+    anchors_1 : torch.Tensor
+        Coordinates for the anchor points of each pharmacophore of molecule 1,
+        shape (N, 3) or (B, N, 3).
+    anchors_2 : torch.Tensor
+        Coordinates for the anchor points of each pharmacophore of molecule 2,
+        shape (M, 3) or (B, M, 3).
+    vectors_1 : torch.Tensor
+        Relative unit vectors of each pharmacophore of molecule 1,
+        shape (N, 3) or (B, N, 3).
+    vectors_2 : torch.Tensor
+        Relative unit vectors of each pharmacophore of molecule 2,
+        shape (M, 3) or (B, M, 3).
+    similarity : str, optional
+        Specifies what similarity function to use. Options are:
+        'tanimoto' (symmetric), 'tversky' (OpenEye's 95% normalization by mol 1),
+        'tversky_ref' (Pharao's 100% normalization by mol 1),
+        'tversky_fit' (Pharao's 100% normalization by mol 2). Default is 'tanimoto'.
+    extended_points : bool, optional
         Whether to score HBA/HBD with gaussian overlaps of extended points.
-    only_extended : bool
-        When `extended_points` is True, decide whether to only score the extended points (ignore
-         anchor overlaps)
+        Default is ``False``.
+    only_extended : bool, optional
+        When ``extended_points`` is ``True``, decide whether to only score the
+        extended points (ignore anchor overlaps). Default is ``False``.
 
     Returns
     -------
-    torch.Tensor (1,) or (B,) : score(s)
+    torch.Tensor
+        Score(s) with shape (1,) or (B,).
     """
     if isinstance(ptype_1, np.ndarray):
         ptype_1 = torch.Tensor(ptype_1)
@@ -441,7 +449,7 @@ def get_overlap_pharm(ptype_1: torch.Tensor,
     elif similarity.lower() == 'tversky_fit':
         similarity_func = partial(tversky_func, sigma=0.05)
     else:
-        raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
+        raise ValueError('Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
     # Determine if single instance or batched
     if len(ptype_1.shape) == 1 and len(ptype_2.shape) == 1:
@@ -657,7 +665,7 @@ def get_overlap_pharm(ptype_1: torch.Tensor,
         overlap += VAB
         ref_overlap += VAA
         fit_overlap += VBB
-    
+
     # Halogen
     if 'halogen' in ptype_key2ind:
         if batched:
@@ -712,7 +720,7 @@ def get_pharm_combo_score(centers_1: torch.Tensor,
     elif similarity.lower() == 'tversky_fit':
         similarity_func = partial(tversky_func, sigma=0.05)
     else:
-        raise ValueError(f'Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
+        raise ValueError('Argument `similarity` must be one of (tanimoto, tversky, tversky_ref, tversky_fit).')
 
     # Pharmacophore scoring
     pharm_score = get_overlap_pharm(ptype_1=ptype_1,
@@ -724,7 +732,7 @@ def get_pharm_combo_score(centers_1: torch.Tensor,
                                     similarity=similarity,
                                     extended_points=extended_points,
                                     only_extended=only_extended)
-    
+
     # Shape scoring
     VAB = VAB_2nd_order(centers_1=centers_1,
                         centers_2=centers_2,
