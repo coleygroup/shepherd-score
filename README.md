@@ -4,7 +4,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
 [![Documentation Status](https://readthedocs.org/projects/shepherd-score/badge/?version=latest)](https://shepherd-score.readthedocs.io/en/latest/?badge=latest)
 
- 📄 **[Paper](https://arxiv.org/abs/2411.04130)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
+ 📄 **[Paper](https://arxiv.org/abs/2411.04130)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/en/latest/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
 
 
 This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup> and other generative models.
@@ -30,7 +30,7 @@ The formulation of the interaction profile representation, scoring, alignment, a
 
 ## Documentation
 
-Full documentation is available at [shepherd-score.readthedocs.io](https://shepherd-score.readthedocs.io/).
+Full documentation is available at [shepherd-score.readthedocs.io](https://shepherd-score.readthedocs.io/en/latest/).
 
 
 ## File Structure
