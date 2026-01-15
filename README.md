@@ -1,4 +1,12 @@
 # *ShEPhERD* Scoring Functions
+
+[![PyPI version](https://img.shields.io/pypi/v/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
+[![Python versions](https://img.shields.io/pypi/pyversions/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
+[![Documentation Status](https://readthedocs.org/projects/shepherd-score/badge/?version=latest)](https://shepherd-score.readthedocs.io/en/latest/?badge=latest)
+
+ 📄 **[Paper](https://arxiv.org/abs/2411.04130)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
+
+
 This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup> and other generative models.
 
 The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our preprint [*ShEPhERD*: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design](https://arxiv.org/abs/2411.04130). The diffusion model itself is found in a *separate* repository: [https://github.com/coleygroup/shepherd](https://github.com/coleygroup/shepherd).
@@ -11,13 +19,18 @@ The formulation of the interaction profile representation, scoring, alignment, a
 <sub><sup>1</sup> *ShEPhERD*: **S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion</sub>
 
 ## Table of Contents
-1. [File Structure](#file-structure)
-2. [Installation](#installation)
-3. [Requirements](#requirements)
-4. [Usage](#how-to-use)
-5. [Scoring and Alignment Examples](#scoring-and-alignment-examples)
-6. [Evaluation Examples and Scripts](#evaluation-examples-and-scripts)
-7. [Data](#data)
+1. [Documentation](#documentation)
+2. [File Structure](#file-structure)
+3. [Installation](#installation)
+4. [Requirements](#requirements)
+5. [Usage](#how-to-use)
+6. [Scoring and Alignment Examples](#scoring-and-alignment-examples)
+7. [Evaluation Examples and Scripts](#evaluation-examples-and-scripts)
+8. [Data](#data)
+
+## Documentation
+
+Full documentation is available at [shepherd-score.readthedocs.io](https://shepherd-score.readthedocs.io/).
 
 
 ## File Structure

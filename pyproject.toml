@@ -48,7 +48,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/kentoabeywardane/shepherd-score"
 Repository = "https://github.com/kentoabeywardane/shepherd-score"
-Documentation = "https://github.com/kentoabeywardane/shepherd-score"
+Documentation = "https://shepherd-score.readthedocs.io"
 "Bug Tracker" = "https://github.com/kentoabeywardane/shepherd-score/issues"
 
 [project.optional-dependencies]
@@ -59,8 +59,10 @@ dev = [
     "mypy",
 ]
 docs = [
-    "sphinx",
-    "sphinx-rtd-theme",
+    "sphinx>=7.0",
+    "sphinx-book-theme>=1.0",
+    "sphinx-copybutton>=0.5",
+    "myst-nb>=1.0",
 ]
 jax = [
     "jax>=0.4.20",
@@ -83,7 +85,7 @@ all = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["shepherd_score*"]
-exclude = ["tests*", "examples*", "scripts*"]
+exclude = ["tests*", "examples*", "scripts*", "docs*", ".github*"]
 
 [tool.setuptools.package-data]
 "shepherd_score" = ["*.yml", "*.yaml", "*.json", "*.txt", "*.fdef", "*.pdbqt"]
@@ -109,7 +111,7 @@ select = [
     "F",      # Pyflakes
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
+    "E501",   # line too long
     "B008",   # function call in default argument
     "SIM108", # ternary operator
     "F401",   # unused imports
