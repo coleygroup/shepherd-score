@@ -1,10 +1,14 @@
 # *ShEPhERD* Scoring Functions
 
+<div align="center">
+
 [![PyPI version](https://img.shields.io/pypi/v/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
 [![Python versions](https://img.shields.io/pypi/pyversions/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
 [![Documentation Status](https://readthedocs.org/projects/shepherd-score/badge/?version=latest)](https://shepherd-score.readthedocs.io/en/latest/?badge=latest)
 
- 📄 **[Paper](https://arxiv.org/abs/2411.04130)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/en/latest/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
+📄 **[Paper](https://arxiv.org/abs/2411.04130)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/en/latest/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
+
+</div>
 
 
 This repository contains the code for **generating/optimizing conformers**, **extracting interaction profiles**, **aligning interaction profiles**, and **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup> and other generative models.
@@ -37,32 +41,32 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 ```
 .
 ├── shepherd_score/
-│   ├── alignment_utils/                    # Alignment and rigid transformations tools
-│   ├── evaluations/                        # Evaluation suite
-│   │   ├── pdbs/                           # PDBQT files used in *ShEPhERD* manuscript
-│   │   ├── utils/                          # Converting data types and others
+│   ├── alignment_utils/                  # Alignment and rigid transformations tools
+│   ├── evaluations/                      # Evaluation suite
+│   │   ├── pdbs/                         # PDBQT files used in *ShEPhERD* manuscript
+│   │   ├── utils/                        # Converting data types and others
 │   │   ├── docking
-│   │   │   ├── docking.py                  # Docking classes
-│   │   │   └── pipelines.py                # Docking evaluation pipelines
-│   │   └── evaluate/                       # Generated conformer evaluation pipelines
-│   │       ├── evals.py                    # Individual evaluation classes
-│   │       └── pipelines.py                # Evaluation pipeline classes
-│   ├── pharm_utils/                        # Pharmacophore definitions
-│   ├── protonation/                        # Functions for protonation
-│   ├── score/                              # Scoring related functions and constants
+│   │   │   ├── docking.py                # Docking classes
+│   │   │   └── pipelines.py              # Docking evaluation pipelines
+│   │   └── evaluate/                     # Generated conformer evaluation pipelines
+│   │       ├── evals.py                  # Individual evaluation classes
+│   │       └── pipelines.py              # Evaluation pipeline classes
+│   ├── pharm_utils/                      # Pharmacophore definitions
+│   ├── protonation/                      # Functions for protonation
+│   ├── score/                            # Scoring related functions and constants
 │   │   ├── constants.py
 │   │   ├── electrostatic_scoring.py
 │   │   ├── gaussian_overlap.py
 │   │   └── pharmacophore_scoring.py
 │   ├── alignment.py
-│   ├── conformer_generation.py             # RDKit and xtb related functions for conformers
-│   ├── container.py                        # Molecule and MoleculePair classes
-│   ├── extract_profiles.py                 # Functions to extract interaction profiles
+│   ├── conformer_generation.py           # RDKit and xtb related functions for conformers
+│   ├── container.py                      # Molecule and MoleculePair classes
+│   ├── extract_profiles.py               # Functions to extract interaction profiles
 │   ├── generate_point_cloud.py
-│   ├── objective.py                        # Objective function used for REINVENT
-│   └── visualize.py                        # Visualization tools
-├── scripts/                                # Scripts for running evaluations
-├── examples/                               # Jupyter notebook tutorials/examples 
+│   ├── objective.py                      # Objective function used for REINVENT
+│   └── visualize.py                      # Visualization tools
+├── scripts/                              # Scripts for running evaluations
+├── examples/                             # Jupyter notebook tutorials/examples 
 ├── tests/
 └── README.md
 ```
