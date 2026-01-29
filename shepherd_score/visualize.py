@@ -528,6 +528,59 @@ def chimera_from_sample(generated_sample: dict,
             print(f'Wrote pharmacophore file to {path_ / f"{mol_id}_x4.bild"}')
 
 
+def chimera_from_molecule(molec: Molecule,
+                          mol_id: str | int,
+                          save_dir: str,
+                          esp_norm_factor: float = 2.0,
+                          verbose: bool = True,
+                          ) -> None:
+    """
+    Create SDF file for atoms (x1_{mol_id}.sdf) and BILD file for pharmacophores (x4_{mol_id}.bild)
+    from a Molecule object.
+    Drag and drop into ChimeraX to visualize.
+    """
+    path_ = Path(save_dir)
+    if not path_.is_dir():
+        path_.mkdir(parents=True, exist_ok=True)
+
+    xyz_block, dummy_atom_pos = get_xyz_content_with_dummy(
+        atomic_numbers=np.array([a.GetAtomicNum() for a in molec.mol.GetAtoms()]),
+        positions=molec.mol.GetConformer().GetPositions()
+    )
+
+    if xyz_block is not None:
+        with open(path_ / f'{mol_id}_x1.xyz', 'w') as f:
+            f.write(xyz_block)
+        if verbose:
+            print(f'Wrote xyz file to {path_ / f"{mol_id}_x1.xyz"}')
+
+    if dummy_atom_pos is not None:
+        if molec.pharm_ancs is not None:
+            molec.pharm_ancs = np.concatenate([dummy_atom_pos, molec.pharm_ancs], axis=0)
+        else:
+            molec.pharm_ancs = dummy_atom_pos
+        if molec.pharm_vecs is not None:
+            molec.pharm_vecs = np.concatenate([np.zeros((len(dummy_atom_pos), 3)), molec.pharm_vecs], axis=0)
+        else:
+            molec.pharm_vecs = np.zeros((len(dummy_atom_pos), 3))
+
+    if molec.surf_pos is not None and molec.surf_esp is not None:
+        esp_bild = _chimera_shape_esp_file(molec.surf_pos, molec.surf_esp, norm_factor=esp_norm_factor)
+        with open(path_ / f'{mol_id}_x3.bild', 'w') as f:
+            f.write(esp_bild)
+        if verbose:
+            print(f'Wrote ESP file to {path_ / f"{mol_id}_x3.bild"}')
+
+    if molec.pharm_types is not None and molec.pharm_ancs is not None and molec.pharm_vecs is not None:
+        molec.pharm_types = molec.pharm_types + 1 # Accomodate virtual node at idx=0
+        pharm_bild = _chimera_pharmacophore_file(molec.pharm_types, molec.pharm_ancs, molec.pharm_vecs)
+        with open(path_ / f'{mol_id}_x4.bild', 'w') as f:
+            f.write(pharm_bild)
+        if verbose:
+            print(f'Wrote pharmacophore file to {path_ / f"{mol_id}_x4.bild"}')
+
+
+
 def draw_2d_valid(ref_mol: Chem.Mol,
                   mols: List[Chem.Mol | None],
                   mols_per_row: int = 5,

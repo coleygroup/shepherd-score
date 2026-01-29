@@ -150,8 +150,10 @@ def common_pharm_data():
     num_pharm_ref = 10
     num_pharm_fit = 8
 
-    ptype_1_torch = torch.randint(0, len(P_TYPES), (num_pharm_ref,), dtype=torch.long)
-    ptype_2_torch = torch.randint(0, len(P_TYPES), (num_pharm_fit,), dtype=torch.long)
+    num_pharm = len([p for p in P_TYPES if p != 'Dummy'])
+
+    ptype_1_torch = torch.randint(0, num_pharm, (num_pharm_ref,), dtype=torch.long)
+    ptype_2_torch = torch.randint(0, num_pharm, (num_pharm_fit,), dtype=torch.long)
 
     anchors_1_torch = torch.rand(num_pharm_ref, 3, dtype=DEFAULT_DTYPE) * 10
     anchors_2_torch = torch.rand(num_pharm_fit, 3, dtype=DEFAULT_DTYPE) * 10

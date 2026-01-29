@@ -1,11 +1,13 @@
 """
 Alignment implementation in Jax.
 """
-from typing import Union, List, Tuple
-import numpy as np
+from typing import Union, List, Tuple, Callable
+from functools import partial
 
+import numpy as np
+import jax
 import jax.numpy as jnp
-from jax import vmap, jit, value_and_grad, Array
+from jax import vmap, jit, value_and_grad, Array, lax
 import optax
 
 import torch
@@ -26,8 +28,8 @@ vmap_esp_combo_score = vmap(esp_combo_score_jax, (None, 0,
                                                   None, None,
                                                   None, None,
                                                   None, None, None, None))
-vmap_apply_SE3_transform_jax = vmap(apply_SE3_transform_jax, (None, 0))
-vmap_get_SE3_transform_jax = vmap(get_SE3_transform_jax, 0)
+vmap_apply_SE3_transform_jax = jit(vmap(apply_SE3_transform_jax, (None, 0)))
+vmap_get_SE3_transform_jax = jit(vmap(get_SE3_transform_jax, 0))
 
 
 def apply_SO3_transform_jax(vectors: Array, se3_matrix: Array) -> Array:
@@ -373,6 +375,66 @@ def _initialize_se3_params_jax(ref_points: Array,
 
 jit_val_grad_obj_ROCS = jit(value_and_grad(objective_ROCS_overlay_jax))
 
+@partial(jax.jit, static_argnames=['val_and_grad_fn', 'max_num_steps'])
+def _generic_optimize_loop(
+    se3_params: jnp.ndarray,
+    data_args: Tuple,
+    val_and_grad_fn: Callable,
+    lr: float,
+    max_num_steps: int
+):
+    """
+    Generic optimization loop.
+
+    Parameters
+    ----------
+    se3_params: Array (num_repeats, 7)
+        Initial SE3 parameters.
+    data_args: Tuple
+        A tuple containing all array arguments (points, charges, etc.)
+        required by the val_and_grad_fn.
+    val_and_grad_fn: Callable
+        The JIT-compiled value_and_grad function.
+        Must accept (params, *data_args).
+    lr: float
+        Learning rate.
+    max_num_steps: int
+        Max steps.
+
+    Returns
+    -------
+    se3_params_opt: Array (num_repeats, 7)
+        Optimized SE3 parameters.
+    """
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(se3_params)
+
+    # Loop state: (params, opt_state, last_loss, counter, step_index)
+    init_val = (se3_params, opt_state, jnp.array(1.0), 0, 0)
+
+    def early_stop_cond(val):
+        _, _, _, counter, step = val
+        return (step < max_num_steps) & (counter <= 10)
+
+    def optim_step(val):
+        params, state, last_loss, counter, step = val
+
+        loss, grads = val_and_grad_fn(params, *data_args)
+
+        updates, new_state = optimizer.update(grads, state, params)
+        new_params = optax.apply_updates(params, updates)
+
+        delta = jnp.abs(loss - last_loss)
+        new_counter = jnp.where(delta > 1e-5, 0, counter + 1)
+
+        return (new_params, new_state, loss, new_counter, step + 1)
+
+    final_val = lax.while_loop(early_stop_cond, optim_step, init_val)
+    se3_params_opt, _, _, _, _ = final_val
+
+    return se3_params_opt
+
+
 def optimize_ROCS_overlay_jax(ref_points: Array,
                               fit_points: Array,
                               alpha: float,
@@ -441,53 +503,32 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
             num_repeats_per_trans=10).detach()
 
     if len(se3_params.shape) == 1:
-        se3_params.unsqueeze(0)
+        se3_params = se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
+    data_args = (ref_points, fit_points, alpha)
 
-    # Create optimizer
-    optimizer = optax.adam(learning_rate=lr)
-    opt_state = optimizer.init(se3_params)
-
-    # Optimization loop
     if verbose:
-        print(f'Initial shape similarity score: {get_overlap_jax(ref_points, fit_points, alpha):.3f}')
-    last_loss = 1
-    counter = 0
-    for step in range(max_num_steps):
-        # Forward pass: compute objective function and gradients
-        loss, grads = jit_val_grad_obj_ROCS(se3_params, ref_points, fit_points, alpha)
-        updates, opt_state = optimizer.update(grads, opt_state, se3_params)
-        se3_params = optax.apply_updates(se3_params, updates)
+        print(f'Initial score: {get_overlap_jax(ref_points, fit_points, alpha):.3f}')
 
-        # early stopping
-        if abs(loss - last_loss) > 1e-5:
-            counter = 0
-        else:
-            counter += 1
-        last_loss = loss
-        if counter > 10:
-            break
+    se3_opt = _generic_optimize_loop(
+        se3_params,
+        data_args,
+        jit_val_grad_obj_ROCS,
+        lr,
+        max_num_steps
+    )
 
-    # Extract optimized SE(3) parameters
-    SE3_transform = vmap_get_SE3_transform_jax(se3_params)
+    SE3_transform = vmap_get_SE3_transform_jax(se3_opt)
     aligned_points = vmap_apply_SE3_transform_jax(fit_points, SE3_transform)
-    scores = vmap_get_overlap_jax(ref_points,
-                                  aligned_points,
-                                  alpha)
-    if num_repeats == 1:
-        if verbose:
-            print(f'Optimized shape similarity score: {scores:.3f}')
-        best_alignment = aligned_points
-        best_transform = SE3_transform
-        best_score = scores
-    else:
-        if verbose:
-            print(f'Optimized shape similarity score -- max: {scores.max():3f} | mean: {scores.mean():.3f} | min: {scores.min():3f}')
-        best_idx = jnp.argmax(scores)
-        best_alignment = aligned_points.at[best_idx].get()
-        best_transform = SE3_transform.at[best_idx].get()
-        best_score = scores.at[best_idx].get()
-    return best_alignment, best_transform, best_score
+    scores = vmap_get_overlap_jax(ref_points, aligned_points, alpha)
+
+    if verbose:
+         print(f'Optimized score max: {scores.max():.3f} | mean: {scores.mean():.3f}')
+
+    best_idx = jnp.argmax(scores)
+    return (aligned_points.at[best_idx].get(),
+            SE3_transform.at[best_idx].get(),
+            scores.at[best_idx].get())
 
 
 def _objective_ROCS_esp_overlay_jax(se3_params: Array,
@@ -643,55 +684,25 @@ def optimize_ROCS_esp_overlay_jax(ref_points: Array,
             num_repeats_per_trans=10).detach()
 
     if len(se3_params.shape) == 1:
-        se3_params.unsqueeze(0)
+        se3_params = se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
+    data_args = (ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
 
-    # Create optimizer
-    optimizer = optax.adam(learning_rate=lr)
-    opt_state = optimizer.init(se3_params)
-
-    # Optimization loop
-    if verbose:
-        print(f'Initial shape similarity score: {get_overlap_esp_jax(ref_points, fit_points, ref_charges, fit_charges, alpha, lam):.3f}')
-    last_loss = 1
-    counter = 0
-    for step in range(max_num_steps):
-        loss, grads = jit_val_grad_obj_ROCS_esp(se3_params, ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
-        updates, opt_state = optimizer.update(grads, opt_state, se3_params)
-        se3_params = optax.apply_updates(se3_params, updates)
-
-        # early stopping
-        if abs(loss - last_loss) > 1e-5:
-            counter = 0
-        else:
-            counter += 1
-        last_loss = loss
-        if counter > 10:
-            break
-
-    # Extract optimized SE(3) parameters
-    SE3_transform = vmap_get_SE3_transform_jax(se3_params)
+    se3_opt = _generic_optimize_loop(
+        se3_params,
+        data_args,
+        jit_val_grad_obj_ROCS_esp,
+        lr,
+        max_num_steps
+    )
+    SE3_transform = vmap_get_SE3_transform_jax(se3_opt)
     aligned_points = vmap_apply_SE3_transform_jax(fit_points, SE3_transform)
-    scores = vmap_get_overlap_esp_jax(ref_points,
-                                      aligned_points,
-                                      ref_charges,
-                                      fit_charges,
-                                      alpha,
-                                      lam)
-    if num_repeats == 1:
-        if verbose:
-            print(f'Optimized shape+ESP similarity score: {scores:.3f}')
-        best_alignment = aligned_points
-        best_transform = SE3_transform
-        best_score = scores
-    else:
-        if verbose:
-            print(f'Optimized shape+ESP similarity score -- max: {scores.max():3f} | mean: {scores.mean():.3f} | min: {scores.min():3f}')
-        best_idx = jnp.argmax(scores)
-        best_alignment = aligned_points.at[best_idx].get()
-        best_transform = SE3_transform.at[best_idx].get()
-        best_score = scores.at[best_idx].get()
-    return best_alignment, best_transform, best_score
+    scores = vmap_get_overlap_esp_jax(ref_points, aligned_points, ref_charges, fit_charges, alpha, lam)
+
+    best_idx = jnp.argmax(scores)
+    return (aligned_points.at[best_idx].get(),
+            SE3_transform.at[best_idx].get(),
+            scores.at[best_idx].get())
 
 
 def _objective_esp_combo_score_overlay_jax(se3_params,
