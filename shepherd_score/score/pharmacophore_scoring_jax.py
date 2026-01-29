@@ -306,7 +306,14 @@ def get_overlap_pharm_jax(ptype_1: Array,
     fit_overlap += VBB_don
 
     # Halogen
-    VAB_hal, VAA_hal, VBB_hal = get_vector_volume_overlap_score_jax(
+    if extended_points:
+        VAB_hal, VAA_hal, VBB_hal = get_volume_overlap_score_extended_points_jax(
+                                        ptype_str='halogen', ptype_1=ptype_1, ptype_2=ptype_2,
+                                        anchors_1=anchors_1, anchors_2=anchors_2,
+                                        vectors_1=vectors_1, vectors_2=vectors_2,
+                                        only_extended=only_extended)
+    else:
+        VAB_hal, VAA_hal, VBB_hal = get_vector_volume_overlap_score_jax(
                                     ptype_str='halogen', ptype_1=ptype_1, ptype_2=ptype_2,
                                     anchors_1=anchors_1, anchors_2=anchors_2,
                                     vectors_1=vectors_1, vectors_2=vectors_2,
