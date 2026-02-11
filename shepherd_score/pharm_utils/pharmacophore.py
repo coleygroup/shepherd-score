@@ -11,6 +11,8 @@ References:
 - RDKit: https://github.com/rdkit/rdkit/blob/master/rdkit/Chem/Features/ShowFeats.py
 """
 
+from __future__ import annotations
+
 import os
 from copy import deepcopy
 import math
@@ -380,6 +382,11 @@ def _average_vectors(vectors: List):
     return avg_vec
 
 
+# Lazily create and cache the feature factory
+_cached_factory: rdkit.Chem.rdMolChemicalFeatures.MolChemicalFeatureFactory | None = (
+    None
+)
+
 def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                             multi_vector: bool = True,
                             exclude: List[int] = [],
@@ -410,12 +417,15 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
         Dictionary with format ``{'FeatureName': {'P': [(anchor coord), ...],
         'V': [(rel. vec), ...]}}``.
     """
+    global _cached_factory
     pharmacophores = {}
 
-    dirname = os.path.dirname(__file__)
-    fdef_file = os.path.join(dirname, 'smarts_features.fdef')
-    factory = AllChem.BuildFeatureFactory(fdef_file)
-    mol_feats = factory.GetFeaturesForMol(mol)
+    if _cached_factory is None:
+        dirname = os.path.dirname(__file__)
+        fdef_file = os.path.join(dirname, "smarts_features.fdef")
+        _cached_factory = AllChem.BuildFeatureFactory(fdef_file)
+
+    mol_feats = _cached_factory.GetFeaturesForMol(mol)
 
     # Filter only these for rdkit processing, we will compute hydrophobes later
     keep = ('Aromatic', 'ZnBinder', 'Donor', 'Acceptor', 'Cation', 'Anion', 'Halogen')
@@ -522,12 +532,13 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
             vec = (0,0,0)
 
         if anchor is not None and vec is not None:
+            pass
             if isinstance(anchor, list):
-                pharmacophores[family]['P'].extend([tuple(a) for a in anchor])
-                pharmacophores[family]['V'].extend(tuple(v) for v in vec)
+                pharmacophores[family]['P'].extend(anchor)
+                pharmacophores[family]['V'].extend(vec)
             else:
-                pharmacophores[family]['P'].append(tuple(anchor))
-                pharmacophores[family]['V'].append(tuple(vec))
+                pharmacophores[family]['P'].append(anchor)
+                pharmacophores[family]['V'].append(vec)
 
     # Hydrophobe processing
     hydrophobes = find_hydrophobes(mol=mol, cluster_hydrophobic=True)
@@ -586,13 +597,21 @@ def get_pharmacophores(mol: rdkit.Chem.rdchem.Mol,
                                                   check_access=check_access,
                                                   scale=scale,
                                                   exclude=exclude)
-
-    X, P, V = [], [], []
+    N = sum(len(pharmacophores_dict[family]['P']) for family in pharmacophores_dict)
+    X = np.empty((N,), dtype=np.int64)
+    P = np.empty((N, 3), dtype=np.float64)
+    V = np.empty((N, 3), dtype=np.float64)
+    start_idx = 0
     for family in pharmacophores_dict:
-        anchor_pos = pharmacophores_dict[family]['P']
-        P.extend(anchor_pos)
-        V.extend(pharmacophores_dict[family]['V'])
-        type_embed = P_TYPES.index(family)
-        X.extend([type_embed]*len(anchor_pos))
+        this_len = len(pharmacophores_dict[family]['P'])
+        if this_len == 0:
+            continue
+        end_idx = start_idx + this_len
+        X[start_idx:end_idx] = P_TYPES.index(family)
+        P[start_idx:end_idx, :] = pharmacophores_dict[family]['P']
+        V[start_idx:end_idx, :] = pharmacophores_dict[family]['V']
+        start_idx = end_idx
 
-    return np.array(X), np.array(P), np.array(V)
+    return X, P, V
+
+
