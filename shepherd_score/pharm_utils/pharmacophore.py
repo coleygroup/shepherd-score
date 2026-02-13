@@ -129,6 +129,24 @@ def __average(vecs):
             sum_y / n,
             sum_z / n)
 
+def _rdkit_point3d_to_tuple(point: Chem.Geometry.Point3D):
+    """
+    Convert an rdkit Point3D to a tuple.
+
+    For reasons I can not explain, it's 1000x faster to convert this way instead of
+    calling tuple(point)
+
+    def pt_to_tuple(pt):
+        return (pt.x, pt.y, pt.z)
+    %timeit tuple(pt)
+    %timeit pt_to_tuple(pt)
+
+    Gives:
+    527 μs ± 16.1 μs per loop (mean ± std. dev. of 7 runs, 1,000 loops each)
+    252 ns ± 1.77 ns per loop (mean ± std. dev. of 7 runs, 1,000,000 loops each)
+    """
+    return (point.x, point.y, point.z)
+
 def find_hydrophobes(mol: rdkit.Chem.rdchem.Mol,
                      cluster_hydrophobic: bool = True):
     """
@@ -528,17 +546,17 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                 vec = vec[0]
 
         else:
-            anchor = tuple(pos)
-            vec = (0,0,0)
+            anchor = pos
+            vec = Chem.rdGeometry.Point3D(0,0,0)
 
         if anchor is not None and vec is not None:
             pass
             if isinstance(anchor, list):
-                pharmacophores[family]['P'].extend(anchor)
-                pharmacophores[family]['V'].extend(vec)
+                pharmacophores[family]['P'].extend(_rdkit_point3d_to_tuple(x) for x in anchor)
+                pharmacophores[family]['V'].extend(_rdkit_point3d_to_tuple(x) for x in vec)
             else:
-                pharmacophores[family]['P'].append(anchor)
-                pharmacophores[family]['V'].append(vec)
+                pharmacophores[family]['P'].append(_rdkit_point3d_to_tuple(anchor))
+                pharmacophores[family]['V'].append(_rdkit_point3d_to_tuple(vec))
 
     # Hydrophobe processing
     hydrophobes = find_hydrophobes(mol=mol, cluster_hydrophobic=True)
