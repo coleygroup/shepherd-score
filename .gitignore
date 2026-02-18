@@ -82,6 +82,9 @@ instance/
 # Scrapy stuff:
 .scrapy
 
+# setuptools_scm generated version file
+shepherd_score/_version.py
+
 # Sphinx documentation
 docs/_build/
 

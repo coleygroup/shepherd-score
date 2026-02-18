@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=80", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "shepherd-score"
-version = "1.2.2"
+dynamic = ["version"]
 description = "3D scoring functions used for evaluation of ShEPhERD"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -122,6 +122,9 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["shepherd_score"]
+
+[tool.setuptools_scm]
+version_file = "shepherd_score/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
