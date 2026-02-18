@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history required for setuptools_scm version detection
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
