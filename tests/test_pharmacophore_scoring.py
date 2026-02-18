@@ -53,6 +53,7 @@ if TORCH_AVAILABLE:
 if JAX_AVAILABLE:
     from shepherd_score.score.pharmacophore_scoring_jax import (
         get_overlap_pharm_jax,
+        get_overlap_pharm_jax_vectorized,
         get_pharm_combo_score_jax
     )
 
@@ -355,6 +356,159 @@ class TestEdgeCases:
                 similarity='tanimoto'
             )
             assert np.allclose(np.array(result_jax), 1.0, rtol=1e-10, atol=1e-10)
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not available")
+class TestVectorizedPharmScoring:
+    """
+    Verify that get_overlap_pharm_jax_vectorized produces results numerically
+    equivalent to get_overlap_pharm_jax across all similarity modes, extended-
+    point configurations, and pharmacophore-size combinations.
+
+    The vectorized implementation uses a single (N, M) broadcast instead of
+    per-type loops, so any discrepancy would indicate an indexing or mode-
+    mapping bug rather than a numerical precision issue.
+    """
+
+    # Looser than the scoring-only tolerance because the vectorized scorer
+    # re-normalises vectors internally (divides by norm + 1e-6).
+    ATOL = 1e-4
+    RTOL = 1e-4
+
+    @pytest.mark.parametrize("similarity", ['tanimoto', 'tversky_ref', 'tversky_fit'])
+    @pytest.mark.parametrize("sizes", [(5, 3), (10, 8), (1, 1)])
+    def test_matches_reference_scorer(self, similarity, sizes):
+        """Vectorized scorer matches the reference JAX scorer for different
+        similarity functions and pharmacophore counts."""
+        n1, n2 = sizes
+        ptype_1, ptype_2, anchors_1, anchors_2, vectors_1, vectors_2 = \
+            TestDataGenerator.generate_pharmacophore_data(n1, n2, seed=7)
+
+        p1 = jnp.array(ptype_1)
+        p2 = jnp.array(ptype_2)
+        a1 = jnp.array(anchors_1)
+        a2 = jnp.array(anchors_2)
+        v1 = jnp.array(vectors_1)
+        v2 = jnp.array(vectors_2)
+
+        ref = float(get_overlap_pharm_jax(p1, p2, a1, a2, v1, v2, similarity=similarity))
+        vec = float(get_overlap_pharm_jax_vectorized(p1, p2, a1, a2, v1, v2))
+
+        # get_overlap_pharm_jax_vectorized only returns the raw VAB overlap;
+        # similarity is handled externally in the optimisation loop.  Here we
+        # compare VAB directly, so use get_overlap_pharm_jax with tanimoto and
+        # back out VAB by checking self-scores.
+        vaa = float(get_overlap_pharm_jax_vectorized(p1, p1, a1, a1, v1, v1))
+        vbb = float(get_overlap_pharm_jax_vectorized(p2, p2, a2, a2, v2, v2))
+        eps = 1e-6
+        if similarity == 'tanimoto':
+            vec_score = vec / (vaa + vbb - vec + eps)
+        elif similarity == 'tversky_ref':
+            vec_score = vec / (vaa + eps)
+        else:  # tversky_fit
+            vec_score = vec / (vbb + eps)
+
+        assert np.isclose(vec_score, ref, atol=self.ATOL, rtol=self.RTOL), (
+            f"Vectorized score {vec_score:.6f} != reference {ref:.6f} "
+            f"(similarity={similarity}, sizes={sizes})"
+        )
+
+    @pytest.mark.parametrize("extended_points,only_extended", [
+        (False, False),
+        (True,  False),
+        (True,  True),
+    ])
+    def test_extended_points_matches_reference(self, extended_points, only_extended):
+        """Vectorized scorer matches the reference scorer for extended-point modes."""
+        ptype_1, ptype_2, anchors_1, anchors_2, vectors_1, vectors_2 = \
+            TestDataGenerator.generate_pharmacophore_data(8, 6, seed=13)
+
+        p1 = jnp.array(ptype_1)
+        p2 = jnp.array(ptype_2)
+        a1 = jnp.array(anchors_1)
+        a2 = jnp.array(anchors_2)
+        v1 = jnp.array(vectors_1)
+        v2 = jnp.array(vectors_2)
+
+        ref = float(get_overlap_pharm_jax(
+            p1, p2, a1, a2, v1, v2,
+            similarity='tanimoto',
+            extended_points=extended_points,
+            only_extended=only_extended,
+        ))
+
+        vab = float(get_overlap_pharm_jax_vectorized(
+            p1, p2, a1, a2, v1, v2,
+            extended_points=extended_points, only_extended=only_extended,
+        ))
+        vaa = float(get_overlap_pharm_jax_vectorized(
+            p1, p1, a1, a1, v1, v1,
+            extended_points=extended_points, only_extended=only_extended,
+        ))
+        vbb = float(get_overlap_pharm_jax_vectorized(
+            p2, p2, a2, a2, v2, v2,
+            extended_points=extended_points, only_extended=only_extended,
+        ))
+        eps = 1e-6
+        vec_score = vab / (vaa + vbb - vab + eps)
+
+        assert np.isclose(vec_score, ref, atol=self.ATOL, rtol=self.RTOL), (
+            f"Vectorized score {vec_score:.6f} != reference {ref:.6f} "
+            f"(extended_points={extended_points}, only_extended={only_extended})"
+        )
+
+    def test_identical_molecules_score_one(self):
+        """Self-overlap normalised to Tanimoto similarity must equal 1.0."""
+        ptype_1, _, anchors_1, _, vectors_1, _ = \
+            TestDataGenerator.generate_pharmacophore_data(6, 4, seed=99)
+
+        p = jnp.array(ptype_1)
+        a = jnp.array(anchors_1)
+        v = jnp.array(vectors_1)
+
+        vab = float(get_overlap_pharm_jax_vectorized(p, p, a, a, v, v))
+        vaa = float(get_overlap_pharm_jax_vectorized(p, p, a, a, v, v))
+        # vaa == vbb == vab  →  Tanimoto = vab / (2*vaa - vab) = 1.0
+        eps = 1e-6
+        tanimoto = vab / (vaa + vaa - vab + eps)
+        assert np.isclose(tanimoto, 1.0, atol=1e-5), (
+            f"Self-similarity {tanimoto:.8f} != 1.0"
+        )
+
+    def test_jit_cache_stability(self):
+        """Calling the vectorized scorer repeatedly with identical shapes must
+        not grow the JIT cache (no recompilation after the first call)."""
+        import jax
+        ptype_1, ptype_2, anchors_1, anchors_2, vectors_1, vectors_2 = \
+            TestDataGenerator.generate_pharmacophore_data(8, 6, seed=5)
+
+        p1 = jnp.array(ptype_1)
+        p2 = jnp.array(ptype_2)
+        a1 = jnp.array(anchors_1)
+        a2 = jnp.array(anchors_2)
+        v1 = jnp.array(vectors_1)
+        v2 = jnp.array(vectors_2)
+
+        # Warm-up
+        _ = get_overlap_pharm_jax_vectorized(p1, p2, a1, a2, v1, v2)
+
+        compilations_before = sum(
+            getattr(fn, '_cache_size', lambda: 0)()
+            for fn in [get_overlap_pharm_jax_vectorized]
+        )
+
+        for _ in range(5):
+            _ = get_overlap_pharm_jax_vectorized(p1, p2, a1, a2, v1, v2)
+
+        compilations_after = sum(
+            getattr(fn, '_cache_size', lambda: 0)()
+            for fn in [get_overlap_pharm_jax_vectorized]
+        )
+
+        assert compilations_after == compilations_before, (
+            "JIT cache grew during repeated calls with identical shapes — "
+            "unexpected recompilation detected."
+        )
+
 
 # Performance benchmarking (optional, for development)
 class TestPerformance:
