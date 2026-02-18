@@ -6,7 +6,6 @@ This module may not be as fast as the NumPy version.
 from typing import Union, Callable, Literal, Tuple
 from functools import partial
 
-import jax
 import jax.numpy as jnp
 from jax import jit, Array
 
@@ -14,6 +13,156 @@ from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax, VAB_2nd
 from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax_mask, VAB_2nd_order_cosine_jax_mask
 from shepherd_score.score.constants import P_TYPES, P_ALPHAS
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
+
+
+# We map string types to integers for JAX scanning
+# Mode 0: Scalar (Hydrophobe, Ion) -> effectively sim=1.0
+# Mode 1: Vector Abs (Aromatic) -> sim=|dot|
+# Mode 2: Vector Clamped (Acceptor, Donor, Halogen) -> sim=max(0, dot)
+P_TYPE_CONFIG_MAP = {
+    'hydrophobe': {'mode': 0},
+    'znbinder':   {'mode': 0},
+    'anion':      {'mode': 0},
+    'cation':     {'mode': 0},
+    'aromatic':   {'mode': 1},
+    'acceptor':   {'mode': 2},
+    'donor':      {'mode': 2},
+    'halogen':    {'mode': 2},
+}
+
+SORTED_ALPHAS = []
+SORTED_MODES = []
+
+for p_name in P_TYPES:
+    key = p_name.lower()
+    SORTED_ALPHAS.append(P_ALPHAS[key])
+    SORTED_MODES.append(P_TYPE_CONFIG_MAP.get(key, {'mode': 0})['mode'])
+
+TYPE_INDICES = jnp.arange(len(P_TYPES))
+LOOKUP_ALPHAS  = jnp.array(SORTED_ALPHAS)
+LOOKUP_MODES   = jnp.array(SORTED_MODES)
+
+
+@partial(jit, static_argnames=['extended_points'])
+def precompute_geometry(pos_ref, pos_fit, vec_ref, vec_fit, extended_points=False):
+    """
+    Computes all necessary geometric matrices once per optimization step.
+    """
+    # 1. Anchor distances (N, M)
+    diff = pos_ref[:, None, :] - pos_fit[None, :, :]
+    d2_anchors = jnp.sum(diff**2, axis=-1)
+
+    # 2. Vector dot products (N, M)
+    # Safe normalization: eps inside sqrt gives gradient 0 at zero-norm vectors
+    # (mode-0 pharmacophores like Hydrophobe/Anion/Cation store [0,0,0] as their
+    # direction vector; jnp.linalg.norm has NaN gradient at zero, causing NaN in
+    # value_and_grad when fit_vectors_transformed is a zero vector).
+    vec_ref_norm = vec_ref / jnp.sqrt(jnp.sum(vec_ref ** 2, axis=-1, keepdims=True) + 1e-12)
+    vec_fit_norm = vec_fit / jnp.sqrt(jnp.sum(vec_fit ** 2, axis=-1, keepdims=True) + 1e-12)
+    dot_matrix = jnp.einsum('ni,mi->nm', vec_ref_norm, vec_fit_norm)
+    # 3. Extended point distances (N, M)
+    if extended_points:
+        ext_ref = pos_ref + vec_ref # Use original (un-normalized) if they imply length
+        ext_fit = pos_fit + vec_fit
+        diff_ext = ext_ref[:, None, :] - ext_fit[None, :, :]
+        d2_extended = jnp.sum(diff_ext**2, axis=-1)
+    else:
+        d2_extended = d2_anchors
+
+    return d2_anchors, d2_extended, dot_matrix
+
+@jit
+def get_interaction_properties(ptype_idxs):
+    """
+    Retrieves alpha and mode for given pharmacophore indices.
+    """
+    return LOOKUP_ALPHAS[ptype_idxs], LOOKUP_MODES[ptype_idxs]
+
+@partial(jit, static_argnames=['extended_points', 'only_extended'])
+def get_overlap_pharm_jax_vectorized(
+    ptype_1: Array, ptype_2: Array,
+    anchors_1: Array, anchors_2: Array,
+    vectors_1: Array, vectors_2: Array,
+    extended_points: bool = False,
+    only_extended: bool = False
+) -> Array:
+    """
+    Fully vectorized pharmacophore overlap.
+
+    Parameters
+    ----------
+    ptype_1 : Array (N,)
+    ptype_2 : Array (M,)
+    anchors_1 : Array (N,3)
+    anchors_2 : Array (M,3)
+    vectors_1 : Array (N,3)
+    vectors_2 : Array (M,3)
+    extended_points : bool
+    only_extended : bool
+
+    Returns
+    -------
+    score : Array (1,)
+        Pharmacophore overlap score.
+    """
+    # 1. Precompute geometry (N, M)
+    d2_anchors, d2_ext, dot_matrix = precompute_geometry(
+        anchors_1, anchors_2, vectors_1, vectors_2, extended_points
+    )
+
+    # 2. Get pharmacophore properties
+    # use ptype_1 properties because if ptype_1 != ptype_2, mask is 0 anyway.
+    alphas_1, modes_1 = get_interaction_properties(ptype_1)
+
+    # Broadcast to (N, M)
+    # alphas_matrix[i, j] = alpha of ref atom i
+    alphas_matrix = alphas_1[:, None]
+    modes_matrix = modes_1[:, None]
+    matches = (ptype_1[:, None] == ptype_2[None, :]) # match mask (N, M)
+
+    # 3. One-shot computation
+    prefactors = (jnp.pi / (2.0 * alphas_matrix)) ** 1.5
+
+    # vector similarity for all modes simultaneously using where
+    # Note: modes_matrix is (N, 1), dot_matrix is (N, M)
+    is_mode_0 = (modes_matrix == 0)
+    is_mode_1 = (modes_matrix == 1)
+    is_mode_2 = (modes_matrix == 2)
+
+    sim_raw = (
+        jnp.where(is_mode_0, 1.0, 0.0) +
+        jnp.where(is_mode_1, jnp.abs(dot_matrix), 0.0) +
+        jnp.where(is_mode_2, jnp.maximum(0.0, dot_matrix), 0.0)
+    )
+    vec_factor = (sim_raw + 2.0) / 3.0
+    spatial_anchor = jnp.exp(-0.5 * alphas_matrix * d2_anchors)
+
+    # 4. Extended points logic
+    if extended_points:
+        spatial_extended = jnp.exp(-0.5 * alphas_matrix * d2_ext)
+
+        # If extended_points=True AND mode=2 (Donor/Acc/Halogen), use extended logic
+        # Else use standard logic
+        use_ext_logic = is_mode_2 # broadcasts to (N, 1)
+
+        # extended score: (SpatialExt + SpatialAnc) * Prefactor
+        term_ext_part = spatial_extended
+        term_anc_part = jnp.where(only_extended, 0.0, spatial_anchor)
+        score_extended = (term_ext_part + term_anc_part) * prefactors
+
+        # standard score: SpatialAnc * VecFactor * Prefactor
+        score_standard = spatial_anchor * vec_factor * prefactors
+
+        # select based on type mode
+        final_terms = jnp.where(use_ext_logic, score_extended, score_standard)
+
+    else:
+        # standard score only
+        final_terms = spatial_anchor * vec_factor * prefactors
+
+    # 5. apply mask and sum
+    # multiply by matches (0 or 1) to remove invalid pairs
+    return jnp.sum(final_terms * matches)
 
 
 @partial(jit, static_argnames=['overlap_func', 'allow_antiparallel'])
