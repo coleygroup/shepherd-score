@@ -668,26 +668,36 @@ def get_overlap_pharm(ptype_1: torch.Tensor,
 
     # Halogen
     if 'halogen' in ptype_key2ind:
-        if batched:
-            VAB, VAA, VBB = get_vector_volume_overlap_score_batch(ptype_str='halogen',
-                                                                  ptype_1=ptype_1,
-                                                                  ptype_2=ptype_2,
-                                                                  cdist_21 = cdist_21,
-                                                                  cdist_22 = cdist_22,
-                                                                  cdist_11 = cdist_11,
-                                                                  vmm_21 = vmm_21,
-                                                                  vmm_22 = vmm_22,
-                                                                  vmm_11 = vmm_11,
-                                                                  allow_antiparallel=False)
+        if extended_points:
+            VAB, VAA, VBB = get_volume_overlap_score_extended_points(ptype_str='halogen',
+                                                                     ptype_1=ptype_1,
+                                                                     ptype_2=ptype_2,
+                                                                     anchors_1=anchors_1,
+                                                                     anchors_2=anchors_2,
+                                                                     vectors_1=vectors_1,
+                                                                     vectors_2=vectors_2,
+                                                                     only_extended=only_extended)
         else:
-            VAB, VAA, VBB = get_vector_volume_overlap_score(ptype_str='halogen',
-                                                            ptype_1=ptype_1,
-                                                            ptype_2=ptype_2,
-                                                            anchors_1=anchors_1,
-                                                            anchors_2=anchors_2,
-                                                            vectors_1=vectors_1,
-                                                            vectors_2=vectors_2,
-                                                            allow_antiparallel=False)
+            if batched:
+                VAB, VAA, VBB = get_vector_volume_overlap_score_batch(ptype_str='halogen',
+                                                                      ptype_1=ptype_1,
+                                                                      ptype_2=ptype_2,
+                                                                      cdist_21 = cdist_21,
+                                                                      cdist_22 = cdist_22,
+                                                                      cdist_11 = cdist_11,
+                                                                      vmm_21 = vmm_21,
+                                                                      vmm_22 = vmm_22,
+                                                                      vmm_11 = vmm_11,
+                                                                      allow_antiparallel=False)
+            else:
+                VAB, VAA, VBB = get_vector_volume_overlap_score(ptype_str='halogen',
+                                                                ptype_1=ptype_1,
+                                                                ptype_2=ptype_2,
+                                                                anchors_1=anchors_1,
+                                                                anchors_2=anchors_2,
+                                                                vectors_1=vectors_1,
+                                                                vectors_2=vectors_2,
+                                                                allow_antiparallel=False)
         overlap += VAB
         ref_overlap += VAA
         fit_overlap += VBB
