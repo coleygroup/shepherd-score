@@ -20,6 +20,7 @@ optimize_ROCS_overlay_jax = None
 optimize_ROCS_esp_overlay_jax = None
 optimize_esp_combo_score_overlay_jax = None
 optimize_pharm_overlay_jax = None
+optimize_pharm_overlay_jax_vectorized = None
 convert_to_jnp_array = None
 
 try:
@@ -32,6 +33,7 @@ try:
         optimize_ROCS_esp_overlay_jax,
         optimize_esp_combo_score_overlay_jax,
         optimize_pharm_overlay_jax,
+        optimize_pharm_overlay_jax_vectorized,
         convert_to_jnp_array,
     )
 
@@ -364,3 +366,154 @@ class TestOptimizePharmOverlayConsistency:
         data_torch = common_pharm_data[:6]
         data_jax = common_pharm_data[6:]
         self._run_and_compare(data_torch, data_jax, num_repeats=5, trans_torch=None, trans_jax=None, similarity='tversky_ref')
+
+
+class TestOptimizePharmOverlayVectorizedConsistency:
+    """
+    Verify that optimize_pharm_overlay_jax_vectorized (vectorized, lax.while_loop) produces
+    results consistent with optimize_pharm_overlay_jax (reference, Python for-loop).
+
+    Both functions optimise the same objective — pharmacophore overlap — from
+    identical initial SE(3) parameters, so their final scores should agree to
+    within optimisation tolerance.  Coordinates may diverge slightly when
+    multiple near-equal local optima exist, so coordinate tolerances are looser.
+    """
+
+    # Scores should match closely since the same objective is being optimised
+    # from the same starting point.  Coordinates can differ a little more because
+    # degenerate poses can have the same score.
+    SCORE_ATOL = 5e-3
+    SCORE_RTOL = 1e-2
+    COORD_ATOL = 5e-2
+    COORD_RTOL = 5e-2
+
+    def _run_both(self, pharm_data_jax, num_repeats, trans_jax=None,
+                  similarity='tanimoto', extended_points=False, only_extended=False):
+        p1_j, p2_j, a1_j, a2_j, v1_j, v2_j = pharm_data_jax
+
+        kwargs = dict(
+            ref_pharms=p1_j, fit_pharms=p2_j,
+            ref_anchors=a1_j, fit_anchors=a2_j,
+            ref_vectors=v1_j, fit_vectors=v2_j,
+            similarity=similarity,
+            extended_points=extended_points,
+            only_extended=only_extended,
+            num_repeats=num_repeats,
+            trans_centers=trans_jax,
+            lr=DEFAULT_LR,
+            max_num_steps=DEFAULT_MAX_STEPS,
+            verbose=DEFAULT_VERBOSE,
+        )
+
+        anc_ref, vec_ref, tf_ref, score_ref = optimize_pharm_overlay_jax(**kwargs)
+        anc_vec, vec_vec, tf_vec, score_vec = optimize_pharm_overlay_jax_vectorized(**kwargs)
+
+        return (anc_ref, vec_ref, tf_ref, score_ref,
+                anc_vec, vec_vec, tf_vec, score_vec)
+
+    def _assert_consistent(self, results, tag=""):
+        anc_ref, vec_ref, tf_ref, score_ref, anc_vec, vec_vec, tf_vec, score_vec = results
+
+        score_ref_np = float(np.array(score_ref))
+        score_vec_np = float(np.array(score_vec))
+        assert np.isclose(score_ref_np, score_vec_np,
+                          atol=self.SCORE_ATOL, rtol=self.SCORE_RTOL), (
+            f"{tag}: score mismatch — reference={score_ref_np:.5f}, "
+            f"vectorized={score_vec_np:.5f}"
+        )
+
+        anc_ref_np = np.array(anc_ref)
+        anc_vec_np = np.array(anc_vec)
+        assert anc_ref_np.shape == anc_vec_np.shape, (
+            f"{tag}: aligned anchor shape mismatch "
+            f"{anc_ref_np.shape} vs {anc_vec_np.shape}"
+        )
+
+        vec_ref_np = np.array(vec_ref)
+        vec_vec_np = np.array(vec_vec)
+        assert vec_ref_np.shape == vec_vec_np.shape, (
+            f"{tag}: aligned vector shape mismatch "
+            f"{vec_ref_np.shape} vs {vec_vec_np.shape}"
+        )
+
+        tf_ref_np = np.array(tf_ref)
+        tf_vec_np = np.array(tf_vec)
+        assert tf_ref_np.shape == tf_vec_np.shape, (
+            f"{tag}: SE(3) transform shape mismatch "
+            f"{tf_ref_np.shape} vs {tf_vec_np.shape}"
+        )
+
+    def test_vectorized_single_repeat(self, common_pharm_data):
+        """num_repeats=1: both functions should produce the same single-pose result."""
+        data_jax = common_pharm_data[6:]
+        results = self._run_both(data_jax, num_repeats=1)
+        self._assert_consistent(results, tag="single_repeat")
+
+    def test_vectorized_batch_repeats(self, common_pharm_data):
+        """num_repeats=5: best-of-batch selection should agree."""
+        data_jax = common_pharm_data[6:]
+        results = self._run_both(data_jax, num_repeats=5)
+        self._assert_consistent(results, tag="batch_repeats")
+
+    def test_vectorized_trans_centers(self, common_pharm_data, common_trans_centers_data):
+        """trans_centers initialisation should produce consistent scores."""
+        data_jax = common_pharm_data[6:]
+        _, tc_j = common_trans_centers_data
+        results = self._run_both(data_jax, num_repeats=50, trans_jax=tc_j)
+        self._assert_consistent(results, tag="trans_centers")
+
+    def test_vectorized_extended_points(self, common_pharm_data):
+        """Extended-point scoring mode should be consistent."""
+        data_jax = common_pharm_data[6:]
+        results = self._run_both(data_jax, num_repeats=5, extended_points=True)
+        self._assert_consistent(results, tag="extended_points")
+
+    def test_vectorized_only_extended(self, common_pharm_data):
+        """only_extended mode should be consistent."""
+        data_jax = common_pharm_data[6:]
+        results = self._run_both(data_jax, num_repeats=5,
+                                 extended_points=True, only_extended=True)
+        self._assert_consistent(results, tag="only_extended")
+
+    def test_vectorized_tversky_ref(self, common_pharm_data):
+        """tversky_ref similarity should be consistent."""
+        data_jax = common_pharm_data[6:]
+        results = self._run_both(data_jax, num_repeats=5, similarity='tversky_ref')
+        self._assert_consistent(results, tag="tversky_ref")
+
+    def test_vectorized_tversky_fit(self, common_pharm_data):
+        """tversky_fit similarity should be consistent."""
+        data_jax = common_pharm_data[6:]
+        results = self._run_both(data_jax, num_repeats=5, similarity='tversky_fit')
+        self._assert_consistent(results, tag="tversky_fit")
+
+    def test_vectorized_no_jit_cache_growth(self, common_pharm_data):
+        """
+        Calling optimize_pharm_overlay_jax_vectorized repeatedly with the same shapes
+        must not grow JAX's JIT cache.  Recompilation on every call was the
+        original performance bug; this catches regressions.
+        """
+        data_jax = common_pharm_data[6:]
+        p1_j, p2_j, a1_j, a2_j, v1_j, v2_j = data_jax
+
+        from shepherd_score.alignment_jax import _make_jit_val_grad_pharm_vectorized
+
+        # Prime the cache
+        optimize_pharm_overlay_jax_vectorized(
+            p1_j, p2_j, a1_j, a2_j, v1_j, v2_j,
+            num_repeats=5, lr=DEFAULT_LR, max_num_steps=10,
+        )
+        cache_size_before = _make_jit_val_grad_pharm_vectorized.cache_info().currsize
+
+        for _ in range(4):
+            optimize_pharm_overlay_jax_vectorized(
+                p1_j, p2_j, a1_j, a2_j, v1_j, v2_j,
+                num_repeats=5, lr=DEFAULT_LR, max_num_steps=10,
+            )
+
+        cache_size_after = _make_jit_val_grad_pharm_vectorized.cache_info().currsize
+        assert cache_size_after == cache_size_before, (
+            f"lru_cache grew from {cache_size_before} to {cache_size_after} entries "
+            "across repeated calls with identical (similarity, extended_points, "
+            "only_extended) — recompilation regression detected."
+        )

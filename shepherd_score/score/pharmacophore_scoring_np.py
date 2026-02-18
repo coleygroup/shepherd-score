@@ -416,14 +416,24 @@ def get_overlap_pharm_np(ptype_1: np.ndarray,
 
     # Halogen
     if 'halogen' in ptype_key2ind:
-        VAB, VAA, VBB = get_vector_volume_overlap_score_np(ptype_str='halogen',
-                                                           ptype_1=ptype_1,
-                                                           ptype_2=ptype_2,
-                                                           anchors_1=anchors_1,
-                                                           anchors_2=anchors_2,
-                                                           vectors_1=vectors_1,
-                                                           vectors_2=vectors_2,
-                                                           allow_antiparallel=False)
+        if extended_points:
+            VAB, VAA, VBB = get_volume_overlap_score_extended_points_np(ptype_str='halogen',
+                                                                        ptype_1=ptype_1,
+                                                                        ptype_2=ptype_2,
+                                                                        anchors_1=anchors_1,
+                                                                        anchors_2=anchors_2,
+                                                                        vectors_1=vectors_1,
+                                                                        vectors_2=vectors_2,
+                                                                        only_extended=only_extended)
+        else:
+            VAB, VAA, VBB = get_vector_volume_overlap_score_np(ptype_str='halogen',
+                                                               ptype_1=ptype_1,
+                                                               ptype_2=ptype_2,
+                                                               anchors_1=anchors_1,
+                                                               anchors_2=anchors_2,
+                                                               vectors_1=vectors_1,
+                                                               vectors_2=vectors_2,
+                                                               allow_antiparallel=False)
         overlap += VAB
         ref_overlap += VAA
         fit_overlap += VBB

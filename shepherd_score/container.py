@@ -842,7 +842,8 @@ class MoleculePair:
                          lr: float = 0.1,
                          max_num_steps: int = 200,
                          use_jax: bool = False,
-                         verbose: bool = False
+                         verbose: bool = False,
+                         use_vectorized: bool = True
                          ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Align fit_molec to ref_molec using pharmacophore similarity.
@@ -879,8 +880,11 @@ class MoleculePair:
         use_jax : bool, optional
             Whether to use Jax instead of PyTorch. Default is ``False``.
         verbose : bool, optional
-            Print initial and final similarity scores with scores every 100 steps. Default is ``False``.
-
+            Print initial and final similarity scores with scores every 100 steps.
+            Default is ``False``.
+        use_vectorized : bool, optional
+            Whether to use the vectorized version of the pharmacophore scoring function.
+            Default is ``True``.
         Returns
         -------
         tuple
@@ -896,9 +900,10 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_pharm_overlay_jax
+            from .alignment_jax import optimize_pharm_overlay_jax, optimize_pharm_overlay_jax_vectorized
 
-            aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = optimize_pharm_overlay_jax(
+            _pharm_fn = optimize_pharm_overlay_jax_vectorized if use_vectorized else optimize_pharm_overlay_jax
+            aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = _pharm_fn(
                 ref_pharms=jnp.array(self.ref_molec.pharm_types),
                 fit_pharms=jnp.array(self.fit_molec.pharm_types),
                 ref_anchors=jnp.array(self.ref_molec.pharm_ancs),
