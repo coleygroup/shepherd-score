@@ -53,10 +53,10 @@ def _create_failed_result(i: int, error_msg: str) -> Dict[str, Any]:
     }
 
 
-def _create_conditional_failed_result(i: int, error_msg: str) -> Dict[str, Any]:
+def _create_conditional_failed_result(i: int, error_msg: str, priority_pharm_indices: Optional[list] = None) -> Dict[str, Any]:
     """Create a result dict for failed conditional evaluations with all required fields."""
     base_failed_results = _create_failed_result(i, error_msg)
-    return {
+    res = {
         **base_failed_results,
         # Additional Conditional 3D similarity attributes
         'sim_surf_target': np.nan,
@@ -71,6 +71,12 @@ def _create_conditional_failed_result(i: int, error_msg: str) -> Dict[str, Any]:
         'sim_surf_target_relax_esp_aligned': np.nan,
         'sim_pharm_target_relax_esp_aligned': np.nan,
     }
+    if priority_pharm_indices is not None:
+        res.update({
+            'sim_pharm_priority_target_relax_optimal': np.nan,
+            'sim_pharm_nonpriority_target_relax_optimal': np.nan,
+        })
+    return res
 
 
 def _create_consistency_failed_result(i: int, error_msg: str) -> Dict[str, Any]:
@@ -310,7 +316,8 @@ def _eval_conditional_single(i: int,
                              atoms: np.ndarray,
                              positions: np.ndarray,
                              solvent: Optional[str],
-                             num_processes: int) -> Dict[str, Any]:
+                             num_processes: int,
+                             priority_pharm_indices: Optional[list] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -331,8 +338,9 @@ def _eval_conditional_single(i: int,
             condition=condition,
             num_surf_points=num_surf_points,
             pharm_multi_vector=pharm_multi_vector,
+            priority_pharm_indices=priority_pharm_indices,
             num_processes=num_processes,
-            solvent=solvent
+            solvent=solvent,
         )
 
         res = {
@@ -368,12 +376,17 @@ def _eval_conditional_single(i: int,
             'sim_pharm_target_relax_esp_aligned': cond_eval.sim_pharm_target_relax_esp_aligned if cond_eval.sim_pharm_target_relax_esp_aligned is not None else np.nan,
             'error': None
         }
+        if priority_pharm_indices is not None:
+            res.update({
+                'sim_pharm_priority_target_relax_optimal': cond_eval.sim_pharm_priority_target_relax_optimal if cond_eval.sim_pharm_priority_target_relax_optimal is not None else np.nan,
+                'sim_pharm_nonpriority_target_relax_optimal': cond_eval.sim_pharm_nonpriority_target_relax_optimal if cond_eval.sim_pharm_nonpriority_target_relax_optimal is not None else np.nan,
+            })
         return res
 
     except Exception as e:
         error_msg = f"Conditional evaluation failed for molecule {i}: {str(e)}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
-        return _create_conditional_failed_result(i, error_msg)
+        return _create_conditional_failed_result(i, error_msg, priority_pharm_indices)
 
 
 def _eval_consistency_single(i: int,

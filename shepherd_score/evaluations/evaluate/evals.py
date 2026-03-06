@@ -473,13 +473,16 @@ class ConsistencyEval(ConfEval):
 
     def _align_with_pharm(self, mp_ref_and_relaxed: MoleculePair) -> float:
         """
-        Align relaxed molecule to reference/target molecule with pharmacophores
+        Align relaxed molecule to reference/target molecule with pharmacophores.
+
+        Stores aligned fit anchors and vectors on ``self._aligned_pharm_ancs``
+        and ``self._aligned_pharm_vecs`` for downstream subset scoring.
 
         Returns
         -------
         float : Pharmacophore similarity score of optimally aligned molecule.
         """
-        aligned_fit_anchors, aligned_vectors = mp_ref_and_relaxed.align_with_pharm(
+        aligned_fit_anchors, aligned_fit_vectors = mp_ref_and_relaxed.align_with_pharm(
             similarity='tanimoto',
             extended_points=False,
             only_extended=False,
@@ -487,6 +490,8 @@ class ConsistencyEval(ConfEval):
             trans_init=False,
             use_jax=False
         )
+        self._aligned_pharm_ancs = aligned_fit_anchors
+        self._aligned_pharm_vecs = aligned_fit_vectors
         pharm_similarity = mp_ref_and_relaxed.sim_aligned_pharm
         return float(pharm_similarity)
 
@@ -501,8 +506,10 @@ class ConditionalEval(ConfEval):
                  condition: str,
                  num_surf_points: int = 400,
                  pharm_multi_vector: Optional[bool] = None,
+                 priority_pharm_indices: Optional[list] = None,
                  solvent: Optional[str] = None,
-                 num_processes: int = 1):
+                 num_processes: int = 1,
+                 ):
         """
         Evaluation pipeline for conditionally-generated molecules.
 
@@ -536,6 +543,15 @@ class ConditionalEval(ConfEval):
             Number of surface points to sample for similarity scoring. Default is 400.
         pharm_multi_vector : bool, optional
             Use multiple vectors to represent Aro/HBA/HBD or single.
+        priority_pharm_indices : list of int, optional
+            Indices (into ``ref_molec`` pharmacophore arrays) of "priority"
+            pharmacophores. When provided, two additional Tversky
+            (``'tversky_ref'``) scores are computed after the full-set pharm
+            alignment: one for the priority subset and one for the non-priority
+            complement subset, each scored against the full pharmacophore set
+            of the aligned generated molecule. Requires ``condition`` to be
+            ``'pharm'`` or ``'all'`` and ``pharm_multi_vector`` to be a bool.
+            Must satisfy ``0 < len(priority_pharm_indices) < N_pharm``.
         solvent : str, optional
             Solvent type for xTB relaxation.
         num_processes : int, optional
@@ -573,6 +589,11 @@ class ConditionalEval(ConfEval):
 
         self.sim_surf_target_relax_esp_aligned = None
         self.sim_pharm_target_relax_esp_aligned = None
+
+        self.sim_pharm_priority_target_relax_optimal = None
+        self.sim_pharm_nonpriority_target_relax_optimal = None
+
+        self.priority_pharm_indices = priority_pharm_indices
 
         # Scoring parameters
         self.num_surf_points = num_surf_points
@@ -674,6 +695,39 @@ class ConditionalEval(ConfEval):
             if (self.condition == 'pharm' or self.condition == 'all') and isinstance(pharm_multi_vector, bool):
                 self.sim_pharm_target_relax_optimal = self._align_with_pharm(mp_ref_and_relaxed=mp_ref_and_relaxed)
 
+                # Priority subset Tversky scoring using the alignment from the full-set pharm alignment above
+                if (self.priority_pharm_indices is not None
+                        and hasattr(self, '_aligned_pharm_ancs')
+                        and self.ref_molec.pharm_ancs is not None):
+                    n_pharm = len(self.ref_molec.pharm_types)
+                    nonpriority_indices = sorted(set(range(n_pharm)) - set(self.priority_pharm_indices))
+                    priority_idx = self.priority_pharm_indices
+
+                    self.sim_pharm_priority_target_relax_optimal = float(get_overlap_pharm_np(
+                        ptype_1=self.ref_molec.pharm_types[priority_idx],
+                        ptype_2=self.molec_post_opt.pharm_types,
+                        anchors_1=self.ref_molec.pharm_ancs[priority_idx],
+                        anchors_2=self._aligned_pharm_ancs,
+                        vectors_1=self.ref_molec.pharm_vecs[priority_idx],
+                        vectors_2=self._aligned_pharm_vecs,
+                        similarity='tversky_ref',
+                        extended_points=False,
+                        only_extended=False
+                    ))
+
+                    if nonpriority_indices:
+                        self.sim_pharm_nonpriority_target_relax_optimal = float(get_overlap_pharm_np(
+                            ptype_1=self.ref_molec.pharm_types[nonpriority_indices],
+                            ptype_2=self.molec_post_opt.pharm_types,
+                            anchors_1=self.ref_molec.pharm_ancs[nonpriority_indices],
+                            anchors_2=self._aligned_pharm_ancs,
+                            vectors_1=self.ref_molec.pharm_vecs[nonpriority_indices],
+                            vectors_2=self._aligned_pharm_vecs,
+                            similarity='tversky_ref',
+                            extended_points=False,
+                            only_extended=False
+                        ))
+
             # Compute ESP-aligned surf and pharmacophore similarity scores
             if mp_ref_and_relaxed.transform_esp is not None and self.condition in ('esp', 'all'):
                 molec_post_opt_esp_aligned = mp_ref_and_relaxed.get_transformed_molecule(mp_ref_and_relaxed.transform_esp)
@@ -733,13 +787,16 @@ class ConditionalEval(ConfEval):
 
     def _align_with_pharm(self, mp_ref_and_relaxed: MoleculePair) -> float:
         """
-        Align relaxed molecule to reference/target molecule with pharmacophores
+        Align relaxed molecule to reference/target molecule with pharmacophores.
+
+        Stores aligned fit anchors and vectors on ``self._aligned_pharm_ancs``
+        and ``self._aligned_pharm_vecs`` for downstream subset scoring.
 
         Returns
         -------
         float : Pharmacophore similarity score of optimally aligned molecule.
         """
-        aligned_fit_anchors, aligned_vectors = mp_ref_and_relaxed.align_with_pharm(
+        aligned_fit_anchors, aligned_fit_vectors = mp_ref_and_relaxed.align_with_pharm(
             similarity='tanimoto',
             extended_points=False,
             only_extended=False,
@@ -747,5 +804,7 @@ class ConditionalEval(ConfEval):
             trans_init=False,
             use_jax=False
         )
+        self._aligned_pharm_ancs = aligned_fit_anchors
+        self._aligned_pharm_vecs = aligned_fit_vectors
         pharm_similarity = mp_ref_and_relaxed.sim_aligned_pharm
         return float(pharm_similarity)

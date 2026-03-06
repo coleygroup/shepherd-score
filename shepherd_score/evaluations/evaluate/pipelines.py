@@ -387,6 +387,7 @@ class ConditionalEvalPipeline:
                  num_surf_points: int = 400,
                  pharm_multi_vector: Optional[bool] = None,
                  solvent: Optional[str] = None,
+                 priority_pharm_indices: Optional[list] = None,
                  ):
         """
         Initialize attributes for conditional evaluation pipeline.
@@ -412,10 +413,21 @@ class ConditionalEvalPipeline:
             ref_molec should match.
         solvent : str, optional
             Solvent type for xtb relaxation.
+        priority_pharm_indices : list of int, optional
+            Indices (into ``ref_molec`` pharmacophore arrays) of "priority"
+            pharmacophores. When provided, two additional Tversky
+            (``'tversky_ref'``) scores are computed after the full-set pharm
+            alignment: one for the priority subset
+            (``sims_pharm_priority_target_relax_optimal``) and one for the
+            non-priority complement subset
+            (``sims_pharm_nonpriority_target_relax_optimal``). Requires
+            ``condition`` to be ``'pharm'`` or ``'all'`` and
+            ``pharm_multi_vector`` to be a bool.
         """
         self.generated_mols = generated_mols
         self.num_generated_mols = len(self.generated_mols)
         self.solvent = solvent
+        self.priority_pharm_indices = priority_pharm_indices
 
         self.pharm_multi_vector = pharm_multi_vector
         self.condition = condition
@@ -487,6 +499,10 @@ class ConditionalEvalPipeline:
         self.sims_surf_target_relax_esp_aligned = np.empty(self.num_generated_mols)
         self.sims_pharm_target_relax_esp_aligned = np.empty(self.num_generated_mols)
 
+        if self.priority_pharm_indices is not None:
+            self.sims_pharm_priority_target_relax_optimal = np.empty(self.num_generated_mols)
+            self.sims_pharm_nonpriority_target_relax_optimal = np.empty(self.num_generated_mols)
+
         # 2D similarities
         self.graph_similarities = np.empty(self.num_generated_mols)
         self.graph_similarities_post_opt = np.empty(self.num_generated_mols)
@@ -532,7 +548,7 @@ class ConditionalEvalPipeline:
         if num_workers > 1:
             multiprocessing.set_start_method(mp_context, force=True)
             with set_thread_limits(num_processes):
-                inputs = [(i, self.ref_molec, self.condition, self.num_surf_points, self.pharm_multi_vector, atoms, positions, self.solvent, 1)
+                inputs = [(i, self.ref_molec, self.condition, self.num_surf_points, self.pharm_multi_vector, atoms, positions, self.solvent, 1, self.priority_pharm_indices)
                         for i, (atoms, positions) in enumerate(self.generated_mols)]
                 with multiprocessing.Pool(num_workers) as pool:
                     if verbose:
@@ -574,7 +590,8 @@ class ConditionalEvalPipeline:
 
                 res = _eval_conditional_single(
                     i, self.ref_molec, self.condition, self.num_surf_points,
-                    self.pharm_multi_vector, atoms, positions, self.solvent, num_processes
+                    self.pharm_multi_vector, atoms, positions, self.solvent, num_processes,
+                    self.priority_pharm_indices
                 )
                 self._process_single_result(res, i)
 
@@ -657,6 +674,10 @@ class ConditionalEvalPipeline:
 
         self.sims_surf_target_relax_esp_aligned[i] = res['sim_surf_target_relax_esp_aligned']
         self.sims_pharm_target_relax_esp_aligned[i] = res['sim_pharm_target_relax_esp_aligned']
+
+        if self.priority_pharm_indices is not None:
+            self.sims_pharm_priority_target_relax_optimal[i] = res['sim_pharm_priority_target_relax_optimal']
+            self.sims_pharm_nonpriority_target_relax_optimal[i] = res['sim_pharm_nonpriority_target_relax_optimal']
 
 
     def resampling_surf_scores(self) -> Union[np.ndarray, None]:
@@ -767,7 +788,7 @@ class ConditionalEvalPipeline:
         for key, value in self.__dict__.items():
             if key in ('smiles', 'smiles_post_opt', 'morgan_fps', 'morgan_fps_post_opt', 'ref_molec'):
                 continue
-            elif key in ('ref_surf_resampling_scores', 'ref_surf_esp_resampling_scores'):
+            elif key in ('ref_surf_resampling_scores', 'ref_surf_esp_resampling_scores', 'priority_pharm_indices'):
                 global_attrs[key] = value
 
             elif isinstance(value, (list, tuple, np.ndarray)) and not (isinstance(value, np.ndarray) and value.ndim == 0):
