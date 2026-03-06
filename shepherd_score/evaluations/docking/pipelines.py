@@ -656,20 +656,37 @@ class DockingEvalPipeline:
         )
         return best_energy, docked_ligand
 
-    def to_pandas(self) -> pd.DataFrame:
+    def to_pandas(self,
+        docked_mol_as_molblock: bool = False,
+        sort_by_energies: bool = True,
+        reset_index: bool = True,
+        ) -> pd.DataFrame:
         """
         Convert the attributes of generated smiles and the energies to a pd.DataFrame
+
+        Arguments
+        ---------
+        docked_mol_as_molblock : bool (default = False) Whether to convert the docked mol to a molblock
+        reset_index : bool (default = True) Whether to reset the index
+        sort_by_energies : bool (default = True) Whether to sort the dataframe by energies
 
         Returns
         -------
         pd.DataFrame : attributes for each evaluated sample
         """
-        global_attrs = {'smiles' : self.smiles, 'energies': self.energies}
-        series_global = pd.Series(global_attrs)
+        df = self._to_pandas_buffer(
+            buffer=self.buffer,
+            docked_mol_as_molblock=docked_mol_as_molblock,
+            sort_by_energies=sort_by_energies,
+            reset_index=reset_index,
+        )
+        return df
 
-        return series_global
-
-    def to_pandas_relaxed(self) -> pd.DataFrame:
+    def to_pandas_relaxed(self,
+        docked_mol_as_molblock: bool = False,
+        sort_by_energies: bool = True,
+        reset_index: bool = True,
+        ) -> pd.DataFrame:
         """
         Convert the attributes of relaxed mols and the energies to a pd.DataFrame
 
@@ -677,8 +694,34 @@ class DockingEvalPipeline:
         -------
         pd.DataFrame : attributes for each relaxed sample
         """
-        df_relaxed = pd.DataFrame(self.buffer_relaxed)
+        df_relaxed = self._to_pandas_buffer(
+            buffer=self.buffer_relaxed,
+            docked_mol_as_molblock=docked_mol_as_molblock,
+            sort_by_energies=sort_by_energies,
+            reset_index=reset_index,
+        )
         return df_relaxed
+
+    def _to_pandas_buffer(
+        self,
+        buffer: Dict[str, Any],
+        docked_mol_as_molblock: bool = False,
+        sort_by_energies: bool = True,
+        reset_index: bool = True,
+        ) -> pd.DataFrame:
+        """
+        Convert the buffer to a pd.DataFrame
+        """
+        df = pd.DataFrame(buffer).T
+        if docked_mol_as_molblock:
+            df['docked_mol'] = df['docked_mol'].apply(lambda x: Chem.MolToMolBlock(x))
+        if not reset_index:
+            df = df.reset_index(names='smiles')
+        if sort_by_energies:
+            df = df.sort_values(by='energy')
+        if reset_index:
+            df = df.reset_index(names='smiles')
+        return df
 
 
 def run_docking_benchmark(save_dir_path: str,
