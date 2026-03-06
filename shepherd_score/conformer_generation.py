@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from tqdm import tqdm
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Union
 import contextlib
 import multiprocessing
 
@@ -308,7 +308,7 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                                 solvent: Optional[str] = None,
                                 num_cores: int = 1,
                                 charge: int = 0,
-                                temp_dir: str | Path = TMPDIR):
+                                temp_dir: Union[str, Path] = TMPDIR):
     """
     Use external calls to GFN2-XTB (command line) to optimize a conformer geometry.
 
@@ -395,7 +395,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                                                solvent: Optional[str] = None,
                                                num_cores: int = 1,
                                                charge: int = 0,
-                                               temp_dir: str | Path = TMPDIR):
+                                               temp_dir: Union[str, Path] = TMPDIR):
     """
     Use external calls to GFN2-XTB (command line) to optimize coordinates from an xyz block.
 
@@ -483,7 +483,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                                                  solvent: Optional[str] = None,
                                                  num_cores: int = 1,
                                                  charge: int = 0,
-                                                 temp_dir: str | Path = TMPDIR
+                                                 temp_dir: Union[str, Path] = TMPDIR
                                                  ):
     """
     Compute atomic partial charges from a single point xTB calculation of a provided conformer.
@@ -558,7 +558,7 @@ def single_point_xtb_from_xyz(xyz_block: str,
                               solvent: Optional[str] = None,
                               num_cores: int = 1,
                               charge: int = 0,
-                              temp_dir: str | Path = TMPDIR):
+                              temp_dir: Union[str, Path] = TMPDIR):
     """
     Compute energy and atomic partial charges from a single point xTB calculation.
 
@@ -648,7 +648,7 @@ def optimize_conformer_ensemble_with_xtb(conformers: List[Chem.Mol],
                                        num_processes: int = 1,
                                        num_workers: int = 1,
                                        charge: int = 0,
-                                       temp_dir: str | Path = TMPDIR,
+                                       temp_dir: Union[str, Path] = TMPDIR,
                                        verbose: bool = False):
     """
     GFN2-XTB geometry optimization for a list of conformers.
@@ -735,7 +735,7 @@ def generate_opt_conformers_xtb(smiles: str,
                                 MMFF_optimize: bool = True,
                                 num_processes: int = 1,
                                 num_workers: int = 1,
-                                temp_dir: str | Path = TMPDIR,
+                                temp_dir: Union[str, Path] = TMPDIR,
                                 verbose: bool = False,
                                 num_confs: int = 1000):
     """
