@@ -1,7 +1,7 @@
 """
 Alignment implementation in Jax.
 """
-from typing import Union, List, Tuple, Callable
+from typing import Union, List, Tuple, Callable, Optional
 from functools import lru_cache, partial
 
 import numpy as np
@@ -12,7 +12,7 @@ import optax
 
 import torch
 
-from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax
+from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_linear_hard_sphere_overlap_jax
 from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax
 from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, get_overlap_pharm_jax_vectorized, _SIM_TYPE
 from shepherd_score.alignment_utils.pca_jax import quaternions_for_principal_component_alignment_jax, rotation_axis_jax, vmap_angle_between_vecs_jax, vmap_quaternion_from_axis_angle_jax
@@ -97,8 +97,7 @@ def _objective_ROCS_overlay_jax(se3_params: Array,
 
     Returns
     -------
-    loss : Array (1,)
-        1 - Tanimoto score
+    Tanimoto overlap score
     """
     se3_matrix = get_SE3_transform_jax(se3_params)
     fit_points = apply_SE3_transform_jax(fit_points, se3_matrix)
@@ -106,6 +105,68 @@ def _objective_ROCS_overlay_jax(se3_params: Array,
     return score
 
 batched_obj_ROCS_overlay_helper = vmap(_objective_ROCS_overlay_jax, (0, None, None, None))
+
+def _score_ROCS_overlay_with_avoid_jax(ref_points: Array,
+                                       fit_points: Array,
+                                       alpha: float,
+                                       fit_points_for_avoid: Array,
+                                       avoid_points: Array,
+                                       avoid_min_dist: float,
+                                       avoid_weight: float) -> Array:
+    """See _objective_ROCS_overlay_with_avoid_jax. """
+    score = get_overlap_jax(ref_points, fit_points, alpha)
+    avoid_score = get_linear_hard_sphere_overlap_jax(avoid_points, fit_points_for_avoid, avoid_min_dist)
+    return score - avoid_weight * avoid_score
+
+# This parallels vmap_get_overlap_jax but for the case with avoid points.
+vmap_score_ROCS_overlay_with_avoid_jax = vmap(_score_ROCS_overlay_with_avoid_jax, (None, 0, None, 0, None, None, None))
+
+def _objective_ROCS_overlay_with_avoid_jax(se3_params: Array,
+                                ref_points: Array,
+                                fit_points: Array,
+                                alpha: float,
+                                fit_points_for_avoid: Array,
+                                avoid_points: Array,
+                                avoid_min_dist: float,
+                                avoid_weight: float,
+                                ) -> Array:
+    """
+    Objective function to optimize ROCS overlay while avoiding certain points.
+    Jax implementation.
+
+    Parameters
+    ----------
+    se3_params : Array (7,)
+        Parameters for SE(3) transformation.
+        The first 4 values in the last dimension are quaternions of form (r,i,j,k)
+        and the last 3 values of the last dimension are the translations in (x,y,z).
+    ref_points : Array (N,3)
+        Reference points.
+    fit_points : Array (M,3)
+        Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
+    alpha : float
+        Gaussian width parameter used in scoring function.
+    fit_points_for_avoid : Array (M,3)
+        Set of points to apply SE(3) transformations to then compare to avoid_points
+    avoid_points : Array (K,3)
+        Penalize overlap with these points
+    avoid_min_dist : float
+        Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
+    avoid_weight : float
+        Weight for the avoid_points term in the scoring function.
+
+    Returns
+    -------
+    score in range [-avoid_weight, 1] where higher is better. 1 is complete fit and ref overlap
+    with no avoid overlap, -avoid_weight is no fit and ref overlap and complete fit avoid overlap.
+    """
+    se3_matrix = get_SE3_transform_jax(se3_params)
+    fit_points = apply_SE3_transform_jax(fit_points, se3_matrix)
+    fit_points_for_avoid = apply_SE3_transform_jax(fit_points_for_avoid, se3_matrix)
+    return _score_ROCS_overlay_with_avoid_jax(ref_points, fit_points, alpha, fit_points_for_avoid, avoid_points, avoid_min_dist, avoid_weight)
+
+batched_obj_ROCS_overlay_with_avoid_helper = vmap(_objective_ROCS_overlay_with_avoid_jax, (0, None, None, None, None, None, None, None))
+
 
 def objective_ROCS_overlay_jax(se3_params: Array,
                                ref_points: Array,
@@ -141,6 +202,62 @@ def objective_ROCS_overlay_jax(se3_params: Array,
                                              ref_points,
                                              fit_points,
                                              alpha)
+    return 1 - scores.mean()
+
+def objective_ROCS_overlay_with_avoid_jax(
+        se3_params: Array,
+        ref_points: Array,
+        fit_points: Array,
+        alpha: float,
+        fit_points_for_avoid: Array,
+        avoid_points: Array,
+        avoid_min_dist: float,
+        avoid_weight: float,
+        ) -> Array:
+    """
+    Objective function to optimize ROCS overlay.
+    Includes points where overlap is a negative.
+    Jax implementation.
+
+    Parameters
+    ----------
+    se3_params : Array (batch, 7)
+        Parameters for SE(3) transformation. Expects batch.
+        The first 4 values in the last dimension are quaternions of form (r,i,j,k)
+        and the last 3 values of the last dimension are the translations in (x,y,z).
+    ref_points : Array (N,3)
+        Reference points. (NOT batched since it assumes the same reference points).
+    fit_points : Array (M,3)
+        Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
+    alpha : float
+        Gaussian width parameter used in scoring function.
+    fit_points_for_avoid : Array (M,3)
+        Set of points to apply SE(3) transformations to then compare to avoid_points
+    avoid_points : Array (K,3)
+        Penalize overlap with these points
+    avoid_points : Array (K,3)
+        Penalize overlap with these points
+    avoid_min_dist : float
+        Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
+    avoid_weight : float
+        Weight for the avoid_points term in the scoring function.
+
+    Returns
+    -------
+    loss : Array (1,)
+        1
+        - (Tanimoto score of fit/ref)
+        + avoid_weight * (max pairwise overlap of fit/avoid)
+    """
+    scores = batched_obj_ROCS_overlay_with_avoid_helper(
+        se3_params,
+        ref_points,
+        fit_points,
+        alpha,
+        fit_points_for_avoid,
+        avoid_points,
+        avoid_min_dist,
+        avoid_weight)
     return 1 - scores.mean()
 
 
@@ -374,6 +491,7 @@ def _initialize_se3_params_jax(ref_points: Array,
 
 
 jit_val_grad_obj_ROCS = jit(value_and_grad(objective_ROCS_overlay_jax))
+jit_val_grad_obj_ROCS_with_avoid = jit(value_and_grad(objective_ROCS_overlay_with_avoid_jax))
 
 @partial(jax.jit, static_argnames=['val_and_grad_fn', 'max_num_steps'])
 def _generic_optimize_loop(
@@ -438,12 +556,17 @@ def _generic_optimize_loop(
 def optimize_ROCS_overlay_jax(ref_points: Array,
                               fit_points: Array,
                               alpha: float,
+                              *,
+                              fit_points_for_avoid: Optional[Array] = None,
+                              avoid_points: Optional[Array] = None,
+                              avoid_min_dist: float = 2.0,
+                              avoid_weight: float = 1.0,
                               num_repeats: int = 50,
                               trans_centers: Union[Array, np.ndarray, None] = None,
                               lr: float = 0.1,
                               max_num_steps: int = 200,
                               verbose: bool = False
-                              ) -> Tuple[Array]:
+                              ) -> Tuple[Array, Array, Array]:
     """
     Optimize alignment of fit_points with respect to ref_points using SE(3) transformations and
     maximizing gaussian overlap score.
@@ -459,6 +582,15 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     alpha : float
         Gaussian width parameter used in scoring function.
+    fit_points_for_avoid : Array (M,3)
+        Set of points to apply SE(3) transformations to then compare to avoid_points
+    avoid_points : Array (K,3) (default=None)
+        If not None, these are points that are used in an additional term in the objective function
+        to penalize overlap with these points.
+    avoid_min_dist : float (default=2.0)
+        Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
+    avoid_weight : float (default=1.0)
+        Weight for the avoid_points term in the scoring function.
     num_repeats : int (default=50)
         Number of different random initializations of SE(3) transformation parameters.
     trans_centers : array (P, 3) (default=None)
@@ -505,22 +637,46 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
     if len(se3_params.shape) == 1:
         se3_params = se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
-    data_args = (ref_points, fit_points, alpha)
+
+    if fit_points_for_avoid is None:
+        fit_points_for_avoid = fit_points
 
     if verbose:
         print(f'Initial score: {get_overlap_jax(ref_points, fit_points, alpha):.3f}')
 
-    se3_opt = _generic_optimize_loop(
-        se3_params,
-        data_args,
-        jit_val_grad_obj_ROCS,
-        lr,
-        max_num_steps
-    )
+    if avoid_points is None:
+        data_args = (ref_points, fit_points, alpha)
+        se3_opt = _generic_optimize_loop(
+            se3_params,
+            data_args,
+            jit_val_grad_obj_ROCS,
+            lr,
+            max_num_steps
+        )
+    else:
+        data_args = (ref_points,
+                     fit_points,
+                     alpha,
+                     fit_points_for_avoid,
+                     avoid_points,
+                     avoid_min_dist,
+                     avoid_weight)
+        se3_opt = _generic_optimize_loop(
+            se3_params,
+            data_args,
+            jit_val_grad_obj_ROCS_with_avoid,
+            lr,
+            max_num_steps
+        )
+
 
     SE3_transform = vmap_get_SE3_transform_jax(se3_opt)
     aligned_points = vmap_apply_SE3_transform_jax(fit_points, SE3_transform)
-    scores = vmap_get_overlap_jax(ref_points, aligned_points, alpha)
+    if avoid_points is None:
+        scores = vmap_get_overlap_jax(ref_points, aligned_points, alpha)
+    else:
+        aligned_points_for_avoid = vmap_apply_SE3_transform_jax(fit_points_for_avoid, SE3_transform)
+        scores = vmap_score_ROCS_overlay_with_avoid_jax(ref_points, aligned_points, alpha, aligned_points_for_avoid, avoid_points, avoid_min_dist, avoid_weight)
 
     if verbose:
          print(f'Optimized score max: {scores.max():.3f} | mean: {scores.mean():.3f}')

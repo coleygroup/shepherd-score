@@ -105,6 +105,64 @@ def get_overlap(centers_1: Union[torch.Tensor, np.ndarray],
     tanimoto = shape_tanimoto(centers_1, centers_2, alpha)
     return tanimoto
 
+def get_max_overlap(centers_1: Union[torch.Tensor, np.ndarray],
+                    centers_2: Union[torch.Tensor, np.ndarray],
+                    alpha:float = 0.81
+                    ) -> torch.Tensor:
+    """ Maximum overlap volume among any pair of centers (always in [0, 1] range)."""
+    if isinstance(centers_1, np.ndarray):
+        centers_1 = torch.Tensor(centers_1)
+    if isinstance(centers_2, np.ndarray):
+        centers_2 = torch.Tensor(centers_2)
+    R2_cdist = torch.cdist(centers_1, centers_2)**2.0
+ 
+    # Batched case
+    if len(R2_cdist.shape) == 3:
+        R2 = R2_cdist.permute(0, 2, 1)  # (B, N_c2, N_c1)
+
+        return torch.amax(torch.exp(-(alpha / 2) * R2), dim=(1,2))  # Max over N_c2 and N_c1, resulting shape: (B,)
+
+    # Single instance
+    elif len(R2_cdist.shape) == 2:
+        return torch.max(torch.exp(-(alpha / 2) * R2_cdist))
+
+    else:
+        raise ValueError(
+            f"Unexpected shape from torch.cdist: {R2_cdist.shape}. "
+            f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
+        )
+
+def get_linear_hard_sphere_overlap(centers_1: Union[torch.Tensor, np.ndarray], 
+                                   centers_2: Union[torch.Tensor, np.ndarray],
+                                   min_dist: float) -> torch.Tensor:
+    """Compute linear hard sphere overlap . 
+    
+    See get_linear_hard_sphere_overlap_np for details.
+    """
+    if isinstance(centers_1, np.ndarray):
+        centers_1 = torch.Tensor(centers_1)
+    if isinstance(centers_2, np.ndarray):
+        centers_2 = torch.Tensor(centers_2)
+    dists = torch.cdist(centers_1, centers_2)
+    # Batched case
+    if len(dists.shape) == 3:
+        dists = dists.permute(0, 2, 1)  # (B, N_c2, N_c1)
+
+        # Sum over N_c2 and N_c1, resulting shape: (B,)
+        return torch.sum(F.relu((min_dist - dists) / min_dist), dim=(1,2))
+
+    # Single instance
+    elif len(dists.shape) == 2:
+        return torch.sum(F.relu((min_dist - dists) / min_dist))
+
+
+    else:
+        raise ValueError(
+            f"Unexpected shape from torch.cdist: {dists.shape}. "
+            f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
+        )
+
+    return jnp.sum(jax.nn.relu((min_dist - dists) / min_dist))
 
 def VAB_2nd_order_mask(centers_1: torch.Tensor,
                        centers_2: torch.Tensor,

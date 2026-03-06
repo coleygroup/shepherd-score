@@ -39,6 +39,29 @@ def get_overlap_np(centers_1:np.ndarray,
     tanimoto = shape_tanimoto_np(centers_1, centers_2, alpha)
     return tanimoto
 
+def get_max_overlap_np(centers_1: np.ndarray,
+                       centers_2: np.ndarray,
+                       alpha: float = 0.81
+                       ) -> np.ndarray:
+    """ Maximum overlap volume among any pair of centers (always in [0, 1] range)."""
+    R2 = (distance.cdist(centers_1, centers_2)**2.0).T
+
+    return np.max(np.exp(-(alpha / 2) * R2))
+
+def get_linear_hard_sphere_overlap_np(centers_1: np.ndarray, centers_2: np.ndarray, min_dist: float) -> np.ndarray:
+    """ Compute linear hard sphere overlap.
+     
+    This function is linear based on the distance between centers
+    For distance d
+    d > min_dist: 0
+    0 < d < min_dist: linear from 0 to 1
+    d == 0: 1
+
+    Returns:
+        np.ndarray shape (1,) with the sum of hard sphere overlaps between)
+    """
+    dists = distance.cdist(centers_1, centers_2)
+    return np.sum(np.maximum((min_dist - dists) / min_dist, 0.0))
 
 def VAB_2nd_order_cosine_np(centers_1: np.ndarray,
                             centers_2: np.ndarray,

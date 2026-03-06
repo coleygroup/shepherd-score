@@ -1,9 +1,12 @@
 """
 Tests for alignment function consistency between PyTorch and Jax.
 """
+import copy
 import pytest
 import torch
 import numpy as np
+from rdkit import Chem
+import shepherd_score
 from shepherd_score.alignment import (
     optimize_ROCS_overlay,
     optimize_ROCS_esp_overlay,
@@ -11,6 +14,7 @@ from shepherd_score.alignment import (
     optimize_pharm_overlay,
 )
 from shepherd_score.score.constants import P_TYPES
+from shepherd_score.conformer_generation import embed_conformer_from_smiles
 from .utils import _configure_jax_platform
 
 # Attempt to import JAX and related modules
@@ -517,3 +521,56 @@ class TestOptimizePharmOverlayVectorizedConsistency:
             "across repeated calls with identical (similarity, extended_points, "
             "only_extended) — recompilation regression detected."
         )
+
+
+# Use two different conformers for aspirin so that we have some alignment but it is
+# not perfect.
+@pytest.fixture
+def aspirin_ref():
+    return embed_conformer_from_smiles('O=C(C)Oc1ccccc1C(=O)O', random_seed=13579)
+
+@pytest.fixture
+def aspirin_fit():
+    return embed_conformer_from_smiles('O=C(C)Oc1ccccc1C(=O)O', random_seed=24680)
+
+class TestVolumeOverlapWithAvoid:
+
+    def test_jax(self, aspirin_ref, aspirin_fit):
+        aligned_points, _, score = optimize_ROCS_overlay_jax(
+            ref_points=jnp.array(aspirin_ref.GetConformer().GetPositions(), dtype=np.float32),
+            fit_points=jnp.array(aspirin_fit.GetConformer().GetPositions(), dtype=np.float32),
+            alpha=0.81,
+            num_repeats=4)
+        assert score > 0.85, f"Expected good volume overlap, got {score}"
+
+        # The first avoid point is set to be right by the carbon on fit furthest out from
+        # the ring.
+        # The second point is far away from everything and shouldn't have any effect.
+        avoid_aligned_points, _, avoid_score = optimize_ROCS_overlay_jax(
+            ref_points=jnp.array(aspirin_ref.GetConformer().GetPositions(), dtype=np.float32),
+            fit_points=jnp.array(aspirin_fit.GetConformer().GetPositions(), dtype=np.float32),
+            alpha=0.81,
+            num_repeats=4,
+            avoid_points=jnp.array([[3, 1, 0], [10, 10, 10]], dtype=np.float32),
+            avoid_min_dist=4.0)  # This is a pretty large avoid area to have a clear effect
+        assert avoid_score < 0.5, f"Expected much worse volume overlap, got {avoid_score}"
+
+    def test_torch(self, aspirin_ref, aspirin_fit):
+        aligned_points, _, score = optimize_ROCS_overlay(
+            ref_points=torch.tensor(aspirin_ref.GetConformer().GetPositions(), dtype=torch.float32),
+            fit_points=torch.tensor(aspirin_fit.GetConformer().GetPositions(), dtype=torch.float32),
+            alpha=0.81,
+            num_repeats=4)
+        assert score > 0.85, f"Expected good volume overlap, got {score}"
+
+        # The first avoid point is set to be right by the caron on fit furthest out from
+        # the ring.
+        # The second point is far away from everything and shouldn't have any effect.
+        avoid_aligned_points, _, avoid_score = optimize_ROCS_overlay(
+            ref_points=torch.tensor(aspirin_ref.GetConformer().GetPositions(), dtype=torch.float32),
+            fit_points=torch.tensor(aspirin_fit.GetConformer().GetPositions(), dtype=torch.float32),
+            alpha=0.81,
+            num_repeats=4,
+            avoid_points=torch.tensor([[3, 1, 0], [10, 10, 10]], dtype=torch.float32),
+            avoid_min_dist=4.0)  # This is a pretty large avoid area to have a clear effect
+        assert avoid_score < 0.5, f"Expected much worse volume overlap, got {avoid_score}"
