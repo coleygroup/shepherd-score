@@ -83,7 +83,7 @@ def score_ROCS_overlay_with_avoid(
     avoid_score = get_linear_hard_sphere_overlap(fit_points_for_avoid, avoid_points, avoid_min_dist)
     return overlap_score - avoid_weight * avoid_score
 
-  
+
 def objective_ROCS_overlay_with_avoid(
         se3_params: torch.Tensor,
         ref_points: torch.Tensor,
@@ -113,7 +113,7 @@ def objective_ROCS_overlay_with_avoid(
         se3_params, try use torch.Tensor.repeat((batch, 1, 1)).
     alpha : float
         Gaussian width parameter used in scoring function.
-    fit_points_for_avoid : torch.Tensor (M,3)  
+    fit_points_for_avoid : torch.Tensor (M,3)
         Set of points to apply SE(3) transformations to then compare to avoid_points
     avoid_points : torch.Tensor (K,3) (default=None)
         If not None, these are points that are used in an additional term in the objective function
@@ -121,11 +121,11 @@ def objective_ROCS_overlay_with_avoid(
     avoid_min_dist : float (default=2.0)
         Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
     avoid_weight : float (default=1.0)
-        Weight for the avoid_points term in the scoring function. 
+        Weight for the avoid_points term in the scoring function.
     Returns
     -------
     loss : torch.Tensor (1,)
-        1 - (average(Tanimoto score fit_points to ref_points) 
+        1 - (average(Tanimoto score fit_points to ref_points)
              - avoid_weight * average(hard sphere overlap of fit_points_for_avoid to avoid_points)).
     """
     if len(fit_points.shape) - 1 != len(se3_params.shape):
@@ -145,7 +145,7 @@ def objective_ROCS_overlay_with_avoid(
                                         avoid_points=avoid_points,
                                         avoid_min_dist=avoid_min_dist,
                                         avoid_weight=avoid_weight)
-    
+
     # Single instance
     if len(se3_params.shape) == 1:
         return 1 - score
@@ -424,7 +424,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
     avoid_min_dist : float (default=2.0)
         Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
     avoid_weight : float (default=1.0)
-        Weight for the avoid_points term in the scoring function. 
+        Weight for the avoid_points term in the scoring function.
     num_repeats : int (default=50)
         Number of different random initializations of SE(3) transformation parameters.
     trans_centers : torch.Tensor (P, 3) (default=None)
@@ -476,7 +476,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
     if num_repeats == 1:
         fit_points_to_transform = fit_points
         if fit_points_for_avoid is not None:
-            fit_points_for_avoid_to_transform = fit_points_for_avoid    
+            fit_points_for_avoid_to_transform = fit_points_for_avoid
     else:
         fit_points_to_transform = fit_points.repeat((num_repeats,1,1))
         if fit_points_for_avoid is not None:
@@ -520,7 +520,7 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
     SE3_transform = get_SE3_transform(optimized_se3_params)
     aligned_points = apply_SE3_transform(fit_points_to_transform, SE3_transform)
     if avoid_points is not None:
-        aligned_points_for_avoid = apply_SE3_transform(fit_points_for_avoid_to_transform, 
+        aligned_points_for_avoid = apply_SE3_transform(fit_points_for_avoid_to_transform,
                                                        SE3_transform)
         scores = score_ROCS_overlay_with_avoid(ref_points=ref_points,
                                             fit_points=aligned_points,

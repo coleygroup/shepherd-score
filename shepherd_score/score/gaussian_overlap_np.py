@@ -50,7 +50,7 @@ def get_max_overlap_np(centers_1: np.ndarray,
 
 def get_linear_hard_sphere_overlap_np(centers_1: np.ndarray, centers_2: np.ndarray, min_dist: float) -> np.ndarray:
     """ Compute linear hard sphere overlap.
-     
+
     This function is linear based on the distance between centers
     For distance d
     d > min_dist: 0

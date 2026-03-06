@@ -91,8 +91,8 @@ def get_max_overlap_jax(centers_1: Array, centers_2: Array, alpha: float) -> Arr
 
 @jit
 def get_linear_hard_sphere_overlap_jax(centers_1: Array, centers_2: Array, min_dist: float) -> Array:
-    """Compute linear hard sphere overlap . 
-    
+    """Compute linear hard sphere overlap .
+
     See get_linear_hard_sphere_overlap_np for details.
     """
     dists = jax_cdist(centers_1, centers_2)

@@ -420,7 +420,7 @@ class TestGaussianOverlapJAX:
         actual_jax = go_jax.get_overlap_jax(c1_jnp, c2_jnp, alpha=alpha)
 
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
-    
+
     def test_get_max_overlap_jax(self):
         alpha = 0.81
         # Using fixed_seed for reproducibility with JAX tests as well

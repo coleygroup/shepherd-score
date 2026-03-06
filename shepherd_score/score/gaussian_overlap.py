@@ -115,7 +115,7 @@ def get_max_overlap(centers_1: Union[torch.Tensor, np.ndarray],
     if isinstance(centers_2, np.ndarray):
         centers_2 = torch.Tensor(centers_2)
     R2_cdist = torch.cdist(centers_1, centers_2)**2.0
- 
+
     # Batched case
     if len(R2_cdist.shape) == 3:
         R2 = R2_cdist.permute(0, 2, 1)  # (B, N_c2, N_c1)
@@ -132,11 +132,11 @@ def get_max_overlap(centers_1: Union[torch.Tensor, np.ndarray],
             f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
         )
 
-def get_linear_hard_sphere_overlap(centers_1: Union[torch.Tensor, np.ndarray], 
+def get_linear_hard_sphere_overlap(centers_1: Union[torch.Tensor, np.ndarray],
                                    centers_2: Union[torch.Tensor, np.ndarray],
                                    min_dist: float) -> torch.Tensor:
-    """Compute linear hard sphere overlap . 
-    
+    """Compute linear hard sphere overlap .
+
     See get_linear_hard_sphere_overlap_np for details.
     """
     if isinstance(centers_1, np.ndarray):
@@ -162,7 +162,6 @@ def get_linear_hard_sphere_overlap(centers_1: Union[torch.Tensor, np.ndarray],
             f"Input shapes were: centers_1={centers_1.shape}, centers_2={centers_2.shape}"
         )
 
-    return jnp.sum(jax.nn.relu((min_dist - dists) / min_dist))
 
 def VAB_2nd_order_mask(centers_1: torch.Tensor,
                        centers_2: torch.Tensor,
