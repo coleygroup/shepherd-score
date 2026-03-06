@@ -127,7 +127,7 @@ def read_multi_xyz_file(file_dir: str):
     return all_coordinates, all_elements
 
 
-def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
+def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False, random_seed=-1):
     """
     Embed a mol object into a 3D RDKit mol object with ETKDG (and optional MMFF94).
 
@@ -139,6 +139,8 @@ def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
         Number of embedding attempts. Default is 50.
     MMFF_optimize : bool, optional
         Whether to optimize embedded conformer with MMFF94. Default is ``False``.
+    random_seed: int, optional
+        Seed for RDKit's EmbedMolecule. -1 means no seed, otherwise must be positive.
 
     Returns
     -------
@@ -147,7 +149,7 @@ def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
     """
     try:
         mol = Chem.AddHs(mol)
-        AllChem.EmbedMolecule(mol, maxAttempts = attempts)
+        AllChem.EmbedMolecule(mol, maxAttempts = attempts, randomSeed = random_seed)
         if MMFF_optimize:
             AllChem.MMFFOptimizeMolecule(mol)
 
@@ -158,7 +160,7 @@ def embed_conformer(mol: Chem.Mol, attempts: int=50, MMFF_optimize: bool=False):
     return mol
 
 
-def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: bool = False):
+def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: bool = False, random_seed: int = -1):
     """
     Embed a SMILES into a 3D RDKit mol object with ETKDG (and optionally MMFF94).
 
@@ -170,6 +172,8 @@ def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: 
         Number of embedding attempts. Default is 50.
     MMFF_optimize : bool, optional
         Whether to optimize embedded conformer with MMFF94. Default is ``False``.
+    random_seed: int, optional
+        Seed for RDKit's EmbedMolecule. -1 means no seed, otherwise must be positive.
 
     Returns
     -------
@@ -181,7 +185,7 @@ def embed_conformer_from_smiles(smiles: str, attempts: int = 50, MMFF_optimize: 
     except Exception as e:
         print('Error in SMILES string when embedding molecule:', e)
         return None
-    mol = embed_conformer(mol, attempts, MMFF_optimize)
+    mol = embed_conformer(mol, attempts, MMFF_optimize, random_seed)
     return mol
 
 

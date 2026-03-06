@@ -82,6 +82,21 @@ def get_overlap_jax(centers_1: Array,
     tanimoto = shape_tanimoto_jax(centers_1, centers_2, alpha)
     return tanimoto
 
+@jit
+def get_max_overlap_jax(centers_1: Array, centers_2: Array, alpha: float) -> Array:
+    """ Maximum overlap volume among any pair of centers (always in [0, 1] range)."""
+    R2 = jax_sq_cdist(centers_1, centers_2)
+
+    return jnp.max(jnp.exp(-(alpha / 2) * R2))
+
+@jit
+def get_linear_hard_sphere_overlap_jax(centers_1: Array, centers_2: Array, min_dist: float) -> Array:
+    """Compute linear hard sphere overlap .
+
+    See get_linear_hard_sphere_overlap_np for details.
+    """
+    dists = jax_cdist(centers_1, centers_2)
+    return jnp.sum(jax.nn.relu((min_dist - dists) / min_dist))
 
 @jit
 def _mask_prod_jax(mask_1: Array, mask_2: Array):

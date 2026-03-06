@@ -47,6 +47,19 @@ def _generate_data(batch_size=None, num_points1=10, num_points2=12, dim=3, fixed
     return (centers_1_np, centers_2_np, vectors_1_np, vectors_2_np, mask_1_np, mask_2_np,
             centers_1_torch, centers_2_torch, vectors_1_torch, vectors_2_torch, mask_1_torch, mask_2_torch)
 
+class TestGaussianOverlapNP:
+    """We treat the numpy functions as truth for the later tests so this is specifc cases for that functionality."""
+    def test_linear_hard_sphere_overlap(self):
+        min_dist = 2.0
+        c1_np = np.asarray([(x*10, x*10, x*10) for x in range(5)], dtype=np.float32)
+        # The first point is a complete overlap, seconds if halfway, third is at edge, fourth is far away
+        c2_np = np.asarray([[10, 10, 10], [21, 20, 20], [32, 30, 30], [44, 40, 40]], dtype=np.float32)
+        np.testing.assert_allclose(go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np[0:1], min_dist=min_dist), 1)
+        np.testing.assert_allclose(go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np[1:2], min_dist=min_dist), 0.5)
+        np.testing.assert_allclose(go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np[2:3], min_dist=min_dist), 0)
+        np.testing.assert_allclose(go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np[3:4], min_dist=min_dist), 0)
+        np.testing.assert_allclose(go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np, min_dist=min_dist), 1.5)
+
 class TestGaussianOverlapTorch:
     def test_get_overlap_single_instance(self):
         alpha = 0.81
@@ -92,6 +105,98 @@ class TestGaussianOverlapTorch:
             expected_batch.append(go_np.get_overlap_np(c1_np_batch[i], c2_np_single, alpha=alpha))
         expected = np.array(expected_batch)
         actual = go.get_overlap(c1_torch_batch, c2_torch_single, alpha=alpha)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_max_overlap_single_instance(self):
+        alpha = 0.81
+        c1_np, c2_np, _, _, _, _, c1_torch, c2_torch, _, _, _, _ = _generate_data()
+        expected = go_np.get_max_overlap_np(c1_np, c2_np, alpha=alpha)
+        actual = go.get_max_overlap(c1_torch, c2_torch, alpha=alpha)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_max_overlap_batched(self):
+        alpha = 0.81
+        batch_size = 4
+        c1_np, c2_np, _, _, _, _, c1_torch, c2_torch, _, _, _, _ = _generate_data(batch_size=batch_size)
+        expected_batch = []
+        for i in range(batch_size):
+            expected_batch.append(go_np.get_max_overlap_np(c1_np[i], c2_np[i], alpha=alpha))
+        expected = np.array(expected_batch)
+        actual = go.get_max_overlap(c1_torch, c2_torch, alpha=alpha)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_max_overlap_broadcast_c1(self):
+        alpha = 0.81
+        batch_size = 4
+        data_full_batch = _generate_data(batch_size=batch_size, num_points1=10, num_points2=12)
+        c1_np_orig_batch, c2_np_batch, _, _, _, _, c1_torch_orig_batch, c2_torch_batch, _, _, _, _ = data_full_batch
+        c1_np_single = c1_np_orig_batch[0]
+        c1_torch_single = c1_torch_orig_batch[0]
+        expected_batch = []
+        for i in range(batch_size):
+            expected_batch.append(go_np.get_max_overlap_np(c1_np_single, c2_np_batch[i], alpha=alpha))
+        expected = np.array(expected_batch)
+        actual = go.get_max_overlap(c1_torch_single, c2_torch_batch, alpha=alpha)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_max_overlap_broadcast_c2(self):
+        alpha = 0.81
+        batch_size = 4
+        data_full_batch = _generate_data(batch_size=batch_size, num_points1=10, num_points2=12)
+        c1_np_batch, c2_np_orig_batch, _, _, _, _, c1_torch_batch, c2_torch_orig_batch, _, _, _, _ = data_full_batch
+        c2_np_single = c2_np_orig_batch[0]
+        c2_torch_single = c2_torch_orig_batch[0]
+        expected_batch = []
+        for i in range(batch_size):
+            expected_batch.append(go_np.get_max_overlap_np(c1_np_batch[i], c2_np_single, alpha=alpha))
+        expected = np.array(expected_batch)
+        actual = go.get_max_overlap(c1_torch_batch, c2_torch_single, alpha=alpha)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_linear_hard_sphere_overlap_single_instance(self):
+        min_dist = 2.0
+        c1_np, c2_np, _, _, _, _, c1_torch, c2_torch, _, _, _, _ = _generate_data()
+        expected = go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np, min_dist=min_dist)
+        actual = go.get_linear_hard_sphere_overlap(c1_torch, c2_torch, min_dist=min_dist)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_linear_hard_sphere_overlap_batched(self):
+        min_dist = 2.0
+        batch_size = 4
+        c1_np, c2_np, _, _, _, _, c1_torch, c2_torch, _, _, _, _ = _generate_data(batch_size=batch_size)
+        expected_batch = []
+        for i in range(batch_size):
+            expected_batch.append(go_np.get_linear_hard_sphere_overlap_np(c1_np[i], c2_np[i], min_dist=min_dist))
+        expected = np.array(expected_batch)
+        actual = go.get_linear_hard_sphere_overlap(c1_torch, c2_torch, min_dist=min_dist)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_linear_hard_sphere_overlap_broadcast_c1(self):
+        min_dist = 2.0
+        batch_size = 4
+        data_full_batch = _generate_data(batch_size=batch_size, num_points1=10, num_points2=12)
+        c1_np_orig_batch, c2_np_batch, _, _, _, _, c1_torch_orig_batch, c2_torch_batch, _, _, _, _ = data_full_batch
+        c1_np_single = c1_np_orig_batch[0]
+        c1_torch_single = c1_torch_orig_batch[0]
+        expected_batch = []
+        for i in range(batch_size):
+            expected_batch.append(go_np.get_linear_hard_sphere_overlap_np(c1_np_single, c2_np_batch[i], min_dist=min_dist))
+        expected = np.array(expected_batch)
+        actual = go.get_linear_hard_sphere_overlap(c1_torch_single, c2_torch_batch, min_dist=min_dist)
+        np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
+
+    def test_get_linear_hard_sphere_overlap_broadcast_c2(self):
+        min_dist = 2.0
+        batch_size = 4
+        data_full_batch = _generate_data(batch_size=batch_size, num_points1=10, num_points2=12)
+        c1_np_batch, c2_np_orig_batch, _, _, _, _, c1_torch_batch, c2_torch_orig_batch, _, _, _, _ = data_full_batch
+        c2_np_single = c2_np_orig_batch[0]
+        c2_torch_single = c2_torch_orig_batch[0]
+        expected_batch = []
+        for i in range(batch_size):
+            expected_batch.append(go_np.get_linear_hard_sphere_overlap_np(c1_np_batch[i], c2_np_single, min_dist=min_dist))
+        expected = np.array(expected_batch)
+        actual = go.get_linear_hard_sphere_overlap(c1_torch_batch, c2_torch_single, min_dist=min_dist)
         np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-5)
 
     @pytest.mark.parametrize("allow_antiparallel", [False, True])
@@ -313,6 +418,32 @@ class TestGaussianOverlapJAX:
 
         expected_np = go_np.get_overlap_np(c1_np, c2_np, alpha=alpha)
         actual_jax = go_jax.get_overlap_jax(c1_jnp, c2_jnp, alpha=alpha)
+
+        np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
+
+    def test_get_max_overlap_jax(self):
+        alpha = 0.81
+        # Using fixed_seed for reproducibility with JAX tests as well
+        c1_np, c2_np, _, _, _, _, _, _, _, _, _, _ = _generate_data(fixed_seed=101)
+
+        c1_jnp = jnp.array(c1_np)
+        c2_jnp = jnp.array(c2_np)
+
+        expected_np = go_np.get_max_overlap_np(c1_np, c2_np, alpha=alpha)
+        actual_jax = go_jax.get_max_overlap_jax(c1_jnp, c2_jnp, alpha=alpha)
+
+        np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
+
+    def test_linear_hard_sphere_jax(self):
+        # Using fixed_seed for reproducibility with JAX tests as well
+        min_dist = 2.0
+        c1_np, c2_np, _, _, _, _, _, _, _, _, _, _ = _generate_data(fixed_seed=101)
+
+        c1_jnp = jnp.array(c1_np)
+        c2_jnp = jnp.array(c2_np)
+
+        expected_np = go_np.get_linear_hard_sphere_overlap_np(c1_np, c2_np, min_dist=min_dist)
+        actual_jax = go_jax.get_linear_hard_sphere_overlap_jax(c1_jnp, c2_jnp, min_dist=min_dist)
 
         np.testing.assert_allclose(np.array(actual_jax), expected_np, rtol=1e-5, atol=1e-7)
 

@@ -3,7 +3,7 @@ Alignment algorithms using Torch-based scoring functions.
 Torch based functions can perform on batches as well as single instances.
 """
 from copy import deepcopy
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
 import torch
 import torch.nn.functional as F
 from torch import optim
@@ -11,7 +11,7 @@ from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors, rdMolAlign
 
 from shepherd_score.generate_point_cloud import _get_points_fibonacci
-from shepherd_score.score.gaussian_overlap import get_overlap
+from shepherd_score.score.gaussian_overlap import get_overlap, get_linear_hard_sphere_overlap
 from shepherd_score.score.electrostatic_scoring import get_overlap_esp, esp_combo_score
 from shepherd_score.score.pharmacophore_scoring import get_overlap_pharm, _SIM_TYPE
 from shepherd_score.alignment_utils.se3 import get_SE3_transform, apply_SE3_transform, quaternions_to_rotation_matrix, apply_SO3_transform
@@ -66,6 +66,94 @@ def objective_ROCS_overlay(se3_params: torch.Tensor,
     # Batch
     elif len(se3_params.shape) == 2:
         return 1-score.mean()
+    else:
+        raise ValueError(f"Unexpected shape {se3_params.shape}")
+
+def score_ROCS_overlay_with_avoid(
+        ref_points: torch.Tensor,
+        fit_points: torch.Tensor,
+        alpha: float,
+        fit_points_for_avoid: torch.Tensor,
+        avoid_points: torch.Tensor,
+        avoid_min_dist: float,
+        avoid_weight: float,
+) -> torch.Tensor:
+    """See objective_ROCS_overlay_with_avoid for parameter descriptions."""
+    overlap_score = get_overlap(ref_points, fit_points, alpha)
+    avoid_score = get_linear_hard_sphere_overlap(fit_points_for_avoid, avoid_points, avoid_min_dist)
+    return overlap_score - avoid_weight * avoid_score
+
+
+def objective_ROCS_overlay_with_avoid(
+        se3_params: torch.Tensor,
+        ref_points: torch.Tensor,
+        fit_points: torch.Tensor,
+        alpha: float,
+        fit_points_for_avoid: torch.Tensor,
+        avoid_points: torch.Tensor,
+        avoid_min_dist: float,
+        avoid_weight: float,
+    ) -> torch.Tensor:
+    """
+    Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
+    If the inputs are batched, the loss is the average across the batch.
+
+    Parameters
+    ----------
+    se3_params : torch.Tensor (batch, 7) or (7,)
+        Parameters for SE(3) transformation.
+        The first 4 values in the last dimension are quaternions of form (r,i,j,k)
+        and the last 3 values of the last dimension are the translations in (x,y,z).
+    ref_points : torch.Tensor (batch, N, 3) or (N,3)
+        Reference points. If you want to optimize to the same ref_points, with a batch of different
+        se3_params, try use torch.Tensor.repeat((batch, 1, 1)).
+    fit_points : torch.Tensor (batch, M, 3) or (M,3)
+        Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
+        If you want to optimize to the same fit_points, with a batch of different
+        se3_params, try use torch.Tensor.repeat((batch, 1, 1)).
+    alpha : float
+        Gaussian width parameter used in scoring function.
+    fit_points_for_avoid : torch.Tensor (M,3)
+        Set of points to apply SE(3) transformations to then compare to avoid_points
+    avoid_points : torch.Tensor (K,3) (default=None)
+        If not None, these are points that are used in an additional term in the objective function
+        to penalize overlap with these points.
+    avoid_min_dist : float (default=2.0)
+        Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
+    avoid_weight : float (default=1.0)
+        Weight for the avoid_points term in the scoring function.
+    Returns
+    -------
+    loss : torch.Tensor (1,)
+        1 - (average(Tanimoto score fit_points to ref_points)
+             - avoid_weight * average(hard sphere overlap of fit_points_for_avoid to avoid_points)).
+    """
+    if len(fit_points.shape) - 1 != len(se3_params.shape):
+        err_mssg = f'Instead these shapes were given: fit_points {fit_points.shape} and se3_params {se3_params.shape}'
+        if len(fit_points.shape) == 2: # expect single instance
+            raise ValueError(f'Since "fit_points" is a single point cloud, there should only be one set of "se3_params" for each batch. {err_mssg}')
+        elif len(fit_points.shape) == 3: # expect batch
+            raise ValueError(f'Since "fit_points" is batched, there should be a row of "se3_params" for each batch. {err_mssg}')
+
+    se3_matrix = get_SE3_transform(se3_params)
+    fit_points = apply_SE3_transform(fit_points, se3_matrix)
+    fit_points_for_avoid = apply_SE3_transform(fit_points_for_avoid, se3_matrix)
+    score = score_ROCS_overlay_with_avoid(ref_points=ref_points,
+                                        fit_points=fit_points,
+                                        alpha=alpha,
+                                        fit_points_for_avoid=fit_points_for_avoid,
+                                        avoid_points=avoid_points,
+                                        avoid_min_dist=avoid_min_dist,
+                                        avoid_weight=avoid_weight)
+
+    # Single instance
+    if len(se3_params.shape) == 1:
+        return 1 - score
+    # Batch
+    elif len(se3_params.shape) == 2:
+        return 1 - score.mean()
+    else:
+        raise ValueError(f"Unexpected shape {se3_params.shape}")
 
 
 def _quats_from_fibo(num_samples: int):
@@ -302,6 +390,11 @@ def _initialize_se3_params_with_translations(ref_points: torch.Tensor,
 def optimize_ROCS_overlay(ref_points: torch.Tensor,
                           fit_points: torch.Tensor,
                           alpha: float,
+                          *,
+                          fit_points_for_avoid: Optional[torch.Tensor] = None,
+                          avoid_points: Optional[torch.Tensor] = None,
+                          avoid_min_dist: float = 2.0,
+                          avoid_weight: float = 1.0,
                           num_repeats: int = 50,
                           trans_centers: Union[torch.Tensor, None] = None,
                           lr: float = 0.1,
@@ -323,6 +416,15 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
         Set of points to apply SE(3) transformations to maximize shape similarity with ref_points.
     alpha : float
         Gaussian width parameter used in scoring function.
+    fit_points_for_avoid : torch.Tensor (M,3)
+        Set of points to apply SE(3) transformations to then compare to avoid_points
+    avoid_points : torch.Tensor (K,3) (default=None)
+        If not None, these are points that are used in an additional term in the objective function
+        to penalize overlap with these points.
+    avoid_min_dist : float (default=2.0)
+        Minimum distance with no penalization between fit_points_for_avoid and avoid_points.
+    avoid_weight : float (default=1.0)
+        Weight for the avoid_points term in the scoring function.
     num_repeats : int (default=50)
         Number of different random initializations of SE(3) transformation parameters.
     trans_centers : torch.Tensor (P, 3) (default=None)
@@ -368,18 +470,34 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
         print(f'Initial shape similarity score: {get_overlap(ref_points, fit_points, alpha):.3f}')
     last_loss = 1
     counter = 0
+    if avoid_points is not None and fit_points_for_avoid is None:
+        fit_points_for_avoid = fit_points
     # ref_points will be broadcast by the objective/scoring function
     if num_repeats == 1:
         fit_points_to_transform = fit_points
+        if fit_points_for_avoid is not None:
+            fit_points_for_avoid_to_transform = fit_points_for_avoid
     else:
         fit_points_to_transform = fit_points.repeat((num_repeats,1,1))
+        if fit_points_for_avoid is not None:
+            fit_points_for_avoid_to_transform = fit_points_for_avoid.repeat((num_repeats,1,1))
 
     for step in range(max_num_steps):
         # Forward pass: compute objective function and gradients
-        loss = objective_ROCS_overlay(se3_params=se3_params,
-                                      ref_points=ref_points,
-                                      fit_points=fit_points_to_transform,
-                                      alpha=alpha)
+        if avoid_points is not None:
+            loss = objective_ROCS_overlay_with_avoid(se3_params=se3_params,
+                                                    ref_points=ref_points,
+                                                    fit_points=fit_points_to_transform,
+                                                    alpha=alpha,
+                                                    fit_points_for_avoid=fit_points_for_avoid_to_transform,
+                                                    avoid_points=avoid_points,
+                                                    avoid_min_dist=avoid_min_dist,
+                                                    avoid_weight=avoid_weight)
+        else:
+            loss = objective_ROCS_overlay(se3_params=se3_params,
+                                            ref_points=ref_points,
+                                            fit_points=fit_points_to_transform,
+                                            alpha=alpha)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -401,9 +519,20 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
     optimized_se3_params = se3_params.detach()
     SE3_transform = get_SE3_transform(optimized_se3_params)
     aligned_points = apply_SE3_transform(fit_points_to_transform, SE3_transform)
-    scores = get_overlap(centers_1=ref_points,
-                         centers_2=aligned_points,
-                         alpha=alpha)
+    if avoid_points is not None:
+        aligned_points_for_avoid = apply_SE3_transform(fit_points_for_avoid_to_transform,
+                                                       SE3_transform)
+        scores = score_ROCS_overlay_with_avoid(ref_points=ref_points,
+                                            fit_points=aligned_points,
+                                            alpha=alpha,
+                                            fit_points_for_avoid=aligned_points_for_avoid,
+                                            avoid_points=avoid_points,
+                                            avoid_min_dist=avoid_min_dist,
+                                            avoid_weight=avoid_weight)
+    else:
+        scores = get_overlap(centers_1=ref_points,
+                            centers_2=aligned_points,
+                            alpha=alpha)
     if num_repeats == 1:
         if verbose:
             print(f'Optimized shape similarity score: {scores:.3f}')
