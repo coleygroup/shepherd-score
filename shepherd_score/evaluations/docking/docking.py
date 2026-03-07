@@ -1,17 +1,16 @@
-"""
-Autodock Vina Docking evaluation pipeline.
+"""AutoDock Vina docking evaluation pipeline.
 
-Adapted from Therapeutic Data Commons (TDC).
-Huang et al. (2021) https://arxiv.org/abs/2102.09548
+VinaSmiles class adapted from Therapeutic Data Commons (TDC) [1].
 
-Requires:
-- vina
-- meeko
-- openbabel (if protonating ligands)
+Requires: vina, meeko; openbabel only if protonating ligands.
+
+References
+----------
+.. [1] Huang et al. (2021) https://arxiv.org/abs/2102.09548
 """
 import os
 import time
-from typing import Tuple, Optional, Literal, List
+from typing import Tuple, Optional, Literal, List, Union
 from pathlib import Path
 import uuid
 
@@ -46,8 +45,23 @@ def embed_conformer_from_smiles_fixed(
     MMFF_optimize: bool=True,
     random_seed: int=123456789,
 ) -> Chem.Mol:
-    """
-    Embeds a mol object into a 3D RDKit mol object with ETKDG (and optional MMFF94)
+    """Embed SMILES into a 3D RDKit mol with ETKDG and optional MMFF94.
+
+    Parameters
+    ----------
+    smiles : str
+        SMILES string.
+    attempts : int, optional
+        Max embedding attempts. Default is 50.
+    MMFF_optimize : bool, optional
+        Run MMFF94 optimization. Default is True.
+    random_seed : int, optional
+        Random seed for embedding. Default is 123456789.
+
+    Returns
+    -------
+    Chem.Mol
+        Molecule with 3D conformer.
     """
     mol = Chem.MolFromSmiles(smiles)
     mol = Chem.AddHs(mol)
@@ -57,9 +71,8 @@ def embed_conformer_from_smiles_fixed(
     return mol
 
 class VinaBase:
-    """
-    Base class for Vina scoring function.
-    """
+    """Base class for Vina scoring and docking."""
+
     def __init__(
         self,
         receptor_pdbqt_file: str,
@@ -72,27 +85,37 @@ class VinaBase:
         *,
         protonate_method: Literal['openbabel', 'molscrub', 'chemaxon'] = 'molscrub',
         path_to_bin: str = '',
-        cxcalc_exe: str | None = None,
-        molconvert_exe: str | None = None,
-        chemaxon_license_path: str | None = None,
+        cxcalc_exe: Optional[str] = None,
+        molconvert_exe: Optional[str] = None,
+        chemaxon_license_path: Optional[str] = None,
     ):
         """
-        Constructs Vina scoring function with receptor.
-
-        Arguments
-        ---------
-        receptor_pdbqt_file : str path to .pdbqt file of receptor.
-        center : Tuple[float] (len=3) coordinates for the center of the pocket.
-        box_size : Tuple[float](len=3) box edge lengths of pocket.
-        pH : float Experimental pH used for crystal structure elucidation.
-        scorefunction : str (default=vina) name of scoring function to use with Vina. 'vina' or 'ad4'
-        num_processes : int (default=2) Number of cpus to use for scoring
-        verbose : int (default = 0) Level of verbosity from vina.Vina (0 is silent)
-
-        protonate_method : Literal['openbabel', 'molscrub', 'chemaxon'] (default = 'molscrub') method to use for protonation
-        cxcalc_exe : str | None (default = None) path to cxcalc executable
-        molconvert_exe : str | None (default = None) path to molconvert executable
-        chemaxon_license_path : str | None (default = None) path to chemaxon license file
+        Parameters
+        ----------
+        receptor_pdbqt_file : str
+            Path to receptor PDBQT file.
+        center : tuple of float, length 3
+            Pocket center coordinates.
+        box_size : tuple of float, length 3
+            Search box edge lengths.
+        pH : float, optional
+            pH for protonation. Default is 7.4.
+        scorefunction : str, optional
+            'vina' or 'ad4'. Default is 'vina'.
+        num_processes : int, optional
+            CPUs for scoring. Default is 4.
+        verbose : int, optional
+            Vina verbosity (0 = silent). Default is 0.
+        protonate_method : {'openbabel', 'molscrub', 'chemaxon'}, optional
+            Protonation method. Default is 'molscrub'.
+        path_to_bin : str, optional
+            Path to OpenBabel binaries. Default is ''.
+        cxcalc_exe : str or None, optional
+            Path to cxcalc. Default is None.
+        molconvert_exe : str or None, optional
+            Path to molconvert. Default is None.
+        chemaxon_license_path : str or None, optional
+            Path to ChemAxon license. Default is None.
         """
         self.v = Vina(sf_name=scorefunction, seed=987654321, verbosity=verbose, cpu=num_processes)
         self.receptor_pdbqt_file = receptor_pdbqt_file
@@ -122,8 +145,21 @@ class VinaBase:
         protonate: bool = False,
         return_all: bool = False,
     ) -> List[Chem.Mol]:
-        """
-        Load ligand SMILES string into Vina.
+        """Load ligand from SMILES; optionally protonate and embed.
+
+        Parameters
+        ----------
+        ligand_smiles : str
+            SMILES string.
+        protonate : bool, optional
+            Protonate at instance pH. Default is False.
+        return_all : bool, optional
+            If True and protonate=True, return all protomers. Default is False.
+
+        Returns
+        -------
+        list of Chem.Mol
+            RDKit mols with 3D conformers.
         """
         if protonate:
             protomers = protonate_smiles(
@@ -153,8 +189,22 @@ class VinaBase:
         self,
         sdf_file: str,
     ) -> Chem.Mol:
-        """
-        Load ligand from SDF file into Vina.
+        """Load ligand from SDF; embed from SMILES if no conformer.
+
+        Parameters
+        ----------
+        sdf_file : str
+            Path to SDF file.
+
+        Returns
+        -------
+        Chem.Mol
+            Molecule with 3D coords.
+
+        Raises
+        ------
+        ValueError
+            If SDF has no conformer and embedding fails.
         """
         mol = Chem.SDMolSupplier(sdf_file, removeHs=False)[0]
 
@@ -171,10 +221,8 @@ class VinaBase:
     def _prep_ligand(
         self,
         ligand: Chem.Mol,
-    ) -> str | None:
-        """
-        Prepare ligand for docking.
-        """
+    ) -> Optional[str]:
+        """Convert ligand to PDBQT string for Vina. Returns None on failure."""
         try:
             molsetup = self.mk_prep_ligand.prepare(ligand)[0]
             ligand_pdbqt_string, was_successful, error_message = PDBQTWriterLegacy.write_string(molsetup)
@@ -191,9 +239,19 @@ class VinaBase:
         ligand: Chem.Mol,
         center: Tuple[float, float, float],
     ) -> Chem.Mol:
-        """
-        Centers a ligand conformer's center of mass to a given center.
-        Returns a centered copy of the ligand.
+        """Center ligand COM to given coordinates; return a copy.
+
+        Parameters
+        ----------
+        ligand : Chem.Mol
+            Molecule with conformer.
+        center : tuple of float, length 3
+            Target center (x, y, z).
+
+        Returns
+        -------
+        Chem.Mol
+            Copy with updated coordinates.
         """
         ligand_com = ligand.GetConformer().GetPositions().mean(axis=0)
         recentered_coords = ligand.GetConformer().GetPositions() - ligand_com + center
@@ -206,23 +264,25 @@ class VinaBase:
         output_file: Optional[str] = None,
         exhaustiveness: int = 8,
         n_poses: int = 5,
-    ) -> Tuple[np.float64, np.float64, Chem.Mol] | None:
-        """
-        Given a ligand, do a global optimization and return the best energy and optionally the pose.
+    ) -> Optional[Tuple[np.float64, np.float64, Chem.Mol]]:
+        """Given a ligand, do a global optimization and return the best energy and optionally the
+        pose.
 
-        Arguments
-        ---------
-        ligand : Chem.Mol ligand to dock.
-        output_file : Optional[str] path to save docked poses.
-        exhaustiveness : int (default = 8) Number of Monte Carlo simulations to run per pose.
-        n_poses : int (default = 5) Number of poses to save.
+        Parameters
+        ----------
+        ligand : Chem.Mol
+            Ligand to dock.
+        output_file : str or None, optional
+            Path to save poses. Default is None.
+        exhaustiveness : int, optional
+            Monte Carlo runs per pose. Default is 8.
+        n_poses : int, optional
+            Number of poses to save. Default is 5.
 
         Returns
         -------
-        Tuple
-            total_energy : np.float64 energy of the best pose (kcal/mol)
-            torsion_energy : np.float64 torsion energy of the best pose (kcal/mol)
-            docked_rdmol : Chem.Mol rdkit mol of best docked pose
+        tuple or None
+            (total_energy, torsion_energy, docked_mol) in kcal/mol, or None on failure.
         """
         try:
             ligand_pdbqt_string = self._prep_ligand(ligand)
@@ -246,23 +306,22 @@ class VinaBase:
     def score_ligand(
         self,
         ligand: Chem.Mol,
-        center: bool | Tuple[float, float, float] = False,
+        center: Union[bool, Tuple[float, float, float]] = False,
     ) -> Tuple[np.float64, np.float64]:
-        """
-        Scores a given ligand's pose in it's current conformation (e.g., no optimization).
+        """Score ligand in current conformation (no optimization).
 
-        Arguments
-        ---------
-        ligand : Chem.Mol ligand to score.
-        center : bool | Tuple[float, float, float] | None (default = False)
-            If a tuple, centers to those coordinates.
-            If True, centers the ligand to the receptor's center.
-            If False, does not translate the ligand from its initial conformation.
+        Parameters
+        ----------
+        ligand : Chem.Mol
+            Ligand to score.
+        center : bool or tuple of float, optional
+            If True, center to receptor box. If tuple (x,y,z), center there.
+            If False, use current coords. Default is False.
 
         Returns
         -------
-        (total_energy, torsion_energy) : Tuple[np.float64, np.float64]
-            Energies in kcal/mol
+        tuple of np.float64
+            (total_energy, torsion_energy) in kcal/mol.
         """
         if center is True:
             ligand = self._center_ligand(ligand, self.center)
@@ -282,30 +341,28 @@ class VinaBase:
     def optimize_ligand(
         self,
         ligand: Chem.Mol,
-        center: bool | Tuple[float, float, float] = False,
-        max_steps: int | None = 10000,
+        center: Union[bool, Tuple[float, float, float]] = False,
+        max_steps: Optional[int] = 10000,
         output_file: Optional[str] = None,
     ) -> Tuple[np.float64, np.float64, Chem.Mol]:
-        """
-        Locally optimize loaded ligand pose.
+        """Locally optimize ligand pose in the binding site.
 
-        Arguments
-        ---------
-        ligand : Chem.Mol ligand to optimize.
-        center : bool | Tuple[float, float, float] | None (default = False)
-            If a tuple, centers to those coordinates.
-            If True, centers the ligand to the receptor's center.
-            If False, does not translate the ligand from its initial conformation.
-        max_steps : int | None (default = 10000) Maximum number of steps to take in the optimization.
-            If None, uses the default value of 10000.
-        output_file : Optional[str] path to save optimized pose.
+        Parameters
+        ----------
+        ligand : Chem.Mol
+            Ligand to optimize.
+        center : bool or tuple of float, optional
+            If True, center to receptor box. If tuple (x,y,z), center there.
+            If False, use current coords. Default is False.
+        max_steps : int or None, optional
+            Max optimization steps. None uses Vina default. Default is 10000.
+        output_file : str or None, optional
+            Path to save optimized pose. Default is None.
 
         Returns
         -------
-        Tuple
-            total_energy : np.float64 energy of the best pose (kcal/mol)
-            torsion_energy : np.float64 torsion energy of the best pose (kcal/mol)
-            optimized_rdmol : Chem.Mol rdkit mol of optimized pose
+        tuple
+            (total_energy, torsion_energy, optimized_mol) in kcal/mol.
         """
         if center is True:
             ligand = self._center_ligand(ligand, self.center)
@@ -352,6 +409,15 @@ class VinaBase:
         return total_energy, torsion_energy, rdkitmol_opt
 
     def save_pose_to_file(self, output_file: str, n_poses: int = 1):
+        """Write current pose(s) to file.
+
+        Parameters
+        ----------
+        output_file : str
+            Output path.
+        n_poses : int, optional
+            Number of poses (only when state is 'docked'). Default is 1.
+        """
         if self.state is None:
             print("Cannot save pose in state None. Run docking or optimization first.")
             return
@@ -362,11 +428,8 @@ class VinaBase:
 
 
 class VinaSmiles(VinaBase):
-    """
-    Perform docking search from a SMILES string.
+    """Docking from SMILES (embed + optional protonation). Adapted from TDC."""
 
-    Adapted from TDC.
-    """
     def __init__(self,
                  receptor_pdbqt_file: str,
                  center: Tuple[float],
@@ -377,27 +440,35 @@ class VinaSmiles(VinaBase):
                  verbose: int = 0,
                  *,
                  protonate_method: Literal['openbabel', 'molscrub', 'chemaxon'] = 'molscrub',
-                 cxcalc_exe: str | None = None,
-                 molconvert_exe: str | None = None,
-                 chemaxon_license_path: str | None = None,
+                 cxcalc_exe: Optional[str] = None,
+                 molconvert_exe: Optional[str] = None,
+                 chemaxon_license_path: Optional[str] = None,
                  ):
         """
-        Constructs Vina scoring function with receptor.
-
-        Arguments
-        ---------
-        receptor_pdbqt_file : str path to .pdbqt file of receptor.
-        center : Tuple[float] (len=3) coordinates for the center of the pocket.
-        box_size : Tuple[float](len=3) box edge lengths of pocket.
-        pH : float Experimental pH used for crystal structure elucidation.
-        scorefunction : str (default=vina) name of scoring function to use with Vina. 'vina' or 'ad4'
-        num_processes : int (default=2) Number of cpus to use for scoring
-        verbose : int (default = 0) Level of verbosity from vina.Vina (0 is silent)
-
-        protonate_method : Literal['openbabel', 'molscrub', 'chemaxon'] (default = 'molscrub') method to use for protonation
-        cxcalc_exe : str | None (default = None) path to cxcalc executable
-        molconvert_exe : str | None (default = None) path to molconvert executable
-        chemaxon_license_path : str | None (default = None) path to chemaxon license file
+        Parameters
+        ----------
+        receptor_pdbqt_file : str
+            Path to receptor PDBQT file.
+        center : tuple of float, length 3
+            Pocket center coordinates.
+        box_size : tuple of float, length 3
+            Search box edge lengths.
+        pH : float, optional
+            pH for protonation. Default is 7.4.
+        scorefunction : str, optional
+            'vina' or 'ad4'. Default is 'vina'.
+        num_processes : int, optional
+            CPUs for scoring. Default is 4.
+        verbose : int, optional
+            Vina verbosity (0 = silent). Default is 0.
+        protonate_method : {'openbabel', 'molscrub', 'chemaxon'}, optional
+            Protonation method. Default is 'molscrub'.
+        cxcalc_exe : str or None, optional
+            Path to cxcalc. Default is None.
+        molconvert_exe : str or None, optional
+            Path to molconvert. Default is None.
+        chemaxon_license_path : str or None, optional
+            Path to ChemAxon license. Default is None.
         """
         super().__init__(
             receptor_pdbqt_file=receptor_pdbqt_file,
@@ -422,24 +493,28 @@ class VinaSmiles(VinaBase):
                  protonate: bool = False,
                  return_best_protomer: bool = False,
                  ) -> Tuple[float, Chem.Mol]:
-        """
-        Score ligand by docking in receptor.
+        """Dock ligand SMILES in receptor; return best energy and pose.
 
-        Arguments
-        ---------
-        ligand_smiles : str SMILES of ligand to dock.
-        output_file : Optional[str] path to save docked poses.
-        exhaustiveness : int (default = 8) Number of Monte Carlo simulations to run per pose.
-        n_poses : int (default = 5) Number of poses to save.
-        protonate : bool (default = False) (de-)protonate ligand with OpenBabel at pH=7.4
-        return_best_protomer: bool (default = False) Evaluate all protomers and return the best
-        energy and pose / protomer which may be different from the input SMILES.
+        Parameters
+        ----------
+        ligand_smiles : str
+            SMILES of ligand to dock.
+        output_file : str or None, optional
+            Path to save poses. Default is None.
+        exhaustiveness : int, optional
+            Monte Carlo runs per pose. Default is 8.
+        n_poses : int, optional
+            Number of poses to save. Default is 5.
+        protonate : bool, optional
+            Protonate at instance pH. Default is False.
+        return_best_protomer : bool, optional
+            If True, dock all protomers and return best by energy. Default is False.
+            Returned SMILES may be different from the input SMILES due to protonation.
 
         Returns
         -------
-        Tuple
-            float : energy (affinity) in kcal/mol
-            Chem.Mol : docked ligand
+        tuple
+            (energy in kcal/mol, docked Chem.Mol).
         """
         if not return_best_protomer:
             ligand = self.load_ligand_from_smiles(ligand_smiles, protonate=protonate, return_all=False)

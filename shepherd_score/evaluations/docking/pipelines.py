@@ -6,7 +6,7 @@ Requires:
 - meeko
 - openbabel (if protonating ligands)
 """
-from typing import List, Optional, Dict, Literal, Tuple, Any
+from typing import List, Optional, Dict, Literal, Tuple, Any, Union
 from pathlib import Path
 from tqdm import tqdm
 import multiprocessing
@@ -112,8 +112,8 @@ def _unpack_eval_docking_single(args):
 def _eval_relax_single(
     i: int,
     mol_pickle: bytes,
-    center: bool | Tuple[float, float, float],
-    max_steps: int | None,
+    center: Union[bool, Tuple[float, float, float]],
+    max_steps: Optional[int],
     save_poses_path: Optional[str],
 ) -> Dict[str, Any]:
     """
@@ -438,8 +438,8 @@ class DockingEvalPipeline:
 
     def evaluate_relax(self,
                        mol_ls: List[Chem.Mol],
-                       center: bool | Tuple[float, float, float] = False,
-                       max_steps: int | None = 10000,
+                       center: Union[bool, Tuple[float, float, float]] = False,
+                       max_steps: Optional[int] = 10000,
                        save_poses_dir_path: Optional[str] = None,
                        verbose: bool = False,
                        num_workers: int = 1,
@@ -452,11 +452,11 @@ class DockingEvalPipeline:
         Arguments
         ---------
         mol_ls : List[Chem.Mol] list of rdkit mol objects to relax
-        center : bool | Tuple[float, float, float] (default = False)
+        center : bool or tuple of float (default = False)
             If a tuple, centers to those coordinates.
             If True, centers the ligand to the receptor's center.
             If False, does not translate the ligand from its initial conformation.
-        max_steps : int | None (default = 10000) Maximum number of steps to take in the optimization.
+        max_steps : int or None (default = 10000) Maximum number of steps to take in the optimization.
             If None, uses the default value of 10000.
         save_poses_dir_path : Optional[str] (default = None) Path to directory to save optimized poses.
         verbose : bool (default = False) show tqdm progress bar for each mol.
