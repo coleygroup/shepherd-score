@@ -261,7 +261,8 @@ class Interactions:
 
     def get_interaction_recovery(
         self,
-        ref_ligand: Optional[Chem.Mol] = None
+        ref_ligand: Optional[Chem.Mol] = None,
+        interaction_count: bool = True
     ) -> np.ndarray:
         """Interaction count recovery of each pose relative to the reference.
         Asymmetric: only missing reference interactions reduce the score;
@@ -273,6 +274,8 @@ class Interactions:
         ----------
         ref_ligand : Chem.Mol, optional
             Override reference ligand; must be set if not provided at init.
+        interaction_count : bool
+            If True, count interactions instead of binary presence. Default is True.
 
         Returns
         -------
@@ -290,11 +293,16 @@ class Interactions:
         if ref_ligand is not None:
             self._get_ref_ligand_fp(ref_ligand)
 
-        ref_df = plf.to_dataframe(self.ref_ligand_fp.ifp, self.fp_ref.interactions, count=True, index_col="Pose")
+        ref_df = plf.to_dataframe(
+            ifp=self.ref_ligand_fp.ifp,
+            interactions=self.fp_ref.interactions,
+            count=interaction_count, index_col="Pose")
         ref_counts = ref_df.droplevel("ligand", axis=1).to_dict("records")[0]
         total_ref_count = sum(ref_counts.values())
 
-        other_df = plf.to_dataframe(self.fp.ifp, self.fp.interactions, count=True, index_col="Pose")
+        other_df = plf.to_dataframe(
+            ifp=self.fp.ifp, interactions=self.fp.interactions,
+            count=interaction_count, index_col="Pose")
         all_pose_counts = other_df.droplevel("ligand", axis=1).to_dict("records")
         return np.array([
             sum(min(ref_counts[k], pose_counts.get(k, 0)) for k in ref_counts)
