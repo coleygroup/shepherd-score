@@ -113,6 +113,7 @@ class Interactions:
         protein_pdb_path: str,
         interaction_types: List[str] = DEFAULT_INTERACTION_TYPES,
         ref_ligand: Optional[Chem.Mol] = None,
+        interaction_count: bool = True
     ):
         """
         Parameters
@@ -123,6 +124,8 @@ class Interactions:
             ProLIF interaction types. Default are: %s.
         ref_ligand : Chem.Mol, optional
             Reference ligand (docked) for similarity. Default is None.
+        interaction_count : bool, optional
+            If True, count interactions instead of binary presence. Default is True.
 
         Examples
         --------
@@ -147,7 +150,7 @@ class Interactions:
 
         self.protein_mol = _load_protein_mol_cached(str(p_path))
 
-        self.fp = plf.Fingerprint(interactions=interaction_types, count=False)
+        self.fp = plf.Fingerprint(interactions=interaction_types, count=interaction_count)
 
         self.ref_ligand_mol = None
         self.ref_ligand_fp = None
@@ -158,10 +161,10 @@ class Interactions:
     def _get_ref_ligand_fp(self, ref_ligand: Chem.Mol) -> plf.Fingerprint:
         """Compute and cache fingerprint for the reference ligand."""
         if self.fp_ref is None:
-            self.fp_ref = plf.Fingerprint(list(self.fp.interactions), count=False)
-        ref_ligand_mol = plf.Molecule.from_rdkit(ref_ligand)
+            self.fp_ref = plf.Fingerprint(list(self.fp.interactions), count=self.fp.count)
+        self.ref_ligand_mol = plf.Molecule.from_rdkit(ref_ligand)
         self.ref_ligand_fp = self.fp_ref.run_from_iterable(
-            [ref_ligand_mol], self.protein_mol, progress=False)
+            [self.ref_ligand_mol], self.protein_mol, progress=False)
 
     def get_fingerprints(self, ligands: List[Chem.Mol]) -> Dict[int, plf.Fingerprint]:
         """Compute fingerprints for all ligands (must have explicit H).
@@ -180,7 +183,11 @@ class Interactions:
         self.fp.run_from_iterable(plf_ligands, self.protein_mol, progress=True)
         return self.fp
 
-    def to_pandas(self, ref_ligand: Optional[Chem.Mol] = None) -> pd.DataFrame:
+    def to_pandas(
+        self,
+        ref_ligand: Optional[Chem.Mol] = None,
+        interaction_count: Optional[bool] = None
+    ) -> pd.DataFrame:
         """Export fingerprints to a DataFrame.
         If ``Interactions`` was initialized with a ``ref_ligand``, this method will use it.
 
@@ -189,19 +196,21 @@ class Interactions:
         ----------
         ref_ligand : Chem.Mol, optional
             If given, include reference pose as index=-1 and align column levels.
+        interaction_count : bool, optional
+            If True, count interactions instead of binary presence. Default is True.
 
         Returns
         -------
         pd.DataFrame
             Interaction matrix (poses x residue-interaction).
         """
-        df = self.fp.to_dataframe(index_col="Pose")
+        df = self.fp.to_dataframe(index_col="Pose", count=interaction_count)
 
         if ref_ligand is not None:
             self._get_ref_ligand_fp(ref_ligand)
 
         if self.ref_ligand_fp is not None:
-            df_ref = self.ref_ligand_fp.to_dataframe(index_col="Pose")
+            df_ref = self.ref_ligand_fp.to_dataframe(index_col="Pose", count=interaction_count)
             df_ref.rename(index={0: -1}, inplace=True)
             # set the ligand name to be the same as poses
             df_ref.rename(columns={'UNL1': df.columns.levels[0][0]}, inplace=True)
@@ -217,8 +226,46 @@ class Interactions:
             return df_ref_poses
         return df
 
-    def get_fingerprint_similarity(self, ref_ligand: Optional[Chem.Mol] = None) -> np.ndarray:
+    def get_fingerprint_similarity(
+        self,
+        ref_ligand: Optional[Chem.Mol] = None,
+        interaction_count: bool = True
+    ) -> np.ndarray:
         """Tanimoto similarity of each pose to the reference fingerprint.
+        Symmetric: both extra interactions (not in reference) and missing interactions
+        (not in pose) reduce the score.
+        If ``Interactions`` was initialized with a reference ligand, this method will use it.
+        Otherwise, ``ref_ligand`` must be provided.
+
+        Parameters
+        ----------
+        ref_ligand : Chem.Mol, optional
+            Override reference ligand; must be set if not provided at init.
+        interaction_count : bool
+            If True, count interactions instead of binary presence. Default is True.
+
+        Returns
+        -------
+        np.ndarray
+            Similarities, one per pose (excluding reference).
+        """
+        if self.ref_ligand_fp is None and ref_ligand is None:
+            raise ValueError(
+                "Reference ligand fingerprint is not set. Please set a reference ligand."
+            )
+        df_ref_poses = self.to_pandas(ref_ligand, interaction_count)
+
+        bitvectors = plf.to_bitvectors(df_ref_poses)
+        tanimoto_sims = DataStructs.BulkTanimotoSimilarity(bitvectors[0], bitvectors[1:])
+        return np.array(tanimoto_sims)
+
+    def get_interaction_recovery(
+        self,
+        ref_ligand: Optional[Chem.Mol] = None
+    ) -> np.ndarray:
+        """Interaction count recovery of each pose relative to the reference.
+        Asymmetric: only missing reference interactions reduce the score;
+        extra interactions in the pose are ignored.
         If ``Interactions`` was initialized with a reference ligand, this method will use it.
         Otherwise, ``ref_ligand`` must be provided.
 
@@ -230,14 +277,27 @@ class Interactions:
         Returns
         -------
         np.ndarray
-            Similarities, one per pose (excluding reference).
+            Recovery fraction per pose, one per pose (excluding reference).
+
+        References
+        ----------
+        .. [1] Errington D. et al.J Cheminform. 2025. 17(1):76. doi: 10.1186/s13321-025-01011-6
         """
-        if self.ref_ligand_fp is None and ref_ligand is not None:
+        if self.ref_ligand_fp is None and ref_ligand is None:
             raise ValueError(
                 "Reference ligand fingerprint is not set. Please set a reference ligand."
             )
-        df_ref_poses = self.to_pandas(ref_ligand)
+        if ref_ligand is not None:
+            self._get_ref_ligand_fp(ref_ligand)
 
-        bitvectors = plf.to_bitvectors(df_ref_poses)
-        tanimoto_sims = DataStructs.BulkTanimotoSimilarity(bitvectors[0], bitvectors[1:])
-        return np.array(tanimoto_sims)
+        ref_df = plf.to_dataframe(self.ref_ligand_fp.ifp, self.fp_ref.interactions, count=True, index_col="Pose")
+        ref_counts = ref_df.droplevel("ligand", axis=1).to_dict("records")[0]
+        total_ref_count = sum(ref_counts.values())
+
+        other_df = plf.to_dataframe(self.fp.ifp, self.fp.interactions, count=True, index_col="Pose")
+        all_pose_counts = other_df.droplevel("ligand", axis=1).to_dict("records")
+        return np.array([
+            sum(min(ref_counts[k], pose_counts.get(k, 0)) for k in ref_counts)
+            / total_ref_count
+            for pose_counts in all_pose_counts
+        ])
