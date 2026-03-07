@@ -123,6 +123,23 @@ class Interactions:
             ProLIF interaction types. Default are: %s.
         ref_ligand : Chem.Mol, optional
             Reference ligand (docked) for similarity. Default is None.
+
+        Examples
+        --------
+        After running a docking pipeline, use a reference ligand (docked or
+        crystal pose) and compute fingerprints for all docked poses:
+
+        >>> docking_pipe = DockingEvalPipeline(...)
+        >>> docking_pipe.evaluate(...)
+        >>> ref_mol = ...  # docked or crystal pose
+        >>> interactions = Interactions(
+        ...     "<path to pdb>",
+        ...     ref_ligand=ref_mol,
+        ... )
+        >>> interactions.get_fingerprints(
+        ...     docking_pipe.to_pandas().docked_mol.dropna()
+        ... )
+        >>> interactions.get_fingerprint_similarity()
         """ % (DEFAULT_INTERACTION_TYPES,)
         self.protein_pdb_path = protein_pdb_path
         p_path = Path(protein_pdb_path).resolve()
