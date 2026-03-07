@@ -1,13 +1,11 @@
-"""
-Protein and ligand preperation functions.
-Clustering of pharmacophores.
+"""Ligand-protein interaction analysis using ProLIF.
 
-Requires Biopython, ProLIF, MDAnalysis, PDB2PQR.
+Requires ProLIF and MDAnalysis.
 """
 
 from pathlib import Path
 from functools import lru_cache
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -16,7 +14,6 @@ from rdkit import DataStructs
 import prolif as plf
 import MDAnalysis as mda
 
-# from MDAnalysis.topology.guessers import guess_types
 
 DEFAULT_INTERACTION_TYPES = [
     "Hydrophobic",
@@ -34,7 +31,18 @@ DEFAULT_INTERACTION_TYPES = [
 
 @lru_cache(maxsize=32)
 def _load_protein_mol_cached(pdb_path_resolved: str) -> plf.Molecule:
-    """Load protein as ProLIF Molecule. Cached by resolved path to avoid repeated PDB load."""
+    """Load protein as ProLIF Molecule. Cached by resolved path.
+
+    Parameters
+    ----------
+    pdb_path_resolved : str
+        Fully resolved (absolute) path to the PDB file.
+
+    Returns
+    -------
+    plf.Molecule or None
+        Protein as ProLIF Molecule, or None if file does not exist.
+    """
     if not Path(pdb_path_resolved).exists():
         return None
     u = mda.Universe(pdb_path_resolved)
@@ -42,17 +50,18 @@ def _load_protein_mol_cached(pdb_path_resolved: str) -> plf.Molecule:
 
 
 def add_Hs_to_ligand_from_sdf(sdf_file: str) -> Chem.Mol:
-    """
-    Loads molecule from SDF file and adds hydrogens with geometry.
-    Assumes only ONE ligand in the sdf file.
+    """Load ligand from SDF and add explicit hydrogens with coordinates.
+    Expects exactly one molecule in the SDF.
 
-    Arguments
-    ---------
-    sdf_file : path to sdf file holding ligand.
+    Parameters
+    ----------
+    sdf_file : str
+        Path to SDF file.
 
     Returns
     -------
-    rdkit Mol object containing conformer with explicit hydrogens and attributed geometry.
+    Chem.Mol
+        Molecule with explicit H and 3D coords.
     """
     with Chem.SDMolSupplier(sdf_file) as suppl:
         mol = next(suppl)
@@ -64,23 +73,23 @@ def get_prolif_fingerprint(ligand_sdf_path: str,
                            protein_pdb_path: str,
                            verbose: bool = False
                            ) -> Tuple[plf.Fingerprint, plf.Molecule, plf.Molecule]:
-    """
-    Generate a ProLIF fingerprint from a ligand SDF file and protein (protonated) pdb file.
+    """Compute ProLIF interaction fingerprint for one ligand-protein pair.
 
-    Arguments
-    ---------
-    ligand_sdf_path : str path to sdf file holding ligand.
-    protein_pdb_path : str path to pdb file holding protonated protein.
-    verbose : bool (default = False)
+    Parameters
+    ----------
+    ligand_sdf_path : str
+        Path to ligand SDF (single molecule).
+    protein_pdb_path : str
+        Path to protonated protein PDB.
+    verbose : bool, optional
+        Show progress. Default is False.
 
     Returns
     -------
-    Tuple
-        fp : ProLIF Fingerprint object
-        ligand_mol : ProLIF Molecule object of ligand
-        protein_mol : ProLIF Molecule object of protein
+    tuple
+        (fingerprint, ligand ProLIF molecule, protein ProLIF molecule).
     """
-    p_path  = Path(protein_pdb_path)
+    p_path = Path(protein_pdb_path).resolve()
     assert p_path.is_file()
     l_path = Path(ligand_sdf_path)
     assert l_path.is_file()
@@ -88,67 +97,38 @@ def get_prolif_fingerprint(ligand_sdf_path: str,
     # Prep Ligand
     rdkit_mol = add_Hs_to_ligand_from_sdf(l_path)
     ligand_mol = plf.Molecule.from_rdkit(rdkit_mol)
+    protein_mol = _load_protein_mol_cached(str(p_path))
 
-    # Load protein
-    # u = mda.Universe(p_path)
-    # # Guess elements from atom names
-    # elements = guess_types(u.atoms.names)
-    # # Assign the guessed elements to the AtomGroup
-    # u.add_TopologyAttr('elements', elements)
-    # u.atoms.guess_bonds() # Guess connectivity
-    # protein_mol = plf.Molecule.from_mda(u)
-
-    protein_mol = _load_protein_mol_cached(p_path)
-
-    fp = plf.Fingerprint(
-        [
-            "Hydrophobic",
-            "HBDonor",
-            "HBAcceptor",
-            "PiStacking",
-            "Anionic",
-            "Cationic",
-            "CationPi",
-            "PiCation",
-            'XBAcceptor',
-            'XBDonor'
-        ]
-    )
+    fp = plf.Fingerprint(DEFAULT_INTERACTION_TYPES)
     fp.run_from_iterable([ligand_mol], protein_mol, progress=verbose)
 
     return fp, ligand_mol, protein_mol
 
 
 class Interactions:
+    """ProLIF interaction fingerprints for multiple ligands vs one protein."""
+
     def __init__(
         self,
         protein_pdb_path: str,
         interaction_types: List[str] = DEFAULT_INTERACTION_TYPES,
-        ref_ligand: Chem.Mol | None = None,
+        ref_ligand: Optional[Chem.Mol] = None,
     ):
-        f"""
-        Initialize the Interactions class.
-
-        Arguments
-        ---------
-        protein_pdb_path : str path to pdb file holding protonated protein.
-        interaction_types : List[str] list of interaction types to include in the fingerprint.
-            Default is {DEFAULT_INTERACTION_TYPES}.
-        ref_ligand : Chem.Mol (default = None) Reference ligand to use for interaction similarity.
-            In its docked pose.
         """
+        Parameters
+        ----------
+        protein_pdb_path : str
+            Path to protonated protein PDB file.
+        interaction_types : list of str, optional
+            ProLIF interaction types. Default are: %s.
+        ref_ligand : Chem.Mol, optional
+            Reference ligand (docked) for similarity. Default is None.
+        """ % (DEFAULT_INTERACTION_TYPES,)
         self.protein_pdb_path = protein_pdb_path
-        p_path  = Path(protein_pdb_path)
+        p_path = Path(protein_pdb_path).resolve()
         assert p_path.is_file()
 
-        # u = mda.Universe(p_path)
-        # # Guess elements from atom names
-        # elements = guess_types(u.atoms.names)
-        # # Assign the guessed elements to the AtomGroup
-        # u.add_TopologyAttr('elements', elements)
-        # u.atoms.guess_bonds() # Guess connectivity
-        # self.protein_mol = plf.Molecule.from_mda(u)
-        self.protein_mol = _load_protein_mol_cached(p_path)
+        self.protein_mol = _load_protein_mol_cached(str(p_path))
 
         self.fp = plf.Fingerprint(interactions=interaction_types, count=False)
 
@@ -159,9 +139,7 @@ class Interactions:
             self._get_ref_ligand_fp(ref_ligand)
 
     def _get_ref_ligand_fp(self, ref_ligand: Chem.Mol) -> plf.Fingerprint:
-        """
-        Get the fingerprint of the reference ligand.
-        """
+        """Compute and cache fingerprint for the reference ligand."""
         if self.fp_ref is None:
             self.fp_ref = plf.Fingerprint(list(self.fp.interactions), count=False)
         ref_ligand_mol = plf.Molecule.from_rdkit(ref_ligand)
@@ -169,16 +147,36 @@ class Interactions:
             [ref_ligand_mol], self.protein_mol, progress=False)
 
     def get_fingerprints(self, ligands: List[Chem.Mol]) -> Dict[int, plf.Fingerprint]:
-        """
-        Get fingerprint for a list of ligands. Assumes ligands have explicit hydrogens.
+        """Compute fingerprints for all ligands (must have explicit H).
+
+        Parameters
+        ----------
+        ligands : list of Chem.Mol
+            RDKit molecules with 3D coords.
+
+        Returns
+        -------
+        plf.Fingerprint
+            Fingerprint object with results for all poses.
         """
         plf_ligands = [plf.Molecule.from_rdkit(ligand) for ligand in ligands]
         self.fp.run_from_iterable(plf_ligands, self.protein_mol, progress=True)
         return self.fp
 
-    def to_pandas(self, ref_ligand: Chem.Mol | None = None) -> pd.DataFrame:
-        """
-        Convert the fingerprints to a pandas dataframe.
+    def to_pandas(self, ref_ligand: Optional[Chem.Mol] = None) -> pd.DataFrame:
+        """Export fingerprints to a DataFrame.
+        If ``Interactions`` was initialized with a ``ref_ligand``, this method will use it.
+
+
+        Parameters
+        ----------
+        ref_ligand : Chem.Mol, optional
+            If given, include reference pose as index=-1 and align column levels.
+
+        Returns
+        -------
+        pd.DataFrame
+            Interaction matrix (poses x residue-interaction).
         """
         df = self.fp.to_dataframe(index_col="Pose")
 
@@ -202,10 +200,20 @@ class Interactions:
             return df_ref_poses
         return df
 
+    def get_fingerprint_similarity(self, ref_ligand: Optional[Chem.Mol] = None) -> np.ndarray:
+        """Tanimoto similarity of each pose to the reference fingerprint.
+        If ``Interactions`` was initialized with a reference ligand, this method will use it.
+        Otherwise, ``ref_ligand`` must be provided.
 
-    def get_fingerprint_similarity(self, ref_ligand: Chem.Mol | None = None) -> np.ndarray:
-        """
-        Get the similarity between the fingerprint of the reference ligand and the ligand.
+        Parameters
+        ----------
+        ref_ligand : Chem.Mol, optional
+            Override reference ligand; must be set if not provided at init.
+
+        Returns
+        -------
+        np.ndarray
+            Similarities, one per pose (excluding reference).
         """
         if self.ref_ligand_fp is None and ref_ligand is not None:
             raise ValueError(
