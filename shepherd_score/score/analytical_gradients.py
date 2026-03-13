@@ -247,46 +247,48 @@ def compute_overlap_and_grad_pharm(
             P_a_fit_t = fit_anchors_t[:, fit_idx]    # (B, n_fit, 3)
             P_a_orig = fit_anchors_orig[:, fit_idx]   # (B, n_fit, 3)
 
-            # delta: (B, n_fit, n_ref, 3)
-            delta = P_a_fit_t.unsqueeze(2) - P_b_ref.unsqueeze(1)
-            dist_sq = (delta * delta).sum(dim=-1)    # (B, n_fit, n_ref)
+            dist_sq = torch.cdist(P_a_fit_t, P_b_ref, p=2.0) ** 2  # (B, n_fit, n_ref)
             E_ab = torch.exp(-alpha_m / 2.0 * dist_sq)  # (B, n_fit, n_ref)
 
             if ptype_name in _NONDIRECTIONAL:
-                # w = 1 everywhere
                 O_AB += K_m * E_ab.sum(dim=(1, 2))
 
-                # grad_t: (B, 3)
-                grad_t += -alpha_m * K_m * (E_ab.unsqueeze(-1) * delta).sum(dim=(1, 2))
+                sum_E_b = E_ab.sum(dim=2)  # (B, n_fit)
+                sum_E_a = E_ab.sum(dim=1)  # (B, n_ref)
+                term1 = (sum_E_b.unsqueeze(-1) * P_a_fit_t).sum(dim=1)
+                term2 = (sum_E_a.unsqueeze(-1) * P_b_ref).sum(dim=1)
+                grad_t += -alpha_m * K_m * (term1 - term2)
 
-                # grad_R: (B, 3, 3) via einsum
-                # sum over ref -> (B, n_fit, 3), then outer with P_a_orig
-                E_delta_sum_ref = (E_ab.unsqueeze(-1) * delta).sum(dim=2)  # (B, n_fit, 3)
-                grad_R += -alpha_m * K_m * torch.einsum('bfi,bfj->bij', E_delta_sum_ref, P_a_orig)
+                term_Z = torch.bmm(E_ab, P_b_ref)
+                E_delta_sum_ref = sum_E_b.unsqueeze(-1) * P_a_fit_t - term_Z
+                grad_R += -alpha_m * K_m * torch.bmm(E_delta_sum_ref.transpose(1, 2), P_a_orig)
 
             elif ptype_name in _DIRECTIONAL:
                 V_ref = ref_vectors_n[:, ref_idx]         # (B, n_ref, 3)
                 V_fit_t = fit_vectors_n[:, fit_idx]        # (B, n_fit, 3)
                 V_fit_orig = fit_vectors_orig_n[:, fit_idx]  # (B, n_fit, 3)
 
-                # D_ab = V'_a · V_b: (B, n_fit, n_ref)
                 D_ab = torch.bmm(V_fit_t, V_ref.permute(0, 2, 1))
                 D_clamped = torch.clamp(D_ab, 0.0, 1.0)
                 w_ab = (D_clamped + 2.0) / 3.0
 
-                O_AB += K_m * (w_ab * E_ab).sum(dim=(1, 2))
+                wE = w_ab * E_ab
+                O_AB += K_m * wE.sum(dim=(1, 2))
 
-                wE = w_ab * E_ab  # (B, n_fit, n_ref)
-                grad_t += -alpha_m * K_m * (wE.unsqueeze(-1) * delta).sum(dim=(1, 2))
+                sum_wE_b = wE.sum(dim=2)
+                sum_wE_a = wE.sum(dim=1)
+                term1 = (sum_wE_b.unsqueeze(-1) * P_a_fit_t).sum(dim=1)
+                term2 = (sum_wE_a.unsqueeze(-1) * P_b_ref).sum(dim=1)
+                grad_t += -alpha_m * K_m * (term1 - term2)
 
-                # Spatial part of grad_R
-                wE_delta_sum_ref = (wE.unsqueeze(-1) * delta).sum(dim=2)  # (B, n_fit, 3)
-                grad_R_spatial = -alpha_m * K_m * torch.einsum('bfi,bfj->bij', wE_delta_sum_ref, P_a_orig)
+                term_Z = torch.bmm(wE, P_b_ref)
+                wE_delta_sum_ref = sum_wE_b.unsqueeze(-1) * P_a_fit_t - term_Z
+                grad_R_spatial = -alpha_m * K_m * torch.bmm(wE_delta_sum_ref.transpose(1, 2), P_a_orig)
 
-                # Weight part of grad_R
                 dw_mask = ((D_ab > 0.0) & (D_ab < 1.0)).float()
-                coeff = (1.0 / 3.0) * K_m * (E_ab * dw_mask)  # (B, n_fit, n_ref)
-                grad_R_weight = torch.einsum('bfr,bri,bfj->bij', coeff, V_ref, V_fit_orig)
+                coeff = (1.0 / 3.0) * K_m * (E_ab * dw_mask)
+                grad_R_weight = torch.bmm(V_ref.transpose(1, 2), coeff.transpose(1, 2))
+                grad_R_weight = torch.bmm(grad_R_weight, V_fit_orig)
 
                 grad_R += grad_R_spatial + grad_R_weight
 
@@ -299,17 +301,23 @@ def compute_overlap_and_grad_pharm(
                 abs_D = torch.abs(D_ab)
                 w_ab = (abs_D + 2.0) / 3.0
 
-                O_AB += K_m * (w_ab * E_ab).sum(dim=(1, 2))
-
                 wE = w_ab * E_ab
-                grad_t += -alpha_m * K_m * (wE.unsqueeze(-1) * delta).sum(dim=(1, 2))
+                O_AB += K_m * wE.sum(dim=(1, 2))
 
-                wE_delta_sum_ref = (wE.unsqueeze(-1) * delta).sum(dim=2)
-                grad_R_spatial = -alpha_m * K_m * torch.einsum('bfi,bfj->bij', wE_delta_sum_ref, P_a_orig)
+                sum_wE_b = wE.sum(dim=2)
+                sum_wE_a = wE.sum(dim=1)
+                term1 = (sum_wE_b.unsqueeze(-1) * P_a_fit_t).sum(dim=1)
+                term2 = (sum_wE_a.unsqueeze(-1) * P_b_ref).sum(dim=1)
+                grad_t += -alpha_m * K_m * (term1 - term2)
+
+                term_Z = torch.bmm(wE, P_b_ref)
+                wE_delta_sum_ref = sum_wE_b.unsqueeze(-1) * P_a_fit_t - term_Z
+                grad_R_spatial = -alpha_m * K_m * torch.bmm(wE_delta_sum_ref.transpose(1, 2), P_a_orig)
 
                 sgn_D = torch.sign(D_ab)
                 coeff = (1.0 / 3.0) * K_m * (E_ab * sgn_D)
-                grad_R_weight = torch.einsum('bfr,bri,bfj->bij', coeff, V_ref, V_fit_orig)
+                grad_R_weight = torch.bmm(V_ref.transpose(1, 2), coeff.transpose(1, 2))
+                grad_R_weight = torch.bmm(grad_R_weight, V_fit_orig)
 
                 grad_R += grad_R_spatial + grad_R_weight
     else:
@@ -347,17 +355,21 @@ def compute_overlap_and_grad_pharm(
             P_a_fit_t = fit_anchors_t[fit_idx]    # (n_fit, 3)
             P_a_orig = fit_anchors_orig[fit_idx]   # (n_fit, 3)
 
-            delta = P_a_fit_t.unsqueeze(1) - P_b_ref.unsqueeze(0)  # (n_fit, n_ref, 3)
-            dist_sq = (delta * delta).sum(dim=-1)
+            dist_sq = torch.cdist(P_a_fit_t, P_b_ref, p=2.0) ** 2  # (n_fit, n_ref)
             E_ab = torch.exp(-alpha_m / 2.0 * dist_sq)
 
             if ptype_name in _NONDIRECTIONAL:
                 O_AB = O_AB + K_m * E_ab.sum()
 
-                grad_t = grad_t + (-alpha_m * K_m) * (E_ab.unsqueeze(-1) * delta).sum(dim=(0, 1))
+                sum_E_b = E_ab.sum(dim=1)  # (n_fit,)
+                sum_E_a = E_ab.sum(dim=0)  # (n_ref,)
+                term1 = (sum_E_b.unsqueeze(-1) * P_a_fit_t).sum(dim=0)
+                term2 = (sum_E_a.unsqueeze(-1) * P_b_ref).sum(dim=0)
+                grad_t = grad_t + (-alpha_m * K_m) * (term1 - term2)
 
-                E_delta_sum_ref = (E_ab.unsqueeze(-1) * delta).sum(dim=1)
-                grad_R = grad_R + (-alpha_m * K_m) * torch.einsum('ia,ib->ab', E_delta_sum_ref, P_a_orig)
+                term_Z = torch.mm(E_ab, P_b_ref)
+                E_delta_sum_ref = sum_E_b.unsqueeze(-1) * P_a_fit_t - term_Z
+                grad_R = grad_R + (-alpha_m * K_m) * torch.mm(E_delta_sum_ref.T, P_a_orig)
 
             elif ptype_name in _DIRECTIONAL:
                 V_ref = ref_vectors_n[ref_idx]
@@ -368,17 +380,24 @@ def compute_overlap_and_grad_pharm(
                 D_clamped = torch.clamp(D_ab, 0.0, 1.0)
                 w_ab = (D_clamped + 2.0) / 3.0
 
-                O_AB = O_AB + K_m * (w_ab * E_ab).sum()
+                wE = w_ab * E_ab
+                O_AB = O_AB + K_m * wE.sum()
 
-                weighted_E = (w_ab * E_ab).unsqueeze(-1)
-                grad_t = grad_t + (-alpha_m * K_m) * (weighted_E * delta).sum(dim=(0, 1))
+                sum_wE_b = wE.sum(dim=1)
+                sum_wE_a = wE.sum(dim=0)
+                term1 = (sum_wE_b.unsqueeze(-1) * P_a_fit_t).sum(dim=0)
+                term2 = (sum_wE_a.unsqueeze(-1) * P_b_ref).sum(dim=0)
+                grad_t = grad_t + (-alpha_m * K_m) * (term1 - term2)
 
-                wE_delta_sum_ref = (w_ab.unsqueeze(-1) * E_ab.unsqueeze(-1) * delta).sum(dim=1)
-                grad_R_spatial = (-alpha_m * K_m) * torch.einsum('ia,ib->ab', wE_delta_sum_ref, P_a_orig)
+                term_Z = torch.mm(wE, P_b_ref)
+                wE_delta_sum_ref = sum_wE_b.unsqueeze(-1) * P_a_fit_t - term_Z
+                grad_R_spatial = (-alpha_m * K_m) * torch.mm(wE_delta_sum_ref.T, P_a_orig)
 
                 dw_mask = ((D_ab > 0.0) & (D_ab < 1.0)).float()
                 coeff = (1.0 / 3.0) * K_m * (E_ab * dw_mask)
-                grad_R_weight = torch.einsum('ab,bi,aj->ij', coeff, V_ref, V_fit_orig)
+                
+                grad_R_weight = torch.mm(V_ref.T, coeff.T)
+                grad_R_weight = torch.mm(grad_R_weight, V_fit_orig)
 
                 grad_R = grad_R + grad_R_spatial + grad_R_weight
 
@@ -391,17 +410,24 @@ def compute_overlap_and_grad_pharm(
                 abs_D = torch.abs(D_ab)
                 w_ab = (abs_D + 2.0) / 3.0
 
-                O_AB = O_AB + K_m * (w_ab * E_ab).sum()
+                wE = w_ab * E_ab
+                O_AB = O_AB + K_m * wE.sum()
 
-                weighted_E = (w_ab * E_ab).unsqueeze(-1)
-                grad_t = grad_t + (-alpha_m * K_m) * (weighted_E * delta).sum(dim=(0, 1))
+                sum_wE_b = wE.sum(dim=1)
+                sum_wE_a = wE.sum(dim=0)
+                term1 = (sum_wE_b.unsqueeze(-1) * P_a_fit_t).sum(dim=0)
+                term2 = (sum_wE_a.unsqueeze(-1) * P_b_ref).sum(dim=0)
+                grad_t = grad_t + (-alpha_m * K_m) * (term1 - term2)
 
-                wE_delta_sum_ref = (w_ab.unsqueeze(-1) * E_ab.unsqueeze(-1) * delta).sum(dim=1)
-                grad_R_spatial = (-alpha_m * K_m) * torch.einsum('ia,ib->ab', wE_delta_sum_ref, P_a_orig)
+                term_Z = torch.mm(wE, P_b_ref)
+                wE_delta_sum_ref = sum_wE_b.unsqueeze(-1) * P_a_fit_t - term_Z
+                grad_R_spatial = (-alpha_m * K_m) * torch.mm(wE_delta_sum_ref.T, P_a_orig)
 
                 sgn_D = torch.sign(D_ab)
                 coeff = (1.0 / 3.0) * K_m * (E_ab * sgn_D)
-                grad_R_weight = torch.einsum('ab,bi,aj->ij', coeff, V_ref, V_fit_orig)
+                
+                grad_R_weight = torch.mm(V_ref.T, coeff.T)
+                grad_R_weight = torch.mm(grad_R_weight, V_fit_orig)
 
                 grad_R = grad_R + grad_R_spatial + grad_R_weight
 
