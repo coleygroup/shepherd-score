@@ -1238,3 +1238,170 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
         best_transform = SE3_transform.cpu()[best_idx]
         best_score = scores.cpu()[best_idx]
     return best_alignment, best_aligned_vectors, best_transform, best_score
+
+
+def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
+                                      fit_pharms: torch.Tensor,
+                                      ref_anchors: torch.Tensor,
+                                      fit_anchors: torch.Tensor,
+                                      ref_vectors: torch.Tensor,
+                                      fit_vectors: torch.Tensor,
+                                      similarity: _SIM_TYPE = 'tanimoto',
+                                      extended_points: bool = False,
+                                      only_extended: bool = False,
+                                      num_repeats: int = 50,
+                                      trans_centers: Union[torch.Tensor, None] = None,
+                                      lr: float = 0.1,
+                                      max_num_steps: int = 200,
+                                      verbose: bool = False
+                                      ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Optimize pharmacophore alignment using analytical gradients instead of autograd.
+
+    Same interface and behavior as ``optimize_pharm_overlay``, but uses hand-derived
+    analytical gradients with a manual Adam optimizer, eliminating PyTorch autograd overhead.
+
+    Only supports ``similarity='tanimoto'`` and ``extended_points=False``.
+
+    Parameters
+    ----------
+    ref_pharms : torch.Tensor (N,)
+    fit_pharms : torch.Tensor (M,)
+    ref_anchors : torch.Tensor (N,3)
+    fit_anchors : torch.Tensor (M,3)
+    ref_vectors : torch.Tensor (N,3)
+    fit_vectors : torch.Tensor (M,3)
+    similarity : str
+    extended_points : bool
+    only_extended : bool
+    num_repeats : int
+    trans_centers : torch.Tensor or None
+    lr : float
+    max_num_steps : int
+    verbose : bool
+
+    Returns
+    -------
+    tuple of (aligned_anchors, aligned_vectors, SE3_transform, score)
+    """
+    from shepherd_score.score.analytical_gradients import (
+        compute_self_overlaps_pharm,
+        compute_analytical_grad_se3,
+    )
+
+    if similarity.lower() != 'tanimoto':
+        raise NotImplementedError(
+            "Analytical gradients only support similarity='tanimoto'. "
+            f"Got '{similarity}'."
+        )
+    if extended_points:
+        raise NotImplementedError(
+            "Analytical gradients do not support extended_points=True."
+        )
+
+    # Initialize SE(3) parameters (without requires_grad)
+    if trans_centers is None:
+        se3_params = _initialize_se3_params(ref_points=ref_anchors, fit_points=fit_anchors, num_repeats=num_repeats)
+    else:
+        se3_params = _initialize_se3_params_with_translations(
+            ref_points=ref_anchors,
+            fit_points=fit_anchors,
+            trans_centers=trans_centers,
+            num_repeats_per_trans=10)
+    se3_params = se3_params.detach()  # No autograd needed
+    num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
+
+    # Precompute self-overlaps (invariant to SE(3))
+    VAA_total, VBB_total = compute_self_overlaps_pharm(
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
+    )
+
+    # Replicate data for batched computation
+    if num_repeats > 1:
+        ref_pharms_rep = ref_pharms.repeat((num_repeats, 1)).squeeze(0)
+        fit_pharms_rep = fit_pharms.repeat((num_repeats, 1)).squeeze(0)
+        ref_anchors_rep = ref_anchors.repeat((num_repeats, 1, 1)).squeeze(0)
+        fit_anchors_rep = fit_anchors.repeat((num_repeats, 1, 1)).squeeze(0)
+        ref_vectors_rep = ref_vectors.repeat((num_repeats, 1, 1)).squeeze(0)
+        fit_vectors_rep = fit_vectors.repeat((num_repeats, 1, 1)).squeeze(0)
+    else:
+        ref_pharms_rep = ref_pharms
+        fit_pharms_rep = fit_pharms
+        ref_anchors_rep = ref_anchors
+        fit_anchors_rep = fit_anchors
+        ref_vectors_rep = ref_vectors
+        fit_vectors_rep = fit_vectors
+
+    if verbose:
+        init_score = get_overlap_pharm(
+            ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+            ref_vectors, fit_vectors, similarity=similarity
+        )
+        print(f'Initial pharmacophore similarity score: {init_score:.3f}')
+
+    # Manual Adam optimizer state
+    beta1, beta2, eps_adam = 0.9, 0.999, 1e-8
+    m = torch.zeros_like(se3_params)
+    v = torch.zeros_like(se3_params)
+
+    last_loss = 1.0
+    counter = 0
+
+    for step in range(max_num_steps):
+        loss, grad = compute_analytical_grad_se3(
+            se3_params, ref_pharms_rep, fit_pharms_rep,
+            ref_anchors_rep, fit_anchors_rep, ref_vectors_rep, fit_vectors_rep,
+            VAA_total, VBB_total
+        )
+
+        # Adam update
+        t_step = step + 1
+        m = beta1 * m + (1 - beta1) * grad
+        v = beta2 * v + (1 - beta2) * grad * grad
+        m_hat = m / (1 - beta1 ** t_step)
+        v_hat = v / (1 - beta2 ** t_step)
+        se3_params = se3_params - lr * m_hat / (torch.sqrt(v_hat) + eps_adam)
+
+        if verbose and step % 100 == 0:
+            print(f"Step {step}, Score: {1 - loss.item()}")
+
+        # Early stopping
+        if abs(loss.item() - last_loss) > 1e-5:
+            counter = 0
+        else:
+            counter += 1
+        last_loss = loss.item()
+        if counter > 10:
+            break
+
+    # Extract optimized SE(3) parameters
+    SE3_transform = get_SE3_transform(se3_params)
+    aligned_anchors = apply_SE3_transform(fit_anchors_rep, SE3_transform)
+    aligned_vectors = apply_SO3_transform(fit_vectors_rep, SE3_transform)
+    scores = get_overlap_pharm(
+        ptype_1=ref_pharms_rep,
+        ptype_2=fit_pharms_rep,
+        anchors_1=ref_anchors_rep,
+        anchors_2=aligned_anchors,
+        vectors_1=ref_vectors_rep,
+        vectors_2=aligned_vectors,
+        similarity=similarity
+    )
+
+    if num_repeats == 1:
+        if verbose:
+            print(f'Optimized pharmacophore similarity score: {scores:.3f}')
+        best_alignment = aligned_anchors.cpu()
+        best_aligned_vectors = aligned_vectors.cpu()
+        best_transform = SE3_transform.cpu()
+        best_score = scores.cpu()
+    else:
+        if verbose:
+            print(f'Optimized pharmacophore similarity score -- max: {scores.max():.3f} | mean: {scores.mean():.3f} | min: {scores.min():.3f}')
+        best_idx = torch.argmax(scores.detach().cpu())
+        best_alignment = aligned_anchors.cpu()[best_idx]
+        best_aligned_vectors = aligned_vectors.cpu()[best_idx]
+        best_transform = SE3_transform.cpu()[best_idx]
+        best_score = scores.cpu()[best_idx]
+
+    return best_alignment, best_aligned_vectors, best_transform, best_score
