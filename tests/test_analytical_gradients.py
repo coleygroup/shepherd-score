@@ -497,7 +497,7 @@ class TestOptimizePharmOverlayAnalytical:
         )
 
         # Both should achieve similar scores (not necessarily identical due to floating point)
-        assert abs(score_a.item() - score_ag.item()) < 0.05, \
+        assert abs(score_a.item() - score_ag.item()) < 0.005, \
             f"Analytical score {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
     def test_analytical_matches_autograd_batched(self):
