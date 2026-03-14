@@ -22,7 +22,7 @@ from shepherd_score.pharm_utils.pharmacophore import get_pharmacophores
 from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
 from shepherd_score.score.pharmacophore_scoring import _SIM_TYPE, get_overlap_pharm
 from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_esp_overlay, optimize_esp_combo_score_overlay
-from shepherd_score.alignment import optimize_pharm_overlay
+from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
 from shepherd_score.alignment_utils.se3_np import apply_SE3_transform_np, apply_SO3_transform_np
 
 
@@ -843,7 +843,8 @@ class MoleculePair:
                          max_num_steps: int = 200,
                          use_jax: bool = False,
                          verbose: bool = False,
-                         use_vectorized: bool = True
+                         use_vectorized: bool = True,
+                         use_analytical: bool = True,
                          ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Align fit_molec to ref_molec using pharmacophore similarity.
@@ -884,6 +885,11 @@ class MoleculePair:
             Default is ``False``.
         use_vectorized : bool, optional
             Whether to use the vectorized version of the pharmacophore scoring function.
+            This is only relevant if ``use_jax=True``.
+            Default is ``True``.
+        use_analytical : bool, optional
+            Whether to use the analytical version of the pharmacophore scoring function.
+            Currently only implemented for PyTorch.
             Default is ``True``.
         Returns
         -------
@@ -924,7 +930,8 @@ class MoleculePair:
             self.sim_aligned_pharm = np.array(score)
             return np.array(aligned_fit_anchors), np.array(aligned_fit_vectors)
         # PyTorch
-        aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = optimize_pharm_overlay(
+        _pharm_fn = optimize_pharm_overlay_analytical if use_analytical else optimize_pharm_overlay
+        aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = _pharm_fn(
             ref_pharms=torch.from_numpy(self.ref_molec.pharm_types).to(torch.float32).to(self.device),
             fit_pharms=torch.from_numpy(self.fit_molec.pharm_types).to(torch.float32).to(self.device),
             ref_anchors=torch.from_numpy(self.ref_molec.pharm_ancs).to(torch.float32).to(self.device),

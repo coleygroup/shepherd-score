@@ -232,6 +232,10 @@ def compute_overlap_and_grad_pharm(
         ref_vectors = ref_vectors.unsqueeze(0)
         fit_vectors_orig = fit_vectors_orig.unsqueeze(0)
 
+    # Ensure pharms are integral for indexing
+    ref_pharms = ref_pharms.to(torch.long)
+    fit_pharms = fit_pharms.to(torch.long)
+
     fit_anchors_t = torch.bmm(R, fit_anchors_orig.permute(0, 2, 1)).permute(0, 2, 1) + t.unsqueeze(1)
 
     # Vectors
