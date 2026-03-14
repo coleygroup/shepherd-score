@@ -7,7 +7,7 @@ https://github.com/ljmartin/align/blob/main/0.2%20aligning%20principal%20moments
 
 import jax.numpy as jnp
 from jax import vmap, Array
-from shepherd_score.alignment_utils.se3_jax import get_SE3_transform_jax, apply_SE3_transform_jax
+from shepherd_score.alignment.utils.se3_jax import get_SE3_transform_jax, apply_SE3_transform_jax
 
 def compute_moment_of_inertia_jax(points: Array) -> Array:
     """

@@ -16,9 +16,9 @@ from shepherd_score.score.gaussian_overlap import VAB_2nd_order
 from shepherd_score.score.electrostatic_scoring import get_overlap_esp, esp_combo_score
 from shepherd_score.score.electrostatic_scoring import VAB_2nd_order_esp
 from shepherd_score.score.pharmacophore_scoring import get_overlap_pharm, _SIM_TYPE
-from shepherd_score.alignment_utils.se3 import get_SE3_transform, apply_SE3_transform, quaternions_to_rotation_matrix, apply_SO3_transform
-from shepherd_score.alignment_utils.pca_np import quaternions_for_principal_component_alignment_np
-from shepherd_score.alignment_utils.pca import angle_between_vecs, rotation_axis, quaternion_from_axis_angle
+from shepherd_score.alignment.utils.se3 import get_SE3_transform, apply_SE3_transform, quaternions_to_rotation_matrix, apply_SO3_transform
+from shepherd_score.alignment.utils.pca_np import quaternions_for_principal_component_alignment_np
+from shepherd_score.alignment.utils.pca import angle_between_vecs, rotation_axis, quaternion_from_axis_angle
 
 
 def objective_ROCS_overlay(se3_params: torch.Tensor,

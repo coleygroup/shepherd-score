@@ -23,7 +23,7 @@ from shepherd_score.score.analytical_gradients import (
     compute_avoid_and_grad,
     compute_analytical_grad_se3_shape_with_avoid,
 )
-from shepherd_score.alignment_utils.se3 import (
+from shepherd_score.alignment.utils.se3 import (
     quaternions_to_rotation_matrix,
     get_SE3_transform,
     apply_SE3_transform,

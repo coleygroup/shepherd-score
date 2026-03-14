@@ -41,7 +41,13 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 ```
 .
 ├── shepherd_score/
-│   ├── alignment_utils/                  # Alignment and rigid transformations tools
+│   ├── alignment/                        # Alignment package with PyTorch, JAX, and utilities
+│   │   ├── utils/                        # SE(3) and PCA utilities (torch, numpy, jax)
+│   │   │   ├── se3*.py                   # SE(3) transformations (torch, numpy, jax)
+│   │   │   └── pca*.py                   # Principal component alignment (torch, numpy, jax)
+│   │   ├── _torch.py                     # PyTorch alignment algorithms
+│   │   └── _jax.py                       # JAX alignment algorithms
+│   ├── alignment_jax.py                  # Backwards compatibility shim
 │   ├── evaluations/                      # Evaluation suite
 │   │   ├── pdbs/                         # PDBQT files used in *ShEPhERD* manuscript
 │   │   ├── utils/                        # Converting data types and others
@@ -58,7 +64,6 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 │   │   ├── electrostatic_scoring.py
 │   │   ├── gaussian_overlap.py
 │   │   └── pharmacophore_scoring.py
-│   ├── alignment.py
 │   ├── conformer_generation.py           # RDKit and xtb related functions for conformers
 │   ├── container.py                      # Molecule and MoleculePair classes
 │   ├── extract_profiles.py               # Functions to extract interaction profiles
@@ -66,7 +71,7 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 │   ├── objective.py                      # Objective function used for REINVENT
 │   └── visualize.py                      # Visualization tools
 ├── scripts/                              # Scripts for running evaluations
-├── examples/                             # Jupyter notebook tutorials/examples 
+├── examples/                             # Jupyter notebook tutorials/examples
 ├── tests/
 └── README.md
 ```

@@ -5,12 +5,12 @@ import pytest
 import numpy as np
 import torch
 from .utils import _configure_jax_platform
-from shepherd_score.alignment_utils.se3_np import (
+from shepherd_score.alignment.utils.se3_np import (
     quaternions_to_rotation_matrix_np,
     get_SE3_transform_np,
     apply_SE3_transform_np,
 )
-from shepherd_score.alignment_utils.se3 import (
+from shepherd_score.alignment.utils.se3 import (
     quaternions_to_rotation_matrix,
     get_SE3_transform,
     apply_SE3_transform,
@@ -29,7 +29,7 @@ try:
     _gpu_detected = _configure_jax_platform()
 
     import jax.numpy as jnp
-    from shepherd_score.alignment_utils.se3_jax import (
+    from shepherd_score.alignment.utils.se3_jax import (
         quaternions_to_rotation_matrix_jax,
         get_SE3_transform_jax,
         apply_SE3_transform_jax

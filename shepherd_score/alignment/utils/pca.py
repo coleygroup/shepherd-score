@@ -11,7 +11,7 @@ https://github.com/ljmartin/align/blob/main/0.2%20aligning%20principal%20moments
 """
 import torch
 import torch.nn.functional as F
-from shepherd_score.alignment_utils.se3 import get_SE3_transform, apply_SE3_transform
+from shepherd_score.alignment.utils.se3 import get_SE3_transform, apply_SE3_transform
 
 def compute_moment_of_inertia(points: torch.Tensor) -> torch.Tensor:
     """

@@ -18,7 +18,7 @@ from shepherd_score.score.gaussian_overlap import get_overlap
 from shepherd_score.score.electrostatic_scoring_np import get_overlap_esp_np
 from shepherd_score.score.electrostatic_scoring import get_overlap_esp
 from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
-from shepherd_score.alignment_utils.se3_np import apply_SE3_transform_np, apply_SO3_transform_np
+from shepherd_score.alignment.utils.se3_np import apply_SE3_transform_np, apply_SO3_transform_np
 from shepherd_score.conformer_generation import embed_conformer_from_smiles, optimize_conformer_with_xtb
 from shepherd_score.conformer_generation import generate_opt_conformers, generate_opt_conformers_xtb, charges_from_single_point_conformer_with_xtb
 from shepherd_score.score.constants import ALPHA
