@@ -532,20 +532,39 @@ class TestOptimizePharmOverlayAnalytical:
         assert abs(score_a.item() - score_ag.item()) < 1e-4, \
             f"Analytical score {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
-    def test_analytical_tanimoto_only(self):
-        """Verify NotImplementedError for tversky/extended_points."""
+    def test_tversky_matches_autograd(self):
+        """Verify tversky analytical matches autograd for all three variants."""
+        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
+
+        data = self._get_test_data(seed=42)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+
+        for sim in ('tversky', 'tversky_ref', 'tversky_fit'):
+            _, _, _, score_ag = optimize_pharm_overlay(
+                ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+                ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+                ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+                similarity=sim, num_repeats=5,
+                lr=0.1, max_num_steps=200
+            )
+
+            _, _, _, score_a = optimize_pharm_overlay_analytical(
+                ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+                ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+                ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+                similarity=sim, num_repeats=5,
+                lr=0.1, max_num_steps=200
+            )
+
+            assert abs(score_a.item() - score_ag.item()) < 1e-4, \
+                f"{sim}: analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_tversky_extended_points_not_implemented(self):
+        """Verify extended_points=True still raises NotImplementedError."""
         from shepherd_score.alignment import optimize_pharm_overlay_analytical
 
         data = self._get_test_data()
         ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
-
-        with pytest.raises(NotImplementedError):
-            optimize_pharm_overlay_analytical(
-                ref_pharms=ref_pharms, fit_pharms=fit_pharms,
-                ref_anchors=ref_anchors, fit_anchors=fit_anchors,
-                ref_vectors=ref_vecs, fit_vectors=fit_vecs,
-                similarity='tversky', num_repeats=1
-            )
 
         with pytest.raises(NotImplementedError):
             optimize_pharm_overlay_analytical(

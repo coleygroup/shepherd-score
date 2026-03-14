@@ -1415,7 +1415,8 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
     Same interface and behavior as ``optimize_pharm_overlay``, but uses hand-derived
     analytical gradients with PyTorch's Adam optimizer, eliminating PyTorch autograd overhead.
 
-    Only supports ``similarity='tanimoto'`` and ``extended_points=False``.
+    Supports ``similarity='tanimoto'``, ``'tversky'``, ``'tversky_ref'``, and
+    ``'tversky_fit'``. Does not support ``extended_points=True``.
 
     Parameters
     ----------
@@ -1443,11 +1444,18 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
         compute_analytical_grad_se3,
     )
 
-    if similarity.lower() != 'tanimoto':
-        raise NotImplementedError(
-            "Analytical gradients only support similarity='tanimoto'. "
-            f"Got '{similarity}'."
+    _SIGMA_MAP = {'tversky': 0.95, 'tversky_ref': 1.0, 'tversky_fit': 0.05}
+    sim_lower = similarity.lower()
+    if sim_lower in _SIGMA_MAP:
+        sigma = _SIGMA_MAP[sim_lower]
+    elif sim_lower == 'tanimoto':
+        sigma = 0.5  # unused for tanimoto
+    else:
+        raise ValueError(
+            f"Unknown similarity '{similarity}'. "
+            "Expected one of: 'tanimoto', 'tversky', 'tversky_ref', 'tversky_fit'."
         )
+
     if extended_points:
         raise NotImplementedError(
             "Analytical gradients do not support extended_points=True."
@@ -1504,7 +1512,8 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
             loss, grad = compute_analytical_grad_se3(
                 se3_params, ref_pharms_rep, fit_pharms_rep,
                 ref_anchors_rep, fit_anchors_rep, ref_vectors_rep, fit_vectors_rep,
-                VAA_total, VBB_total
+                VAA_total, VBB_total,
+                similarity=sim_lower, sigma=sigma,
             )
 
         optimizer.zero_grad()

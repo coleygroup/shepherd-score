@@ -346,6 +346,31 @@ def apply_tanimoto_chain_rule(
     return loss, scaled_grad_R, scaled_grad_t
 
 
+def apply_tversky_chain_rule(
+    O_AB: torch.Tensor,
+    D: torch.Tensor,  # sigma*O_AA + (1-sigma)*O_BB (precomputed constant)
+    grad_R: torch.Tensor,
+    grad_t: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    S = torch.clamp_max(O_AB / D, max=1.0)
+    loss = 1.0 - S
+    # Gradient is zero when clamped (S >= 1.0); active mask where O_AB < D
+    active = (O_AB < D).to(dtype=grad_R.dtype)
+    scale = -active / D
+
+    if grad_R.dim() == 3:
+        scale_R = scale.unsqueeze(-1).unsqueeze(-1)
+        scale_t = scale.unsqueeze(-1)
+    else:
+        scale_R = scale
+        scale_t = scale
+
+    scaled_grad_R = scale_R * grad_R
+    scaled_grad_t = scale_t * grad_t
+
+    return loss, scaled_grad_R, scaled_grad_t
+
+
 def compute_overlap_and_grad_shape(
     R: torch.Tensor,
     t: torch.Tensor,
@@ -853,10 +878,21 @@ def compute_analytical_grad_se3(
     ref_vectors: torch.Tensor,
     fit_vectors: torch.Tensor,
     VAA_total: torch.Tensor,
-    VBB_total: torch.Tensor
+    VBB_total: torch.Tensor,
+    similarity: str = 'tanimoto',
+    sigma: float = 0.5,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     batched = se3_params.dim() == 2
-    U = VAA_total + VBB_total
+
+    if similarity == 'tanimoto':
+        chain_rule_fn = lambda O_AB, grad_R, grad_t: apply_tanimoto_chain_rule(
+            O_AB, VAA_total + VBB_total, grad_R, grad_t
+        )
+    else:
+        D = sigma * VAA_total + (1 - sigma) * VBB_total
+        chain_rule_fn = lambda O_AB, grad_R, grad_t: apply_tversky_chain_rule(
+            O_AB, D, grad_R, grad_t
+        )
 
     if batched:
         B = se3_params.shape[0]
@@ -872,7 +908,7 @@ def compute_analytical_grad_se3(
             R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
         )
 
-        loss, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+        loss, scaled_grad_R, scaled_grad_t = chain_rule_fn(O_AB, grad_R, grad_t)
 
         grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
 
@@ -898,7 +934,7 @@ def compute_analytical_grad_se3(
             R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
         )
 
-        loss, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+        loss, scaled_grad_R, scaled_grad_t = chain_rule_fn(O_AB, grad_R, grad_t)
 
         grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
 
