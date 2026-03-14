@@ -17,6 +17,9 @@ from shepherd_score.score.analytical_gradients import (
     apply_tanimoto_chain_rule,
     compute_analytical_grad_se3,
     _rotation_matrix_from_unit_quat,
+    compute_overlap_and_grad_shape,
+    compute_self_overlaps_shape,
+    compute_analytical_grad_se3_shape,
 )
 from shepherd_score.alignment_utils.se3 import (
     quaternions_to_rotation_matrix,
@@ -25,6 +28,7 @@ from shepherd_score.alignment_utils.se3 import (
     apply_SO3_transform,
 )
 from shepherd_score.score.pharmacophore_scoring import get_overlap_pharm, tanimoto_func
+from shepherd_score.score.gaussian_overlap import get_overlap
 from shepherd_score.score.constants import P_TYPES, P_ALPHAS
 
 P_TYPES_LWRCASE = tuple(map(str.lower, P_TYPES))
@@ -589,4 +593,340 @@ class TestAnalyticalPerformance:
         time_a = (time.perf_counter() - t0) / 3
 
         print(f"\nAutograd: {time_ag:.3f}s, Analytical: {time_a:.3f}s, Speedup: {time_ag/time_a:.2f}x")
+        assert time_a < time_ag, f"Analytical ({time_a:.3f}s) should be faster than autograd ({time_ag:.3f}s)"
+
+    @pytest.mark.slow
+    def test_profiling_varying_sizes(self):
+        """Profile speed and memory usage as the number of pharmacophores increases."""
+        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
+        import gc
+
+        sizes = [10, 30, 60]
+        sizes_2 = [8, 28, 58]
+        
+        print("\n--- Profiling Result ---")
+        print(f"{'Size':<10} | {'Method':<25} | {'Time (s)':<10} | {'Speedup':<10} | {'Peak Mem (MB)':<15}")
+        print("-" * 80)
+
+        for n, n2 in zip(sizes, sizes_2):
+            data = _random_pharmacophore_data(n_ref=n, n_fit=n2, seed=n, dtype=torch.float32)
+            ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+            
+            kwargs = dict(
+                ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+                ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+                ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+                similarity='tanimoto', num_repeats=10,
+                lr=0.1, max_num_steps=100
+            )
+
+            methods = [
+                ("Autodiff", lambda: optimize_pharm_overlay(**kwargs)),
+                ("Analytical Vectorized", lambda: optimize_pharm_overlay_analytical(**kwargs)),
+            ]
+            
+            baseline = 0
+            for name, func in methods:
+                # Warmup
+                func()
+                
+                gc.collect()
+                
+                t0 = time.perf_counter()
+                for _ in range(3):
+                    func()
+                time_taken = (time.perf_counter() - t0) / 3
+
+                if name == "Autodiff":
+                    baseline = time_taken
+                
+                print(f"{n:<10} | {name:<25} | {time_taken:<10.3f} | {baseline/time_taken:<10.2f}")
+
+        print("-" * 80)
+
+
+# =====================================================================
+# Shape Analytical Gradients
+# =====================================================================
+
+def _random_shape_data(n_ref=10, n_fit=8, seed=42, dtype=torch.float64):
+    """Generate random point cloud data for shape scoring tests."""
+    rng = np.random.RandomState(seed)
+    ref_points = torch.tensor(rng.randn(n_ref, 3), dtype=dtype)
+    fit_points = torch.tensor(rng.randn(n_fit, 3), dtype=dtype)
+    return ref_points, fit_points
+
+
+class TestShapeOverlapGradientTranslation:
+
+    def test_translation_grad_matches_fd(self):
+        """Analytical grad_t vs. finite differences for shape overlap."""
+        ref_points, fit_points = _random_shape_data(seed=10)
+        alpha = 0.81
+
+        q = _random_unit_quaternion(seed=5).double()
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, _, grad_t_a = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+
+        eps = 1e-6
+        grad_t_fd = torch.zeros(3, dtype=torch.float64)
+        for i in range(3):
+            t_plus = t.clone(); t_plus[i] += eps
+            t_minus = t.clone(); t_minus[i] -= eps
+            O_plus, _, _ = compute_overlap_and_grad_shape(R, t_plus, ref_points, fit_points, alpha)
+            O_minus, _, _ = compute_overlap_and_grad_shape(R, t_minus, ref_points, fit_points, alpha)
+            grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
+
+        torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4)
+
+    def test_translation_grad_various_alphas(self):
+        """Check grad_t is correct for different alpha values."""
+        ref_points, fit_points = _random_shape_data(seed=11)
+        for alpha in [0.5, 0.81, 1.5]:
+            q = _random_unit_quaternion(seed=6).double()
+            R = _rotation_matrix_from_unit_quat(q)
+            t = torch.randn(3, dtype=torch.float64)
+
+            _, _, grad_t_a = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+
+            eps = 1e-6
+            grad_t_fd = torch.zeros(3, dtype=torch.float64)
+            for i in range(3):
+                t_plus = t.clone(); t_plus[i] += eps
+                t_minus = t.clone(); t_minus[i] -= eps
+                O_plus, _, _ = compute_overlap_and_grad_shape(R, t_plus, ref_points, fit_points, alpha)
+                O_minus, _, _ = compute_overlap_and_grad_shape(R, t_minus, ref_points, fit_points, alpha)
+                grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
+
+            torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4,
+                                       msg=f"alpha={alpha}")
+
+
+class TestShapeOverlapGradientRotation:
+
+    def test_rotation_grad_matches_fd(self):
+        """Analytical grad_R vs. finite differences for shape overlap."""
+        ref_points, fit_points = _random_shape_data(seed=20)
+        alpha = 0.81
+
+        q = _random_unit_quaternion(seed=15).double()
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, grad_R_a, _ = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+
+        eps = 1e-6
+        grad_R_fd = torch.zeros(3, 3, dtype=torch.float64)
+        for i in range(3):
+            for j in range(3):
+                R_plus = R.clone(); R_plus[i, j] += eps
+                R_minus = R.clone(); R_minus[i, j] -= eps
+                O_plus, _, _ = compute_overlap_and_grad_shape(R_plus, t, ref_points, fit_points, alpha)
+                O_minus, _, _ = compute_overlap_and_grad_shape(R_minus, t, ref_points, fit_points, alpha)
+                grad_R_fd[i, j] = (O_plus - O_minus) / (2 * eps)
+
+        torch.testing.assert_close(grad_R_a, grad_R_fd, atol=1e-4, rtol=1e-4)
+
+    def test_rotation_grad_identity(self):
+        """At identity rotation, grad_R should be non-zero (general position)."""
+        ref_points, fit_points = _random_shape_data(seed=25)
+        alpha = 0.81
+        R = torch.eye(3, dtype=torch.float64)
+        t = torch.zeros(3, dtype=torch.float64)
+
+        _, grad_R_a, _ = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+        # Just check it's not all zeros (points are in general position)
+        assert grad_R_a.abs().sum() > 0
+
+
+class TestShapeFullAnalyticalGradient:
+
+    def _autograd_reference_shape(self, se3_params, ref_points, fit_points, alpha):
+        """Compute loss and grad via autograd for shape scoring."""
+        se3 = se3_params.clone().requires_grad_(True)
+
+        if se3.dim() == 1:
+            q = F.normalize(se3[:4], p=2, dim=0)
+            t_vec = se3[4:]
+            R = _rotation_matrix_from_unit_quat(q)
+            fit_t = (R @ fit_points.T).T + t_vec
+        else:
+            q = F.normalize(se3[:, :4], p=2, dim=1)
+            t_vec = se3[:, 4:]
+            R = _rotation_matrix_from_unit_quat(q)
+            fit_t = torch.bmm(R, fit_points.permute(0, 2, 1)).permute(0, 2, 1) + t_vec.unsqueeze(1)
+
+        score = get_overlap(ref_points, fit_t, alpha=alpha)
+        if se3.dim() == 2:
+            loss = 1 - score.mean()
+        else:
+            loss = 1 - score
+        loss.backward()
+        return loss.detach(), se3.grad.detach()
+
+    def test_full_grad_matches_autograd_single(self):
+        """Single instance: analytical vs. autograd."""
+        ref_points, fit_points = _random_shape_data(n_ref=10, n_fit=8, seed=100)
+        alpha = 0.81
+
+        se3_params = torch.zeros(7, dtype=torch.float64)
+        se3_params[:4] = _random_unit_quaternion(seed=30)
+        se3_params[4:] = torch.randn(3, dtype=torch.float64) * 0.5
+
+        VAA, VBB = compute_self_overlaps_shape(ref_points, fit_points, alpha)
+
+        loss_a, grad_a = compute_analytical_grad_se3_shape(
+            se3_params, ref_points, fit_points, alpha, VAA, VBB
+        )
+        loss_ag, grad_ag = self._autograd_reference_shape(se3_params, ref_points, fit_points, alpha)
+
+        torch.testing.assert_close(loss_a, loss_ag, atol=1e-6, rtol=1e-5)
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-4, rtol=1e-3)
+
+    def test_full_grad_matches_autograd_batched(self):
+        """Batched se3_params: analytical vs. autograd."""
+        ref_points, fit_points = _random_shape_data(n_ref=8, n_fit=6, seed=200)
+        alpha = 0.81
+
+        B = 4
+        se3_params = torch.zeros(B, 7, dtype=torch.float64)
+        for i in range(B):
+            se3_params[i, :4] = _random_unit_quaternion(seed=40 + i)
+            se3_params[i, 4:] = torch.randn(3, dtype=torch.float64) * 0.5
+
+        ref_points_b = ref_points.unsqueeze(0).expand(B, -1, -1)
+        fit_points_b = fit_points.unsqueeze(0).expand(B, -1, -1)
+
+        VAA, VBB = compute_self_overlaps_shape(ref_points, fit_points, alpha)
+
+        loss_a, grad_a = compute_analytical_grad_se3_shape(
+            se3_params, ref_points_b, fit_points_b, alpha, VAA, VBB
+        )
+        loss_ag, grad_ag = self._autograd_reference_shape(
+            se3_params, ref_points_b, fit_points_b, alpha
+        )
+
+        torch.testing.assert_close(loss_a.float(), loss_ag.float(), atol=1e-4, rtol=1e-3)
+        torch.testing.assert_close(grad_a.float(), grad_ag.float(), atol=1e-3, rtol=1e-2)
+
+    def test_self_overlap_values(self):
+        """VAA should match direct computation; both should be positive."""
+        from shepherd_score.score.gaussian_overlap import VAB_2nd_order
+        ref_points, fit_points = _random_shape_data(n_ref=5, n_fit=4, seed=300)
+        alpha = 0.81
+
+        VAA, VBB = compute_self_overlaps_shape(ref_points.float(), fit_points.float(), alpha)
+
+        VAA_ref = VAB_2nd_order(ref_points.float(), ref_points.float(), alpha)
+        VBB_ref = VAB_2nd_order(fit_points.float(), fit_points.float(), alpha)
+
+        torch.testing.assert_close(VAA, VAA_ref, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(VBB, VBB_ref, atol=1e-5, rtol=1e-5)
+        assert VAA > 0
+        assert VBB > 0
+
+
+# =====================================================================
+# Shape Optimizer Integration
+# =====================================================================
+
+class TestOptimizeROCSOverlayAnalytical:
+
+    def _get_test_data(self, seed=42, n_ref=12, n_fit=10):
+        rng = np.random.RandomState(seed)
+        ref = torch.tensor(rng.randn(n_ref, 3), dtype=torch.float32)
+        fit = torch.tensor(rng.randn(n_fit, 3), dtype=torch.float32)
+        return ref, fit
+
+    def test_analytical_matches_autograd_single(self):
+        """num_repeats=1: analytical score close to autograd score."""
+        from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_overlay_analytical
+
+        ref, fit = self._get_test_data(seed=42)
+        alpha = 0.81
+
+        _, _, score_ag = optimize_ROCS_overlay(
+            ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=1, lr=0.1, max_num_steps=200
+        )
+        _, _, score_a = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=1, lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 0.01, \
+            f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_analytical_matches_autograd_batched(self):
+        """num_repeats=5: analytical score close to autograd score."""
+        from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_overlay_analytical
+
+        ref, fit = self._get_test_data(seed=55)
+        alpha = 0.81
+
+        _, _, score_ag = optimize_ROCS_overlay(
+            ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=5, lr=0.1, max_num_steps=200
+        )
+        _, _, score_a = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=5, lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 0.05, \
+            f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_returns_three_tuple(self):
+        """Return value should be (aligned_points, SE3_transform, score)."""
+        from shepherd_score.alignment import optimize_ROCS_overlay_analytical
+
+        ref, fit = self._get_test_data(seed=7)
+        result = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=0.81, num_repeats=1
+        )
+        assert len(result) == 3
+        aligned, transform, score = result
+        assert aligned.shape == fit.shape
+        assert transform.shape == (4, 4)
+        assert score.dim() == 0 or score.numel() == 1
+
+    def test_score_in_valid_range(self):
+        """Score should be in [0, 1]."""
+        from shepherd_score.alignment import optimize_ROCS_overlay_analytical
+
+        ref, fit = self._get_test_data(seed=99)
+        _, _, score = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=0.81, num_repeats=10
+        )
+        assert 0.0 <= score.item() <= 1.0
+
+
+@pytest.mark.slow
+class TestShapeAnalyticalPerformance:
+
+    def test_analytical_faster_than_autograd(self):
+        """Shape analytical gradient should be faster than autograd."""
+        from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_overlay_analytical
+
+        rng = np.random.RandomState(999)
+        ref = torch.tensor(rng.randn(20, 3), dtype=torch.float32)
+        fit = torch.tensor(rng.randn(16, 3), dtype=torch.float32)
+        alpha = 0.81
+
+        kwargs = dict(ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=50,
+                      lr=0.1, max_num_steps=200)
+
+        # Warmup
+        optimize_ROCS_overlay(**kwargs)
+        optimize_ROCS_overlay_analytical(**kwargs)
+
+        t0 = time.perf_counter()
+        for _ in range(3):
+            optimize_ROCS_overlay(**kwargs)
+        time_ag = (time.perf_counter() - t0) / 3
+
+        t0 = time.perf_counter()
+        for _ in range(3):
+            optimize_ROCS_overlay_analytical(**kwargs)
+        time_a = (time.perf_counter() - t0) / 3
+
+        print(f"\nShape - Autograd: {time_ag:.3f}s, Analytical: {time_a:.3f}s, Speedup: {time_ag/time_a:.2f}x")
         assert time_a < time_ag, f"Analytical ({time_a:.3f}s) should be faster than autograd ({time_ag:.3f}s)"

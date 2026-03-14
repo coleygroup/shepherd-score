@@ -1,10 +1,11 @@
 """
-Analytical gradients for pharmacophore alignment scoring.
+Analytical gradients for shape and pharmacophore alignment scoring.
 
-Replaces PyTorch autograd with hand-derived gradients for the pharmacophore
-Tanimoto similarity objective. This module computes gradients of the overlap
-O_AB w.r.t. SE(3) parameters (quaternion + translation) analytically,
-then applies the Tanimoto chain rule.
+Replaces PyTorch autograd with hand-derived gradients for the shape and
+pharmacophore Tanimoto similarity objectives (optionally with an avoid-points
+penalty term). Gradients of the overlap O_AB w.r.t. SE(3) parameters
+(quaternion + translation) are computed analytically, then the Tanimoto
+chain rule is applied.
 """
 import math
 from typing import Tuple
@@ -343,6 +344,179 @@ def apply_tanimoto_chain_rule(
     scaled_grad_t = scale_t * grad_t
 
     return loss, scaled_grad_R, scaled_grad_t
+
+
+def compute_overlap_and_grad_shape(
+    R: torch.Tensor,
+    t: torch.Tensor,
+    ref_points: torch.Tensor,
+    fit_points_orig: torch.Tensor,
+    alpha: float,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Compute shape overlap O_AB and gradients w.r.t. rotation matrix R and translation t.
+
+    Shape scoring uses uniform weight w=1 and a single alpha, so there is no weight
+    gradient term (unlike pharmacophore scoring).
+
+    Parameters
+    ----------
+    R : torch.Tensor (3,3) or (B,3,3)
+    t : torch.Tensor (3,) or (B,3)
+    ref_points : torch.Tensor (N,3) or (B,N,3)
+    fit_points_orig : torch.Tensor (M,3) or (B,M,3)
+    alpha : float
+
+    Returns
+    -------
+    O_AB : torch.Tensor scalar or (B,)
+    grad_R : torch.Tensor (3,3) or (B,3,3)
+    grad_t : torch.Tensor (3,) or (B,3)
+    """
+    batched = R.dim() == 3
+    if not batched:
+        R = R.unsqueeze(0)
+        t = t.unsqueeze(0)
+        ref_points = ref_points.unsqueeze(0)
+        fit_points_orig = fit_points_orig.unsqueeze(0)
+
+    K = (math.pi / (2.0 * alpha)) ** 1.5
+
+    # Transform fit points: (B, n_fit, 3)
+    fit_points_t = torch.bmm(R, fit_points_orig.permute(0, 2, 1)).permute(0, 2, 1) + t.unsqueeze(1)
+
+    # Pairwise squared distances: (B, n_fit, n_ref)
+    dist_sq = torch.cdist(fit_points_t, ref_points, p=2.0) ** 2
+
+    # Gaussian terms: (B, n_fit, n_ref)
+    E_ab = torch.exp(-alpha / 2.0 * dist_sq)
+
+    # Overlap: O_AB = K * sum(E_ab)
+    O_AB = K * E_ab.sum(dim=(1, 2))  # (B,)
+
+    # Coefficient: -alpha * K * E_ab
+    aKE = -alpha * K * E_ab  # (B, n_fit, n_ref)
+
+    # Gradient w.r.t. t: grad_t = sum_{a,b} aKE_ab * (P'_a - P_b)
+    sum_over_ref = aKE.sum(dim=2)                                           # (B, n_fit)
+    sum_over_fit = aKE.sum(dim=1)                                           # (B, n_ref)
+    term1 = (sum_over_ref.unsqueeze(-1) * fit_points_t).sum(dim=1)         # (B, 3)
+    term2 = (sum_over_fit.unsqueeze(-1) * ref_points).sum(dim=1)           # (B, 3)
+    grad_t = term1 - term2                                                  # (B, 3)
+
+    # Gradient w.r.t. R: grad_R = sum_{a,b} aKE_ab * (P'_a - P_b) @ P_a^T
+    # No weight gradient since w=1 always for shape scoring
+    term_Z = torch.bmm(aKE, ref_points)                                     # (B, n_fit, 3)
+    delta_sum = sum_over_ref.unsqueeze(-1) * fit_points_t - term_Z          # (B, n_fit, 3)
+    grad_R = torch.bmm(delta_sum.transpose(1, 2), fit_points_orig)          # (B, 3, 3)
+
+    if not batched:
+        return O_AB[0], grad_R[0], grad_t[0]
+    return O_AB, grad_R, grad_t
+
+
+def compute_self_overlaps_shape(
+    ref_points: torch.Tensor,
+    fit_points: torch.Tensor,
+    alpha: float,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute self-overlaps VAA and VBB for shape scoring. Invariant to SE(3).
+
+    Parameters
+    ----------
+    ref_points : torch.Tensor (N,3)
+    fit_points : torch.Tensor (M,3)
+    alpha : float
+
+    Returns
+    -------
+    VAA, VBB : torch.Tensor scalars
+    """
+    I = torch.eye(3, device=ref_points.device, dtype=ref_points.dtype)
+    zero = torch.zeros(3, device=ref_points.device, dtype=ref_points.dtype)
+    VAA, _, _ = compute_overlap_and_grad_shape(I, zero, ref_points, ref_points, alpha)
+    VBB, _, _ = compute_overlap_and_grad_shape(I, zero, fit_points, fit_points, alpha)
+    return VAA, VBB
+
+
+def compute_analytical_grad_se3_shape(
+    se3_params: torch.Tensor,
+    ref_points: torch.Tensor,
+    fit_points: torch.Tensor,
+    alpha: float,
+    VAA_total: torch.Tensor,
+    VBB_total: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute loss (1 - Tanimoto shape similarity) and its gradient w.r.t. SE(3) parameters
+    using analytical gradients.
+
+    Parameters
+    ----------
+    se3_params : torch.Tensor (7,) or (B,7)
+        [q_w, q_x, q_y, q_z, t_x, t_y, t_z]
+    ref_points : torch.Tensor (N,3) or (B,N,3)
+    fit_points : torch.Tensor (M,3) or (B,M,3)
+    alpha : float
+    VAA_total : torch.Tensor scalar
+        Precomputed self-overlap for ref_points.
+    VBB_total : torch.Tensor scalar
+        Precomputed self-overlap for fit_points.
+
+    Returns
+    -------
+    loss : torch.Tensor scalar
+    grad_se3 : torch.Tensor (7,) or (B,7)
+    """
+    batched = se3_params.dim() == 2
+    U = VAA_total + VBB_total
+
+    if batched:
+        B = se3_params.shape[0]
+        q_raw = se3_params[:, :4]
+        t = se3_params[:, 4:]
+
+        q_norm_val = torch.norm(q_raw, dim=1, keepdim=True)
+        q_norm = q_raw / q_norm_val
+
+        R = _rotation_matrix_from_unit_quat(q_norm)
+
+        O_AB, grad_R, grad_t = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+
+        loss, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+
+        grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
+
+        q_norm_expanded = q_norm.unsqueeze(-1)
+        I_mat = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype).unsqueeze(0)
+        proj = I_mat - q_norm_expanded @ q_norm_expanded.transpose(-1, -2)
+        grad_q_raw = (proj @ grad_q_norm.unsqueeze(-1)).squeeze(-1) / q_norm_val
+
+        grad_se3 = torch.cat([grad_q_raw, scaled_grad_t], dim=1)
+        return loss.mean(), grad_se3 / B
+
+    else:
+        q_raw = se3_params[:4]
+        t = se3_params[4:]
+
+        q_norm_val = torch.norm(q_raw)
+        q_norm = q_raw / q_norm_val
+
+        R = _rotation_matrix_from_unit_quat(q_norm)
+
+        O_AB, grad_R, grad_t = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+
+        loss, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+
+        grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
+
+        q_hat = q_norm.unsqueeze(-1)
+        proj = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype) - q_hat @ q_hat.T
+        grad_q_raw = (proj @ grad_q_norm) / q_norm_val
+
+        grad_se3 = torch.cat([grad_q_raw, scaled_grad_t])
+        return loss, grad_se3
 
 
 def compute_analytical_grad_se3(

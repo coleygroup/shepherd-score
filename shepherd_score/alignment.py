@@ -1240,6 +1240,124 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
     return best_alignment, best_aligned_vectors, best_transform, best_score
 
 
+def optimize_ROCS_overlay_analytical(ref_points: torch.Tensor,
+                                      fit_points: torch.Tensor,
+                                      alpha: float,
+                                      *,
+                                      num_repeats: int = 50,
+                                      trans_centers: Union[torch.Tensor, None] = None,
+                                      lr: float = 0.1,
+                                      max_num_steps: int = 200,
+                                      verbose: bool = False
+                                      ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Optimize shape alignment using analytical gradients instead of autograd.
+
+    Same interface and behavior as ``optimize_ROCS_overlay`` (without avoid_points support),
+    but uses hand-derived analytical gradients with a manual Adam optimizer, eliminating
+    PyTorch autograd overhead.
+
+    Parameters
+    ----------
+    ref_points : torch.Tensor (N,3)
+    fit_points : torch.Tensor (M,3)
+    alpha : float
+    num_repeats : int
+    trans_centers : torch.Tensor or None
+    lr : float
+    max_num_steps : int
+    verbose : bool
+
+    Returns
+    -------
+    tuple of (aligned_points, SE3_transform, score)
+    """
+    from shepherd_score.score.analytical_gradients import (
+        compute_self_overlaps_shape,
+        compute_analytical_grad_se3_shape,
+    )
+
+    # Initialize SE(3) parameters (without requires_grad)
+    if trans_centers is None:
+        se3_params = _initialize_se3_params(ref_points=ref_points, fit_points=fit_points, num_repeats=num_repeats)
+    else:
+        se3_params = _initialize_se3_params_with_translations(
+            ref_points=ref_points,
+            fit_points=fit_points,
+            trans_centers=trans_centers,
+            num_repeats_per_trans=10)
+    se3_params = se3_params.detach()  # No autograd needed
+    num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
+
+    # Precompute self-overlaps (invariant to SE(3))
+    VAA_total, VBB_total = compute_self_overlaps_shape(ref_points, fit_points, alpha)
+
+    # Replicate data for batched computation
+    if num_repeats > 1:
+        ref_points_rep = ref_points.repeat((num_repeats, 1, 1)).squeeze(0)
+        fit_points_rep = fit_points.repeat((num_repeats, 1, 1)).squeeze(0)
+    else:
+        ref_points_rep = ref_points
+        fit_points_rep = fit_points
+
+    if verbose:
+        print(f'Initial shape similarity score: {get_overlap(ref_points, fit_points, alpha):.3f}')
+
+    # Manual Adam optimizer state
+    beta1, beta2, eps_adam = 0.9, 0.999, 1e-8
+    m = torch.zeros_like(se3_params)
+    v = torch.zeros_like(se3_params)
+
+    last_loss = 1.0
+    counter = 0
+
+    for step in range(max_num_steps):
+        loss, grad = compute_analytical_grad_se3_shape(
+            se3_params, ref_points_rep, fit_points_rep, alpha, VAA_total, VBB_total
+        )
+
+        # Adam update
+        t_step = step + 1
+        m = beta1 * m + (1 - beta1) * grad
+        v = beta2 * v + (1 - beta2) * grad * grad
+        m_hat = m / (1 - beta1 ** t_step)
+        v_hat = v / (1 - beta2 ** t_step)
+        se3_params = se3_params - lr * m_hat / (torch.sqrt(v_hat) + eps_adam)
+
+        if verbose and step % 100 == 0:
+            print(f"Step {step}, Score: {1 - loss.item()}")
+
+        # Early stopping
+        if abs(loss.item() - last_loss) > 1e-5:
+            counter = 0
+        else:
+            counter += 1
+        last_loss = loss.item()
+        if counter > 10:
+            break
+
+    # Extract optimized SE(3) parameters
+    SE3_transform = get_SE3_transform(se3_params)
+    aligned_points = apply_SE3_transform(fit_points_rep, SE3_transform)
+    scores = get_overlap(centers_1=ref_points_rep, centers_2=aligned_points, alpha=alpha)
+
+    if num_repeats == 1:
+        if verbose:
+            print(f'Optimized shape similarity score: {scores:.3f}')
+        best_alignment = aligned_points.cpu()
+        best_transform = SE3_transform.cpu()
+        best_score = scores.cpu()
+    else:
+        if verbose:
+            print(f'Optimized shape similarity score -- max: {scores.max():.3f} | mean: {scores.mean():.3f} | min: {scores.min():.3f}')
+        best_idx = torch.argmax(scores.detach().cpu())
+        best_alignment = aligned_points.cpu()[best_idx]
+        best_transform = SE3_transform.cpu()[best_idx]
+        best_score = scores.cpu()[best_idx]
+
+    return best_alignment, best_transform, best_score
+
+
 def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
                                       fit_pharms: torch.Tensor,
                                       ref_anchors: torch.Tensor,

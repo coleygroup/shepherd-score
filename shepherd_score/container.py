@@ -21,7 +21,7 @@ from shepherd_score.score.electrostatic_scoring_np import get_overlap_esp_np
 from shepherd_score.pharm_utils.pharmacophore import get_pharmacophores
 from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
 from shepherd_score.score.pharmacophore_scoring import _SIM_TYPE, get_overlap_pharm
-from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_esp_overlay, optimize_esp_combo_score_overlay
+from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_overlay_analytical, optimize_ROCS_esp_overlay, optimize_esp_combo_score_overlay
 from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
 from shepherd_score.alignment_utils.se3_np import apply_SE3_transform_np, apply_SO3_transform_np
 
@@ -329,6 +329,7 @@ class MoleculePair:
                        lr: float = 0.1,
                        max_num_steps: int = 200,
                        use_jax: bool = False,
+                       use_analytical: bool = True,
                        verbose: bool = False) -> np.ndarray:
         """
         Align fit_molec to ref_molec using volumetric similarity.
@@ -354,6 +355,9 @@ class MoleculePair:
             Maximum number of steps to optimize over. Default is 200.
         use_jax : bool, optional
             Whether to use Jax instead of PyTorch. Default is ``False``.
+        use_analytical : bool, optional
+            Whether to use analytical gradients instead of PyTorch autograd. Ignored if
+            ``use_jax=True``. Default is ``True``.
         verbose : bool, optional
             Print initial and final similarity scores with scores every 100 steps. Default is ``False``.
 
@@ -393,7 +397,8 @@ class MoleculePair:
             aligned_fit_points = np.array(aligned_fit_points)
         else:
             # PyTorch
-            aligned_fit_points, se3_transform, score = optimize_ROCS_overlay(
+            _vol_fn = optimize_ROCS_overlay_analytical if use_analytical else optimize_ROCS_overlay
+            aligned_fit_points, se3_transform, score = _vol_fn(
                 ref_points=torch.from_numpy(ref_atom_pos).to(torch.float32).to(self.device),
                 fit_points=torch.from_numpy(fit_atom_pos).to(torch.float32).to(self.device),
                 alpha=0.81,
@@ -536,6 +541,7 @@ class MoleculePair:
                         lr: float = 0.1,
                         max_num_steps: int = 200,
                         use_jax: bool = False,
+                        use_analytical: bool = True,
                         verbose: bool = False) -> np.ndarray:
         """
         Align fit_molec to ref_molec using surface similarity.
@@ -563,6 +569,9 @@ class MoleculePair:
             Maximum number of steps to optimize over. Default is 200.
         use_jax : bool, optional
             Whether to use Jax instead of PyTorch. Default is ``False``.
+        use_analytical : bool, optional
+            Whether to use analytical gradients instead of PyTorch autograd. Ignored if
+            ``use_jax=True``. Default is ``True``.
         verbose : bool, optional
             Print initial and final similarity scores with scores every 100 steps. Default is ``False``.
 
@@ -596,7 +605,8 @@ class MoleculePair:
             return np.array(aligned_fit_points)
         else:
             # Torch
-            aligned_fit_points, se3_transform, score = optimize_ROCS_overlay(
+            _surf_fn = optimize_ROCS_overlay_analytical if use_analytical else optimize_ROCS_overlay
+            aligned_fit_points, se3_transform, score = _surf_fn(
                 ref_points=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
                 fit_points=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
                 alpha=alpha,
