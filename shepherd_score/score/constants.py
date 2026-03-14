@@ -32,3 +32,6 @@ P_ALPHAS = {
     'halogen': 1.0,
     'dummy': 1.0
 }
+
+DIRECTIONAL_PTYPES = frozenset({'acceptor', 'donor', 'aromatic', 'halogen'})
+
