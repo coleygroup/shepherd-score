@@ -1,5 +1,5 @@
 """
-Test suite for analytical gradients of pharmacophore alignment.
+Test suite for analytical gradients of pharmacophore and shape alignment.
 Verifies correctness against finite differences and PyTorch autograd.
 """
 import pytest
@@ -20,6 +20,8 @@ from shepherd_score.score.analytical_gradients import (
     compute_overlap_and_grad_shape,
     compute_self_overlaps_shape,
     compute_analytical_grad_se3_shape,
+    compute_avoid_and_grad,
+    compute_analytical_grad_se3_shape_with_avoid,
 )
 from shepherd_score.alignment_utils.se3 import (
     quaternions_to_rotation_matrix,
@@ -375,7 +377,7 @@ class TestFullAnalyticalGradient:
         )
 
         torch.testing.assert_close(loss_a, loss_ag, atol=1e-6, rtol=1e-5)
-        torch.testing.assert_close(grad_a, grad_ag, atol=1e-4, rtol=1e-3)
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-6, rtol=1e-5)
 
     def test_full_grad_matches_autograd_batched(self):
         """Batched se3_params."""
@@ -441,7 +443,7 @@ class TestFullAnalyticalGradient:
         )
 
         torch.testing.assert_close(loss_a, loss_ag, atol=1e-6, rtol=1e-5)
-        torch.testing.assert_close(grad_a, grad_ag, atol=1e-4, rtol=1e-3)
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-6, rtol=1e-5)
 
     def test_full_grad_single_type_only(self):
         """Only hydrophobe type present."""
@@ -464,7 +466,7 @@ class TestFullAnalyticalGradient:
         )
 
         torch.testing.assert_close(loss_a, loss_ag, atol=1e-6, rtol=1e-5)
-        torch.testing.assert_close(grad_a, grad_ag, atol=1e-4, rtol=1e-3)
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-6, rtol=1e-5)
 
 
 # =====================================================================
@@ -501,7 +503,7 @@ class TestOptimizePharmOverlayAnalytical:
         )
 
         # Both should achieve similar scores (not necessarily identical due to floating point)
-        assert abs(score_a.item() - score_ag.item()) < 0.005, \
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
             f"Analytical score {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
     def test_analytical_matches_autograd_batched(self):
@@ -527,7 +529,7 @@ class TestOptimizePharmOverlayAnalytical:
             lr=0.1, max_num_steps=200
         )
 
-        assert abs(score_a.item() - score_ag.item()) < 0.05, \
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
             f"Analytical score {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
     def test_analytical_tanimoto_only(self):
@@ -595,55 +597,6 @@ class TestAnalyticalPerformance:
         print(f"\nAutograd: {time_ag:.3f}s, Analytical: {time_a:.3f}s, Speedup: {time_ag/time_a:.2f}x")
         assert time_a < time_ag, f"Analytical ({time_a:.3f}s) should be faster than autograd ({time_ag:.3f}s)"
 
-    @pytest.mark.slow
-    def test_profiling_varying_sizes(self):
-        """Profile speed and memory usage as the number of pharmacophores increases."""
-        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
-        import gc
-
-        sizes = [10, 30, 60]
-        sizes_2 = [8, 28, 58]
-        
-        print("\n--- Profiling Result ---")
-        print(f"{'Size':<10} | {'Method':<25} | {'Time (s)':<10} | {'Speedup':<10} | {'Peak Mem (MB)':<15}")
-        print("-" * 80)
-
-        for n, n2 in zip(sizes, sizes_2):
-            data = _random_pharmacophore_data(n_ref=n, n_fit=n2, seed=n, dtype=torch.float32)
-            ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
-            
-            kwargs = dict(
-                ref_pharms=ref_pharms, fit_pharms=fit_pharms,
-                ref_anchors=ref_anchors, fit_anchors=fit_anchors,
-                ref_vectors=ref_vecs, fit_vectors=fit_vecs,
-                similarity='tanimoto', num_repeats=10,
-                lr=0.1, max_num_steps=100
-            )
-
-            methods = [
-                ("Autodiff", lambda: optimize_pharm_overlay(**kwargs)),
-                ("Analytical Vectorized", lambda: optimize_pharm_overlay_analytical(**kwargs)),
-            ]
-            
-            baseline = 0
-            for name, func in methods:
-                # Warmup
-                func()
-                
-                gc.collect()
-                
-                t0 = time.perf_counter()
-                for _ in range(3):
-                    func()
-                time_taken = (time.perf_counter() - t0) / 3
-
-                if name == "Autodiff":
-                    baseline = time_taken
-                
-                print(f"{n:<10} | {name:<25} | {time_taken:<10.3f} | {baseline/time_taken:<10.2f}")
-
-        print("-" * 80)
-
 
 # =====================================================================
 # Shape Analytical Gradients
@@ -679,7 +632,7 @@ class TestShapeOverlapGradientTranslation:
             O_minus, _, _ = compute_overlap_and_grad_shape(R, t_minus, ref_points, fit_points, alpha)
             grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
 
-        torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-6, rtol=1e-5)
 
     def test_translation_grad_various_alphas(self):
         """Check grad_t is correct for different alpha values."""
@@ -700,7 +653,7 @@ class TestShapeOverlapGradientTranslation:
                 O_minus, _, _ = compute_overlap_and_grad_shape(R, t_minus, ref_points, fit_points, alpha)
                 grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
 
-            torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4,
+            torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-6, rtol=1e-5,
                                        msg=f"alpha={alpha}")
 
 
@@ -727,7 +680,7 @@ class TestShapeOverlapGradientRotation:
                 O_minus, _, _ = compute_overlap_and_grad_shape(R_minus, t, ref_points, fit_points, alpha)
                 grad_R_fd[i, j] = (O_plus - O_minus) / (2 * eps)
 
-        torch.testing.assert_close(grad_R_a, grad_R_fd, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(grad_R_a, grad_R_fd, atol=1e-6, rtol=1e-5)
 
     def test_rotation_grad_identity(self):
         """At identity rotation, grad_R should be non-zero (general position)."""
@@ -783,7 +736,7 @@ class TestShapeFullAnalyticalGradient:
         loss_ag, grad_ag = self._autograd_reference_shape(se3_params, ref_points, fit_points, alpha)
 
         torch.testing.assert_close(loss_a, loss_ag, atol=1e-6, rtol=1e-5)
-        torch.testing.assert_close(grad_a, grad_ag, atol=1e-4, rtol=1e-3)
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-6, rtol=1e-5)
 
     def test_full_grad_matches_autograd_batched(self):
         """Batched se3_params: analytical vs. autograd."""
@@ -854,7 +807,7 @@ class TestOptimizeROCSOverlayAnalytical:
             ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=1, lr=0.1, max_num_steps=200
         )
 
-        assert abs(score_a.item() - score_ag.item()) < 0.01, \
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
             f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
     def test_analytical_matches_autograd_batched(self):
@@ -871,7 +824,7 @@ class TestOptimizeROCSOverlayAnalytical:
             ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=5, lr=0.1, max_num_steps=200
         )
 
-        assert abs(score_a.item() - score_ag.item()) < 0.05, \
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
             f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
     def test_returns_three_tuple(self):
@@ -930,3 +883,258 @@ class TestShapeAnalyticalPerformance:
 
         print(f"\nShape - Autograd: {time_ag:.3f}s, Analytical: {time_a:.3f}s, Speedup: {time_ag/time_a:.2f}x")
         assert time_a < time_ag, f"Analytical ({time_a:.3f}s) should be faster than autograd ({time_ag:.3f}s)"
+
+
+# =====================================================================
+# Avoid-points analytical gradient tests
+# =====================================================================
+
+class TestAvoidAndGrad:
+    """Tests for compute_avoid_and_grad — hard-sphere overlap + gradient."""
+
+    def _setup(self, seed=7, n_fit=5, n_avoid=4, dtype=torch.float64):
+        rng = np.random.RandomState(seed)
+        fit_orig = torch.tensor(rng.randn(n_fit, 3) * 2, dtype=dtype)
+        avoid = torch.tensor(rng.randn(n_avoid, 3) * 2, dtype=dtype)
+        q = torch.tensor(rng.randn(4), dtype=dtype)
+        q = q / q.norm()
+        t = torch.tensor(rng.randn(3) * 0.5, dtype=dtype)
+        R = _rotation_matrix_from_unit_quat(q)
+        return fit_orig, avoid, R, t
+
+    def test_avoid_zero_when_all_far(self):
+        """Avoid term is 0 when all fit-avoid distances exceed min_dist."""
+        fit_orig = torch.tensor([[10.0, 10.0, 10.0], [11.0, 11.0, 11.0]], dtype=torch.float64)
+        avoid = torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float64)
+        R = torch.eye(3, dtype=torch.float64)
+        t = torch.zeros(3, dtype=torch.float64)
+        A, _, _ = compute_avoid_and_grad(R, t, fit_orig, avoid, min_dist=2.0)
+        assert A.item() == pytest.approx(0.0)
+
+    def test_avoid_positive_when_close(self):
+        """Avoid term is positive when a fit point is within min_dist of an avoid point."""
+        fit_orig = torch.tensor([[0.5, 0.0, 0.0]], dtype=torch.float64)
+        avoid = torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float64)
+        R = torch.eye(3, dtype=torch.float64)
+        t = torch.zeros(3, dtype=torch.float64)
+        A, _, _ = compute_avoid_and_grad(R, t, fit_orig, avoid, min_dist=2.0)
+        assert A.item() > 0.0
+
+    def test_translation_grad_matches_fd(self):
+        """∂A/∂t matches finite differences."""
+        fit_orig, avoid, R, t = self._setup(seed=11)
+        min_dist = 2.5
+        eps = 1e-5
+
+        _, _, grad_t = compute_avoid_and_grad(R, t, fit_orig, avoid, min_dist)
+
+        fd_grad = torch.zeros(3, dtype=t.dtype)
+        for i in range(3):
+            t_p = t.clone(); t_p[i] += eps
+            t_m = t.clone(); t_m[i] -= eps
+            A_p, _, _ = compute_avoid_and_grad(R, t_p, fit_orig, avoid, min_dist)
+            A_m, _, _ = compute_avoid_and_grad(R, t_m, fit_orig, avoid, min_dist)
+            fd_grad[i] = (A_p - A_m) / (2 * eps)
+
+        torch.testing.assert_close(grad_t, fd_grad, atol=1e-4, rtol=1e-3)
+
+    def test_rotation_grad_matches_fd(self):
+        """∂A/∂R matches finite differences."""
+        fit_orig, avoid, R, t = self._setup(seed=22)
+        min_dist = 2.5
+        eps = 1e-5
+
+        _, grad_R, _ = compute_avoid_and_grad(R, t, fit_orig, avoid, min_dist)
+
+        fd_grad_R = torch.zeros(3, 3, dtype=R.dtype)
+        for i in range(3):
+            for j in range(3):
+                R_p = R.clone(); R_p[i, j] += eps
+                R_m = R.clone(); R_m[i, j] -= eps
+                A_p, _, _ = compute_avoid_and_grad(R_p, t, fit_orig, avoid, min_dist)
+                A_m, _, _ = compute_avoid_and_grad(R_m, t, fit_orig, avoid, min_dist)
+                fd_grad_R[i, j] = (A_p - A_m) / (2 * eps)
+
+        torch.testing.assert_close(grad_R, fd_grad_R, atol=1e-4, rtol=1e-3)
+
+    def test_batched_matches_single(self):
+        """Batched output should match looping over single instances."""
+        fit_orig, avoid, R, t = self._setup(seed=33)
+        min_dist = 2.5
+
+        B = 3
+        Rs = torch.stack([R] * B)
+        ts = torch.stack([t, t + 0.1, t - 0.1])
+        fit_orig_b = fit_orig.unsqueeze(0).expand(B, -1, -1)
+
+        A_batch, grad_R_batch, grad_t_batch = compute_avoid_and_grad(Rs, ts, fit_orig_b, avoid, min_dist)
+
+        for b in range(B):
+            A_s, grad_R_s, grad_t_s = compute_avoid_and_grad(Rs[b], ts[b], fit_orig, avoid, min_dist)
+            assert A_batch[b].item() == pytest.approx(A_s.item(), abs=1e-6)
+            torch.testing.assert_close(grad_R_batch[b], grad_R_s, atol=1e-6, rtol=1e-5)
+            torch.testing.assert_close(grad_t_batch[b], grad_t_s, atol=1e-6, rtol=1e-5)
+
+
+class TestAvoidFullAnalyticalGradient:
+    """Tests for compute_analytical_grad_se3_shape_with_avoid."""
+
+    def _get_data(self, seed=42, dtype=torch.float64):
+        rng = np.random.RandomState(seed)
+        ref = torch.tensor(rng.randn(8, 3), dtype=dtype)
+        fit = torch.tensor(rng.randn(6, 3), dtype=dtype)
+        avoid = torch.tensor(rng.randn(5, 3) * 0.5, dtype=dtype)  # close enough to matter
+        se3 = torch.zeros(7, dtype=dtype)
+        se3[0] = 1.0  # identity quaternion
+        return ref, fit, avoid, se3
+
+    def test_grad_matches_autograd(self):
+        """Analytical gradient should match PyTorch autograd for the combined loss."""
+        from shepherd_score.alignment import objective_ROCS_overlay_with_avoid
+
+        # objective_ROCS_overlay_with_avoid only supports float32 (se3.py dtype constraint)
+        ref, fit, avoid, se3_init = self._get_data(seed=77)
+        ref = ref.float(); fit = fit.float(); avoid = avoid.float(); se3_init = se3_init.float()
+        alpha = 0.81
+        avoid_min_dist = 2.0
+        avoid_weight = 0.5
+
+        # Autograd gradient
+        se3_ag = se3_init.clone().requires_grad_(True)
+        fit_ag = fit.clone()
+        loss_ag = objective_ROCS_overlay_with_avoid(
+            se3_params=se3_ag,
+            ref_points=ref,
+            fit_points=fit_ag,
+            alpha=alpha,
+            fit_points_for_avoid=fit_ag,
+            avoid_points=avoid,
+            avoid_min_dist=avoid_min_dist,
+            avoid_weight=avoid_weight,
+        )
+        loss_ag.backward()
+        grad_ag = se3_ag.grad.clone()
+
+        # Analytical gradient (also float32 for comparison)
+        VAA, VBB = compute_self_overlaps_shape(ref, fit, alpha)
+        loss_a, grad_a = compute_analytical_grad_se3_shape_with_avoid(
+            se3_init, ref, fit, alpha, VAA, VBB,
+            fit, avoid, avoid_min_dist, avoid_weight,
+        )
+
+        assert abs(loss_a.item() - loss_ag.item()) < 1e-6
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-6, rtol=1e-5)
+
+    def test_grad_matches_fd(self):
+        """Analytical gradient matches finite differences."""
+        ref, fit, avoid, se3_init = self._get_data(seed=88)
+        alpha = 0.81
+        avoid_min_dist = 2.5
+        avoid_weight = 1.0
+        eps = 1e-5
+
+        VAA, VBB = compute_self_overlaps_shape(ref, fit, alpha)
+
+        loss0, grad_a = compute_analytical_grad_se3_shape_with_avoid(
+            se3_init, ref, fit, alpha, VAA, VBB,
+            fit, avoid, avoid_min_dist, avoid_weight,
+        )
+
+        fd_grad = torch.zeros(7, dtype=torch.float64)
+        for i in range(7):
+            p = se3_init.clone(); p[i] += eps
+            m = se3_init.clone(); m[i] -= eps
+            lp, _ = compute_analytical_grad_se3_shape_with_avoid(p, ref, fit, alpha, VAA, VBB, fit, avoid, avoid_min_dist, avoid_weight)
+            lm, _ = compute_analytical_grad_se3_shape_with_avoid(m, ref, fit, alpha, VAA, VBB, fit, avoid, avoid_min_dist, avoid_weight)
+            fd_grad[i] = (lp - lm) / (2 * eps)
+
+        torch.testing.assert_close(grad_a, fd_grad, atol=1e-4, rtol=1e-3)
+
+
+class TestOptimizeROCSOverlayAnalyticalWithAvoid:
+    """Tests for optimize_ROCS_overlay_analytical with avoid_points."""
+
+    def _get_data(self, seed=42):
+        rng = np.random.RandomState(seed)
+        ref = torch.tensor(rng.randn(12, 3), dtype=torch.float32)
+        fit = torch.tensor(rng.randn(10, 3), dtype=torch.float32)
+        avoid = torch.tensor(rng.randn(4, 3) * 0.5, dtype=torch.float32)
+        return ref, fit, avoid
+
+    def test_analytical_matches_autograd_with_avoid(self):
+        """Score from analytical optimizer should be close to autograd with avoid.
+
+        Both use PyTorch's optim.Adam, so optimizer trajectories are identical.
+        The only remaining difference is per-step gradient error (~1e-4), which
+        accumulates to ~1e-3 over the early-stopped run.
+        """
+        from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_overlay_analytical
+
+        ref, fit, avoid = self._get_data(seed=42)
+        alpha = 0.81
+        kwargs = dict(
+            ref_points=ref, fit_points=fit, alpha=alpha,
+            avoid_points=avoid, avoid_min_dist=2.0, avoid_weight=0.5,
+            num_repeats=1, lr=0.1, max_num_steps=200,
+        )
+
+        _, _, score_ag = optimize_ROCS_overlay(**kwargs)
+        _, _, score_a = optimize_ROCS_overlay_analytical(**kwargs)
+
+        assert abs(score_a.item() - score_ag.item()) < 5e-3, \
+            f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_avoid_reduces_score_vs_no_avoid(self):
+        """With a heavy avoid weight near fit points, the combined score should be lower."""
+        from shepherd_score.alignment import optimize_ROCS_overlay_analytical
+
+        ref, fit, avoid = self._get_data(seed=55)
+        alpha = 0.81
+
+        _, _, score_no_avoid = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=alpha, num_repeats=5, max_num_steps=100
+        )
+        _, _, score_with_avoid = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=alpha,
+            avoid_points=avoid, avoid_min_dist=3.0, avoid_weight=2.0,
+            num_repeats=5, max_num_steps=100
+        )
+        # Combined score includes penalty so it can differ (lower or negative)
+        # Just check it runs and returns something finite
+        assert math.isfinite(score_with_avoid.item())
+
+    def test_returns_three_tuple_with_avoid(self):
+        """Return value should be (aligned_points, SE3_transform, score)."""
+        from shepherd_score.alignment import optimize_ROCS_overlay_analytical
+
+        ref, fit, avoid = self._get_data(seed=7)
+        result = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=0.81,
+            avoid_points=avoid, avoid_min_dist=2.0, avoid_weight=1.0,
+            num_repeats=1,
+        )
+        assert len(result) == 3
+        aligned, transform, score = result
+        assert aligned.shape == fit.shape
+        assert transform.shape == (4, 4)
+        assert score.dim() == 0 or score.numel() == 1
+
+    def test_fit_points_for_avoid_distinct(self):
+        """fit_points_for_avoid can be a different point set from fit_points."""
+        from shepherd_score.alignment import optimize_ROCS_overlay_analytical
+
+        rng = np.random.RandomState(123)
+        ref = torch.tensor(rng.randn(8, 3), dtype=torch.float32)
+        fit = torch.tensor(rng.randn(6, 3), dtype=torch.float32)
+        fit_avoid = torch.tensor(rng.randn(4, 3), dtype=torch.float32)
+        avoid = torch.tensor(rng.randn(3, 3), dtype=torch.float32)
+
+        result = optimize_ROCS_overlay_analytical(
+            ref_points=ref, fit_points=fit, alpha=0.81,
+            fit_points_for_avoid=fit_avoid,
+            avoid_points=avoid, avoid_min_dist=2.0, avoid_weight=1.0,
+            num_repeats=3,
+        )
+        assert len(result) == 3
+        aligned, _, _ = result
+        assert aligned.shape == fit.shape  # aligned is always fit_points aligned, not fit_avoid

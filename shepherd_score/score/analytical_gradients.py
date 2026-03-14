@@ -519,6 +519,170 @@ def compute_analytical_grad_se3_shape(
         return loss, grad_se3
 
 
+def compute_avoid_and_grad(
+    R: torch.Tensor,
+    t: torch.Tensor,
+    fit_pts_avoid_orig: torch.Tensor,
+    avoid_points: torch.Tensor,
+    min_dist: float,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Compute the linear hard-sphere avoid term and its gradients w.r.t. R and t.
+
+    A = sum_{a in fit_avoid, b in avoid} relu((min_dist - dist(P'_a, P_b)) / min_dist)
+
+    where P'_a = R @ P_a + t.
+
+    Parameters
+    ----------
+    R : torch.Tensor (3,3) or (B,3,3)
+    t : torch.Tensor (3,) or (B,3)
+    fit_pts_avoid_orig : torch.Tensor (M,3) or (B,M,3)
+        Fit points to penalize (in original frame, before transformation).
+    avoid_points : torch.Tensor (K,3)
+        Fixed reference points to avoid (never batched).
+    min_dist : float
+        Distance threshold below which overlap is penalized.
+
+    Returns
+    -------
+    A : torch.Tensor scalar or (B,)
+    grad_R : torch.Tensor (3,3) or (B,3,3)
+    grad_t : torch.Tensor (3,) or (B,3)
+    """
+    batched = R.dim() == 3
+    if not batched:
+        R = R.unsqueeze(0)
+        t = t.unsqueeze(0)
+        fit_pts_avoid_orig = fit_pts_avoid_orig.unsqueeze(0)
+
+    # Transform fit avoid points: (B, M, 3)
+    fit_pts_t = torch.bmm(R, fit_pts_avoid_orig.permute(0, 2, 1)).permute(0, 2, 1) + t.unsqueeze(1)
+
+    # Pairwise distances: (B, M, K)
+    B = fit_pts_t.shape[0]
+    avoid_exp = avoid_points.unsqueeze(0).expand(B, -1, -1)  # (B, K, 3)
+    dists = torch.cdist(fit_pts_t, avoid_exp)  # (B, M, K)
+
+    # Avoid term value
+    A = torch.nn.functional.relu((min_dist - dists) / min_dist).sum(dim=(1, 2))  # (B,)
+
+    # Gradient: active where 0 < dist < min_dist
+    # At dist=0, direction is ill-defined; PyTorch convention gives 0 gradient there.
+    mask = (dists > 0) & (dists < min_dist)  # (B, M, K)
+
+    # Direction vectors from avoid to fit (positive = fit moving away from avoid → score decreases)
+    delta = fit_pts_t.unsqueeze(2) - avoid_points[None, None, :, :]  # (B, M, K, 3)
+    safe_dists = dists.clamp(min=1e-8).unsqueeze(-1)  # (B, M, K, 1)
+    unit_dir = delta / safe_dists  # (B, M, K, 3)
+
+    # dA/dP'_a = -1/min_dist * sum_b mask_ab * unit_dir_ab  →  (B, M, 3)
+    dA_dP = (-1.0 / min_dist) * (mask.to(R.dtype).unsqueeze(-1) * unit_dir).sum(dim=2)
+
+    # grad_t = sum_a dA/dP'_a  →  (B, 3)
+    grad_t = dA_dP.sum(dim=1)
+
+    # grad_R[i,j] = sum_a (dA/dP'_a)_i * P_a_j  →  (B, 3, 3)
+    grad_R = torch.bmm(dA_dP.transpose(1, 2), fit_pts_avoid_orig)
+
+    if not batched:
+        return A[0], grad_R[0], grad_t[0]
+    return A, grad_R, grad_t
+
+
+def compute_analytical_grad_se3_shape_with_avoid(
+    se3_params: torch.Tensor,
+    ref_points: torch.Tensor,
+    fit_points: torch.Tensor,
+    alpha: float,
+    VAA_total: torch.Tensor,
+    VBB_total: torch.Tensor,
+    fit_points_for_avoid: torch.Tensor,
+    avoid_points: torch.Tensor,
+    avoid_min_dist: float,
+    avoid_weight: float,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute loss and gradient for shape alignment with an avoid-points penalty.
+
+    loss = (1 - Tanimoto_shape) + avoid_weight * hard_sphere_overlap(fit_avoid, avoid)
+
+    Parameters
+    ----------
+    se3_params : torch.Tensor (7,) or (B,7)
+    ref_points : torch.Tensor (N,3) or (B,N,3)
+    fit_points : torch.Tensor (M,3) or (B,M,3)
+    alpha : float
+    VAA_total : torch.Tensor scalar
+    VBB_total : torch.Tensor scalar
+    fit_points_for_avoid : torch.Tensor (M2,3) or (B,M2,3)
+    avoid_points : torch.Tensor (K,3)
+    avoid_min_dist : float
+    avoid_weight : float
+
+    Returns
+    -------
+    loss : torch.Tensor scalar
+    grad_se3 : torch.Tensor (7,) or (B,7)
+    """
+    batched = se3_params.dim() == 2
+    U = VAA_total + VBB_total
+
+    if batched:
+        B = se3_params.shape[0]
+        q_raw = se3_params[:, :4]
+        t = se3_params[:, 4:]
+
+        q_norm_val = torch.norm(q_raw, dim=1, keepdim=True)
+        q_norm = q_raw / q_norm_val
+        R = _rotation_matrix_from_unit_quat(q_norm)
+
+        O_AB, grad_R, grad_t = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+        loss_shape, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+
+        A, grad_R_A, grad_t_A = compute_avoid_and_grad(R, t, fit_points_for_avoid, avoid_points, avoid_min_dist)
+
+        loss = loss_shape + avoid_weight * A
+        total_grad_R = scaled_grad_R + avoid_weight * grad_R_A
+        total_grad_t = scaled_grad_t + avoid_weight * grad_t_A
+
+        grad_q_norm = project_grad_R_to_quaternion(total_grad_R, q_norm)
+
+        q_norm_expanded = q_norm.unsqueeze(-1)
+        I_mat = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype).unsqueeze(0)
+        proj = I_mat - q_norm_expanded @ q_norm_expanded.transpose(-1, -2)
+        grad_q_raw = (proj @ grad_q_norm.unsqueeze(-1)).squeeze(-1) / q_norm_val
+
+        grad_se3 = torch.cat([grad_q_raw, total_grad_t], dim=1)
+        return loss.mean(), grad_se3 / B
+
+    else:
+        q_raw = se3_params[:4]
+        t = se3_params[4:]
+
+        q_norm_val = torch.norm(q_raw)
+        q_norm = q_raw / q_norm_val
+        R = _rotation_matrix_from_unit_quat(q_norm)
+
+        O_AB, grad_R, grad_t = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha)
+        loss_shape, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+
+        A, grad_R_A, grad_t_A = compute_avoid_and_grad(R, t, fit_points_for_avoid, avoid_points, avoid_min_dist)
+
+        loss = loss_shape + avoid_weight * A
+        total_grad_R = scaled_grad_R + avoid_weight * grad_R_A
+        total_grad_t = scaled_grad_t + avoid_weight * grad_t_A
+
+        grad_q_norm = project_grad_R_to_quaternion(total_grad_R, q_norm)
+
+        q_hat = q_norm.unsqueeze(-1)
+        proj = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype) - q_hat @ q_hat.T
+        grad_q_raw = (proj @ grad_q_norm) / q_norm_val
+
+        grad_se3 = torch.cat([grad_q_raw, total_grad_t])
+        return loss, grad_se3
+
+
 def compute_analytical_grad_se3(
     se3_params: torch.Tensor,
     ref_pharms: torch.Tensor,

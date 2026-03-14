@@ -1244,6 +1244,10 @@ def optimize_ROCS_overlay_analytical(ref_points: torch.Tensor,
                                       fit_points: torch.Tensor,
                                       alpha: float,
                                       *,
+                                      fit_points_for_avoid: Optional[torch.Tensor] = None,
+                                      avoid_points: Optional[torch.Tensor] = None,
+                                      avoid_min_dist: float = 2.0,
+                                      avoid_weight: float = 1.0,
                                       num_repeats: int = 50,
                                       trans_centers: Union[torch.Tensor, None] = None,
                                       lr: float = 0.1,
@@ -1253,15 +1257,22 @@ def optimize_ROCS_overlay_analytical(ref_points: torch.Tensor,
     """
     Optimize shape alignment using analytical gradients instead of autograd.
 
-    Same interface and behavior as ``optimize_ROCS_overlay`` (without avoid_points support),
-    but uses hand-derived analytical gradients with a manual Adam optimizer, eliminating
-    PyTorch autograd overhead.
+    Same interface and behavior as ``optimize_ROCS_overlay``, but uses hand-derived
+    analytical gradients with a manual Adam optimizer, eliminating PyTorch autograd overhead.
 
     Parameters
     ----------
     ref_points : torch.Tensor (N,3)
     fit_points : torch.Tensor (M,3)
     alpha : float
+    fit_points_for_avoid : torch.Tensor (M2,3) or None
+        Points to penalize for overlap with avoid_points. Defaults to fit_points if None.
+    avoid_points : torch.Tensor (K,3) or None
+        Fixed points to avoid overlapping with.
+    avoid_min_dist : float
+        Distance threshold for avoid penalty.
+    avoid_weight : float
+        Weight of the avoid penalty term.
     num_repeats : int
     trans_centers : torch.Tensor or None
     lr : float
@@ -1275,9 +1286,10 @@ def optimize_ROCS_overlay_analytical(ref_points: torch.Tensor,
     from shepherd_score.score.analytical_gradients import (
         compute_self_overlaps_shape,
         compute_analytical_grad_se3_shape,
+        compute_analytical_grad_se3_shape_with_avoid,
     )
 
-    # Initialize SE(3) parameters (without requires_grad)
+    # Initialize SE(3) parameters (requires_grad=True so PyTorch Adam can manage them)
     if trans_centers is None:
         se3_params = _initialize_se3_params(ref_points=ref_points, fit_points=fit_points, num_repeats=num_repeats)
     else:
@@ -1286,43 +1298,53 @@ def optimize_ROCS_overlay_analytical(ref_points: torch.Tensor,
             fit_points=fit_points,
             trans_centers=trans_centers,
             num_repeats_per_trans=10)
-    se3_params = se3_params.detach()  # No autograd needed
     num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
 
     # Precompute self-overlaps (invariant to SE(3))
     VAA_total, VBB_total = compute_self_overlaps_shape(ref_points, fit_points, alpha)
 
+    # Resolve avoid points
+    if avoid_points is not None and fit_points_for_avoid is None:
+        fit_points_for_avoid = fit_points
+
     # Replicate data for batched computation
     if num_repeats > 1:
         ref_points_rep = ref_points.repeat((num_repeats, 1, 1)).squeeze(0)
         fit_points_rep = fit_points.repeat((num_repeats, 1, 1)).squeeze(0)
+        if avoid_points is not None:
+            fit_pts_avoid_rep = fit_points_for_avoid.repeat((num_repeats, 1, 1)).squeeze(0)
     else:
         ref_points_rep = ref_points
         fit_points_rep = fit_points
+        if avoid_points is not None:
+            fit_pts_avoid_rep = fit_points_for_avoid
 
     if verbose:
         print(f'Initial shape similarity score: {get_overlap(ref_points, fit_points, alpha):.3f}')
 
-    # Manual Adam optimizer state
-    beta1, beta2, eps_adam = 0.9, 0.999, 1e-8
-    m = torch.zeros_like(se3_params)
-    v = torch.zeros_like(se3_params)
+    # Use PyTorch's Adam (same implementation as optimize_ROCS_overlay) with manually-set
+    # gradients from the analytical computation.  This avoids float32 drift from a
+    # hand-rolled Adam and keeps optimizer trajectories comparable.
+    optimizer = optim.Adam([se3_params], lr=lr)
 
     last_loss = 1.0
     counter = 0
 
     for step in range(max_num_steps):
-        loss, grad = compute_analytical_grad_se3_shape(
-            se3_params, ref_points_rep, fit_points_rep, alpha, VAA_total, VBB_total
-        )
+        with torch.no_grad():
+            if avoid_points is not None:
+                loss, grad = compute_analytical_grad_se3_shape_with_avoid(
+                    se3_params, ref_points_rep, fit_points_rep, alpha, VAA_total, VBB_total,
+                    fit_pts_avoid_rep, avoid_points, avoid_min_dist, avoid_weight
+                )
+            else:
+                loss, grad = compute_analytical_grad_se3_shape(
+                    se3_params, ref_points_rep, fit_points_rep, alpha, VAA_total, VBB_total
+                )
 
-        # Adam update
-        t_step = step + 1
-        m = beta1 * m + (1 - beta1) * grad
-        v = beta2 * v + (1 - beta2) * grad * grad
-        m_hat = m / (1 - beta1 ** t_step)
-        v_hat = v / (1 - beta2 ** t_step)
-        se3_params = se3_params - lr * m_hat / (torch.sqrt(v_hat) + eps_adam)
+        optimizer.zero_grad()
+        se3_params.grad = grad
+        optimizer.step()
 
         if verbose and step % 100 == 0:
             print(f"Step {step}, Score: {1 - loss.item()}")
@@ -1337,9 +1359,23 @@ def optimize_ROCS_overlay_analytical(ref_points: torch.Tensor,
             break
 
     # Extract optimized SE(3) parameters
+    se3_params = se3_params.detach()
     SE3_transform = get_SE3_transform(se3_params)
     aligned_points = apply_SE3_transform(fit_points_rep, SE3_transform)
-    scores = get_overlap(centers_1=ref_points_rep, centers_2=aligned_points, alpha=alpha)
+
+    if avoid_points is not None:
+        aligned_pts_for_avoid = apply_SE3_transform(fit_pts_avoid_rep, SE3_transform)
+        scores = score_ROCS_overlay_with_avoid(
+            ref_points=ref_points_rep,
+            fit_points=aligned_points,
+            alpha=alpha,
+            fit_points_for_avoid=aligned_pts_for_avoid,
+            avoid_points=avoid_points,
+            avoid_min_dist=avoid_min_dist,
+            avoid_weight=avoid_weight,
+        )
+    else:
+        scores = get_overlap(centers_1=ref_points_rep, centers_2=aligned_points, alpha=alpha)
 
     if num_repeats == 1:
         if verbose:
@@ -1377,7 +1413,7 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
     Optimize pharmacophore alignment using analytical gradients instead of autograd.
 
     Same interface and behavior as ``optimize_pharm_overlay``, but uses hand-derived
-    analytical gradients with a manual Adam optimizer, eliminating PyTorch autograd overhead.
+    analytical gradients with PyTorch's Adam optimizer, eliminating PyTorch autograd overhead.
 
     Only supports ``similarity='tanimoto'`` and ``extended_points=False``.
 
@@ -1426,7 +1462,6 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
             fit_points=fit_anchors,
             trans_centers=trans_centers,
             num_repeats_per_trans=10)
-    se3_params = se3_params.detach()  # No autograd needed
     num_repeats = len(se3_params) if len(se3_params.shape) == 2 else 1
 
     # Precompute self-overlaps (invariant to SE(3))
@@ -1457,28 +1492,24 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
         )
         print(f'Initial pharmacophore similarity score: {init_score:.3f}')
 
-    # Manual Adam optimizer state
-    beta1, beta2, eps_adam = 0.9, 0.999, 1e-8
-    m = torch.zeros_like(se3_params)
-    v = torch.zeros_like(se3_params)
+    # Use PyTorch's Adam (same implementation as optimize_pharm_overlay) with manually-set
+    # gradients from the analytical computation.
+    optimizer = optim.Adam([se3_params], lr=lr)
 
     last_loss = 1.0
     counter = 0
 
     for step in range(max_num_steps):
-        loss, grad = compute_analytical_grad_se3(
-            se3_params, ref_pharms_rep, fit_pharms_rep,
-            ref_anchors_rep, fit_anchors_rep, ref_vectors_rep, fit_vectors_rep,
-            VAA_total, VBB_total
-        )
+        with torch.no_grad():
+            loss, grad = compute_analytical_grad_se3(
+                se3_params, ref_pharms_rep, fit_pharms_rep,
+                ref_anchors_rep, fit_anchors_rep, ref_vectors_rep, fit_vectors_rep,
+                VAA_total, VBB_total
+            )
 
-        # Adam update
-        t_step = step + 1
-        m = beta1 * m + (1 - beta1) * grad
-        v = beta2 * v + (1 - beta2) * grad * grad
-        m_hat = m / (1 - beta1 ** t_step)
-        v_hat = v / (1 - beta2 ** t_step)
-        se3_params = se3_params - lr * m_hat / (torch.sqrt(v_hat) + eps_adam)
+        optimizer.zero_grad()
+        se3_params.grad = grad
+        optimizer.step()
 
         if verbose and step % 100 == 0:
             print(f"Step {step}, Score: {1 - loss.item()}")
@@ -1493,6 +1524,7 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
             break
 
     # Extract optimized SE(3) parameters
+    se3_params = se3_params.detach()
     SE3_transform = get_SE3_transform(se3_params)
     aligned_anchors = apply_SE3_transform(fit_anchors_rep, SE3_transform)
     aligned_vectors = apply_SO3_transform(fit_vectors_rep, SE3_transform)
