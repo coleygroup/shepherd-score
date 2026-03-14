@@ -1138,3 +1138,333 @@ class TestOptimizeROCSOverlayAnalyticalWithAvoid:
         assert len(result) == 3
         aligned, _, _ = result
         assert aligned.shape == fit.shape  # aligned is always fit_points aligned, not fit_avoid
+
+
+# =====================================================================
+# ESP Analytical Gradient Tests
+# =====================================================================
+
+def _random_esp_data(n_ref=8, n_fit=6, seed=42, dtype=torch.float64):
+    """Generate random ESP data (points + charges)."""
+    rng = np.random.RandomState(seed)
+    ref_points = torch.tensor(rng.randn(n_ref, 3), dtype=dtype)
+    fit_points = torch.tensor(rng.randn(n_fit, 3), dtype=dtype)
+    ref_charges = torch.tensor(rng.randn(n_ref), dtype=dtype)
+    fit_charges = torch.tensor(rng.randn(n_fit), dtype=dtype)
+    return ref_points, fit_points, ref_charges, fit_charges
+
+
+class TestESPOverlapGradientTranslation:
+    """Tests for translation gradient of compute_overlap_and_grad_shape with ESP pair_weights."""
+
+    def test_grad_t_matches_fd(self):
+        """∂O_AB/∂t matches finite differences when using ESP pair_weights."""
+        from shepherd_score.score.analytical_gradients import _compute_esp_pair_weights
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref_points, fit_points, ref_charges, fit_charges = _random_esp_data(seed=10)
+        lam = LAM_SCALING * 0.3
+        alpha = 0.81
+        eps = 1e-5
+
+        q = _random_unit_quaternion(seed=11).double()
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.tensor([0.1, -0.2, 0.3], dtype=torch.float64)
+
+        pair_weights = _compute_esp_pair_weights(fit_charges, ref_charges, lam)
+        O_AB, _, grad_t = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha, pair_weights=pair_weights)
+
+        fd_grad = torch.zeros(3, dtype=t.dtype)
+        for i in range(3):
+            t_p = t.clone(); t_p[i] += eps
+            t_m = t.clone(); t_m[i] -= eps
+            O_p, _, _ = compute_overlap_and_grad_shape(R, t_p, ref_points, fit_points, alpha, pair_weights=pair_weights)
+            O_m, _, _ = compute_overlap_and_grad_shape(R, t_m, ref_points, fit_points, alpha, pair_weights=pair_weights)
+            fd_grad[i] = (O_p - O_m) / (2 * eps)
+
+        torch.testing.assert_close(grad_t, fd_grad, atol=1e-5, rtol=1e-4)
+
+    def test_pair_weights_none_matches_uniform(self):
+        """pair_weights=None should give same result as uniform weights=1."""
+        ref_points, fit_points, _, _ = _random_esp_data(seed=20)
+        alpha = 0.81
+        R = torch.eye(3, dtype=torch.float64)
+        t = torch.zeros(3, dtype=torch.float64)
+        ones = torch.ones(len(fit_points), len(ref_points), dtype=torch.float64)
+
+        O1, gR1, gt1 = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha, pair_weights=None)
+        O2, gR2, gt2 = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha, pair_weights=ones)
+
+        torch.testing.assert_close(O1, O2, atol=1e-10, rtol=1e-10)
+        torch.testing.assert_close(gR1, gR2, atol=1e-10, rtol=1e-10)
+        torch.testing.assert_close(gt1, gt2, atol=1e-10, rtol=1e-10)
+
+
+class TestESPOverlapGradientRotation:
+    """Tests for rotation gradient of compute_overlap_and_grad_shape with ESP pair_weights."""
+
+    def test_grad_R_matches_fd(self):
+        """∂O_AB/∂R matches finite differences when using ESP pair_weights."""
+        from shepherd_score.score.analytical_gradients import _compute_esp_pair_weights
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref_points, fit_points, ref_charges, fit_charges = _random_esp_data(seed=30)
+        lam = LAM_SCALING * 0.3
+        alpha = 0.81
+        eps = 1e-5
+
+        q = _random_unit_quaternion(seed=31).double()
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.tensor([0.0, 0.1, -0.1], dtype=torch.float64)
+
+        pair_weights = _compute_esp_pair_weights(fit_charges, ref_charges, lam)
+        _, grad_R, _ = compute_overlap_and_grad_shape(R, t, ref_points, fit_points, alpha, pair_weights=pair_weights)
+
+        fd_grad_R = torch.zeros(3, 3, dtype=R.dtype)
+        for i in range(3):
+            for j in range(3):
+                R_p = R.clone(); R_p[i, j] += eps
+                R_m = R.clone(); R_m[i, j] -= eps
+                O_p, _, _ = compute_overlap_and_grad_shape(R_p, t, ref_points, fit_points, alpha, pair_weights=pair_weights)
+                O_m, _, _ = compute_overlap_and_grad_shape(R_m, t, ref_points, fit_points, alpha, pair_weights=pair_weights)
+                fd_grad_R[i, j] = (O_p - O_m) / (2 * eps)
+
+        torch.testing.assert_close(grad_R, fd_grad_R, atol=1e-5, rtol=1e-4)
+
+
+class TestESPFullAnalyticalGradient:
+    """Tests for compute_analytical_grad_se3_esp."""
+
+    def _autograd_reference_esp(self, se3, ref_points, fit_points, ref_charges, fit_charges, alpha, lam):
+        """Compute ESP loss + grad using PyTorch autograd via get_overlap_esp."""
+        from shepherd_score.score.electrostatic_scoring import get_overlap_esp
+
+        se3 = se3.clone().detach().requires_grad_(True)
+        if se3.dim() == 1:
+            q = F.normalize(se3[:4], p=2, dim=0)
+            t_vec = se3[4:]
+            R = _rotation_matrix_from_unit_quat(q)
+            fit_t = (R @ fit_points.T).T + t_vec
+            score = get_overlap_esp(ref_points, fit_t, ref_charges, fit_charges, alpha, lam)
+            loss = 1 - score
+        else:
+            B = se3.shape[0]
+            q = F.normalize(se3[:, :4], p=2, dim=1)
+            t_vec = se3[:, 4:]
+            R = _rotation_matrix_from_unit_quat(q)
+            fit_t = torch.bmm(R, fit_points.permute(0, 2, 1)).permute(0, 2, 1) + t_vec.unsqueeze(1)
+            # get_overlap_esp needs consistent batching: expand charges to (B, N)
+            ref_charges_b = ref_charges.unsqueeze(0).expand(B, -1)
+            fit_charges_b = fit_charges.unsqueeze(0).expand(B, -1)
+            score = get_overlap_esp(ref_points, fit_t, ref_charges_b, fit_charges_b, alpha, lam)
+            loss = 1 - score.mean()
+        loss.backward()
+        return loss.detach(), se3.grad.detach()
+
+    def test_full_grad_matches_autograd_single(self):
+        """Single instance: analytical vs. autograd for ESP."""
+        from shepherd_score.score.analytical_gradients import (
+            compute_self_overlaps_esp, compute_analytical_grad_se3_esp
+        )
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref_points, fit_points, ref_charges, fit_charges = _random_esp_data(seed=100)
+        alpha = 0.81
+        lam = LAM_SCALING * 0.3
+
+        se3_params = torch.zeros(7, dtype=torch.float64)
+        se3_params[:4] = _random_unit_quaternion(seed=50)
+        se3_params[4:] = torch.randn(3, dtype=torch.float64) * 0.5
+
+        VAA, VBB = compute_self_overlaps_esp(ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
+
+        loss_a, grad_a = compute_analytical_grad_se3_esp(
+            se3_params, ref_points, fit_points, ref_charges, fit_charges, alpha, lam, VAA, VBB
+        )
+        loss_ag, grad_ag = self._autograd_reference_esp(
+            se3_params, ref_points, fit_points, ref_charges, fit_charges, alpha, lam
+        )
+
+        torch.testing.assert_close(loss_a, loss_ag, atol=1e-6, rtol=1e-5)
+        torch.testing.assert_close(grad_a, grad_ag, atol=1e-6, rtol=1e-5)
+
+    def test_full_grad_matches_autograd_batched(self):
+        """Batched se3_params: analytical vs. autograd for ESP."""
+        from shepherd_score.score.analytical_gradients import (
+            compute_self_overlaps_esp, compute_analytical_grad_se3_esp
+        )
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref_points, fit_points, ref_charges, fit_charges = _random_esp_data(seed=200)
+        alpha = 0.81
+        lam = LAM_SCALING * 0.3
+        B = 3
+
+        se3_params = torch.zeros(B, 7, dtype=torch.float64)
+        for i in range(B):
+            se3_params[i, :4] = _random_unit_quaternion(seed=60 + i)
+            se3_params[i, 4:] = torch.randn(3, dtype=torch.float64) * 0.5
+
+        ref_points_b = ref_points.unsqueeze(0).expand(B, -1, -1)
+        fit_points_b = fit_points.unsqueeze(0).expand(B, -1, -1)
+
+        VAA, VBB = compute_self_overlaps_esp(ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
+
+        loss_a, grad_a = compute_analytical_grad_se3_esp(
+            se3_params, ref_points_b, fit_points_b, ref_charges, fit_charges, alpha, lam, VAA, VBB
+        )
+        loss_ag, grad_ag = self._autograd_reference_esp(
+            se3_params, ref_points_b, fit_points_b, ref_charges, fit_charges, alpha, lam
+        )
+
+        torch.testing.assert_close(loss_a.float(), loss_ag.float(), atol=1e-4, rtol=1e-3)
+        torch.testing.assert_close(grad_a.float(), grad_ag.float(), atol=1e-3, rtol=1e-2)
+
+    def test_self_overlap_values(self):
+        """VAA should match VAB_2nd_order_esp with same-molecule inputs."""
+        from shepherd_score.score.analytical_gradients import compute_self_overlaps_esp
+        from shepherd_score.score.electrostatic_scoring import VAB_2nd_order_esp
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref_points, fit_points, ref_charges, fit_charges = _random_esp_data(
+            seed=300, dtype=torch.float32
+        )
+        alpha = 0.81
+        lam = LAM_SCALING * 0.3
+
+        VAA, VBB = compute_self_overlaps_esp(ref_points, fit_points, ref_charges, fit_charges, alpha, lam)
+
+        # VAB_2nd_order_esp requires 2D charges for cdist
+        ref_ch_2d = ref_charges.reshape(-1, 1)
+        fit_ch_2d = fit_charges.reshape(-1, 1)
+        VAA_ref = VAB_2nd_order_esp(ref_points, ref_points, ref_ch_2d, ref_ch_2d, alpha, lam)
+        VBB_ref = VAB_2nd_order_esp(fit_points, fit_points, fit_ch_2d, fit_ch_2d, alpha, lam)
+
+        torch.testing.assert_close(VAA, VAA_ref, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(VBB, VBB_ref, atol=1e-5, rtol=1e-5)
+        assert VAA > 0
+        assert VBB > 0
+
+
+# =====================================================================
+# ESP Optimizer Integration
+# =====================================================================
+
+class TestOptimizeROCSESPOverlayAnalytical:
+
+    def _get_test_data(self, seed=42, n_ref=10, n_fit=8):
+        rng = np.random.RandomState(seed)
+        ref = torch.tensor(rng.randn(n_ref, 3), dtype=torch.float32)
+        fit = torch.tensor(rng.randn(n_fit, 3), dtype=torch.float32)
+        ref_charges = torch.tensor(rng.randn(n_ref), dtype=torch.float32)
+        fit_charges = torch.tensor(rng.randn(n_fit), dtype=torch.float32)
+        return ref, fit, ref_charges, fit_charges
+
+    def test_analytical_matches_autograd_single(self):
+        """num_repeats=1: analytical ESP score close to autograd score."""
+        from shepherd_score.alignment import optimize_ROCS_esp_overlay, optimize_ROCS_esp_overlay_analytical
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref, fit, ref_ch, fit_ch = self._get_test_data(seed=42)
+        alpha = 0.81
+        lam = LAM_SCALING * 0.3
+
+        _, _, score_ag = optimize_ROCS_esp_overlay(
+            ref_points=ref, fit_points=fit, ref_charges=ref_ch, fit_charges=fit_ch,
+            alpha=alpha, lam=lam, num_repeats=1, lr=0.1, max_num_steps=200
+        )
+        _, _, score_a = optimize_ROCS_esp_overlay_analytical(
+            ref_points=ref, fit_points=fit, ref_charges=ref_ch, fit_charges=fit_ch,
+            alpha=alpha, lam=lam, num_repeats=1, lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 2e-3, \
+            f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_analytical_matches_autograd_batched(self):
+        """num_repeats=5: analytical ESP score close to autograd score."""
+        from shepherd_score.alignment import optimize_ROCS_esp_overlay, optimize_ROCS_esp_overlay_analytical
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref, fit, ref_ch, fit_ch = self._get_test_data(seed=55)
+        alpha = 0.81
+        lam = LAM_SCALING * 0.3
+
+        _, _, score_ag = optimize_ROCS_esp_overlay(
+            ref_points=ref, fit_points=fit, ref_charges=ref_ch, fit_charges=fit_ch,
+            alpha=alpha, lam=lam, num_repeats=5, lr=0.1, max_num_steps=200
+        )
+        _, _, score_a = optimize_ROCS_esp_overlay_analytical(
+            ref_points=ref, fit_points=fit, ref_charges=ref_ch, fit_charges=fit_ch,
+            alpha=alpha, lam=lam, num_repeats=5, lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 2e-3, \
+            f"Analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_returns_three_tuple(self):
+        """Return value should be (aligned_points, SE3_transform, score)."""
+        from shepherd_score.alignment import optimize_ROCS_esp_overlay_analytical
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref, fit, ref_ch, fit_ch = self._get_test_data(seed=7)
+        result = optimize_ROCS_esp_overlay_analytical(
+            ref_points=ref, fit_points=fit, ref_charges=ref_ch, fit_charges=fit_ch,
+            alpha=0.81, lam=LAM_SCALING * 0.3, num_repeats=1,
+        )
+        assert len(result) == 3
+        aligned, transform, score = result
+        assert aligned.shape == fit.shape
+        assert transform.shape == (4, 4)
+        assert score.dim() == 0 or score.numel() == 1
+
+    def test_score_in_valid_range(self):
+        """Score should be in [0, 1]."""
+        from shepherd_score.alignment import optimize_ROCS_esp_overlay_analytical
+        from shepherd_score.score.constants import LAM_SCALING
+
+        ref, fit, ref_ch, fit_ch = self._get_test_data(seed=99)
+        _, _, score = optimize_ROCS_esp_overlay_analytical(
+            ref_points=ref, fit_points=fit, ref_charges=ref_ch, fit_charges=fit_ch,
+            alpha=0.81, lam=LAM_SCALING * 0.3, num_repeats=5,
+        )
+        assert 0.0 <= score.item() <= 1.0
+
+
+@pytest.mark.slow
+class TestESPAnalyticalPerformance:
+
+    def test_analytical_faster_than_autograd(self):
+        """ESP analytical gradient should be faster than autograd."""
+        from shepherd_score.alignment import optimize_ROCS_esp_overlay, optimize_ROCS_esp_overlay_analytical
+        from shepherd_score.score.constants import LAM_SCALING
+
+        rng = np.random.RandomState(999)
+        ref = torch.tensor(rng.randn(50, 3), dtype=torch.float32)
+        fit = torch.tensor(rng.randn(50, 3), dtype=torch.float32)
+        ref_charges = torch.tensor(rng.randn(50), dtype=torch.float32)
+        fit_charges = torch.tensor(rng.randn(50), dtype=torch.float32)
+        alpha = 0.81
+        lam = LAM_SCALING * 0.3
+
+        kwargs = dict(
+            ref_points=ref, fit_points=fit, ref_charges=ref_charges, fit_charges=fit_charges,
+            alpha=alpha, lam=lam, num_repeats=50, lr=0.1, max_num_steps=200
+        )
+
+        # Warmup
+        optimize_ROCS_esp_overlay(**kwargs)
+        optimize_ROCS_esp_overlay_analytical(**kwargs)
+
+        t0 = time.perf_counter()
+        for _ in range(3):
+            optimize_ROCS_esp_overlay(**kwargs)
+        time_ag = (time.perf_counter() - t0) / 3
+
+        t0 = time.perf_counter()
+        for _ in range(3):
+            optimize_ROCS_esp_overlay_analytical(**kwargs)
+        time_a = (time.perf_counter() - t0) / 3
+
+        print(f"\nESP - Autograd: {time_ag:.3f}s, Analytical: {time_a:.3f}s, Speedup: {time_ag/time_a:.2f}x")
+        assert time_a < time_ag, f"Analytical ({time_a:.3f}s) should be faster than autograd ({time_ag:.3f}s)"

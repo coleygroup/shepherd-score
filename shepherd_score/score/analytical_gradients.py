@@ -352,6 +352,7 @@ def compute_overlap_and_grad_shape(
     ref_points: torch.Tensor,
     fit_points_orig: torch.Tensor,
     alpha: float,
+    pair_weights: torch.Tensor = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute shape overlap O_AB and gradients w.r.t. rotation matrix R and translation t.
@@ -366,6 +367,10 @@ def compute_overlap_and_grad_shape(
     ref_points : torch.Tensor (N,3) or (B,N,3)
     fit_points_orig : torch.Tensor (M,3) or (B,M,3)
     alpha : float
+    pair_weights : torch.Tensor (M,N) or (B,M,N) or None
+        Optional per-pair multiplicative weights. If None, uniform weight 1 is used
+        (standard shape scoring). For ESP scoring, pass the charge-based weights
+        exp(-||v_a - v_b||^2 / lam), which are SE(3)-invariant.
 
     Returns
     -------
@@ -390,6 +395,10 @@ def compute_overlap_and_grad_shape(
 
     # Gaussian terms: (B, n_fit, n_ref)
     E_ab = torch.exp(-alpha / 2.0 * dist_sq)
+
+    # Apply optional per-pair weights (e.g. ESP charge weights, which are SE(3)-invariant)
+    if pair_weights is not None:
+        E_ab = E_ab * pair_weights
 
     # Overlap: O_AB = K * sum(E_ab)
     O_AB = K * E_ab.sum(dim=(1, 2))  # (B,)
@@ -438,6 +447,158 @@ def compute_self_overlaps_shape(
     VAA, _, _ = compute_overlap_and_grad_shape(I, zero, ref_points, ref_points, alpha)
     VBB, _, _ = compute_overlap_and_grad_shape(I, zero, fit_points, fit_points, alpha)
     return VAA, VBB
+
+
+def _compute_esp_pair_weights(
+    charges_1: torch.Tensor,
+    charges_2: torch.Tensor,
+    lam: float,
+) -> torch.Tensor:
+    """
+    Compute ESP pair weights w_{a,b} = exp(-||c1_a - c2_b||^2 / lam).
+
+    Parameters
+    ----------
+    charges_1 : torch.Tensor (N,) or (B,N)
+    charges_2 : torch.Tensor (M,) or (B,M)
+    lam : float
+        Scaling factor (pre-scaled lam, e.g. LAM_SCALING * lam_user).
+
+    Returns
+    -------
+    weights : torch.Tensor (N,M) or (B,N,M)
+    """
+    c1 = charges_1.unsqueeze(-1)  # (..., N, 1)
+    c2 = charges_2.unsqueeze(-1)  # (..., M, 1)
+    diff_sq = torch.cdist(c1, c2, p=2.0) ** 2  # (N,M) or (B,N,M)
+    return torch.exp(-diff_sq / lam)
+
+
+def compute_self_overlaps_esp(
+    ref_points: torch.Tensor,
+    fit_points: torch.Tensor,
+    ref_charges: torch.Tensor,
+    fit_charges: torch.Tensor,
+    alpha: float,
+    lam: float,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute ESP self-overlaps VAA and VBB. Invariant to SE(3).
+
+    Parameters
+    ----------
+    ref_points : torch.Tensor (N,3)
+    fit_points : torch.Tensor (M,3)
+    ref_charges : torch.Tensor (N,)
+    fit_charges : torch.Tensor (M,)
+    alpha : float
+    lam : float
+
+    Returns
+    -------
+    VAA, VBB : torch.Tensor scalars
+    """
+    I = torch.eye(3, device=ref_points.device, dtype=ref_points.dtype)
+    zero = torch.zeros(3, device=ref_points.device, dtype=ref_points.dtype)
+    w_AA = _compute_esp_pair_weights(ref_charges, ref_charges, lam)
+    w_BB = _compute_esp_pair_weights(fit_charges, fit_charges, lam)
+    VAA, _, _ = compute_overlap_and_grad_shape(I, zero, ref_points, ref_points, alpha, pair_weights=w_AA)
+    VBB, _, _ = compute_overlap_and_grad_shape(I, zero, fit_points, fit_points, alpha, pair_weights=w_BB)
+    return VAA, VBB
+
+
+def compute_analytical_grad_se3_esp(
+    se3_params: torch.Tensor,
+    ref_points: torch.Tensor,
+    fit_points: torch.Tensor,
+    ref_charges: torch.Tensor,
+    fit_charges: torch.Tensor,
+    alpha: float,
+    lam: float,
+    VAA_total: torch.Tensor,
+    VBB_total: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute loss (1 - Tanimoto ESP similarity) and its gradient w.r.t. SE(3) parameters
+    using analytical gradients.
+
+    The ESP pair weights exp(-||v_a - v_b||^2 / lam) are SE(3)-invariant (charges are
+    fixed to their points), so they are precomputed once and treated as constants.
+
+    Parameters
+    ----------
+    se3_params : torch.Tensor (7,) or (B,7)
+        [q_w, q_x, q_y, q_z, t_x, t_y, t_z]
+    ref_points : torch.Tensor (N,3) or (B,N,3)
+    fit_points : torch.Tensor (M,3) or (B,M,3)
+    ref_charges : torch.Tensor (N,)
+    fit_charges : torch.Tensor (M,)
+    alpha : float
+    lam : float
+    VAA_total : torch.Tensor scalar
+    VBB_total : torch.Tensor scalar
+
+    Returns
+    -------
+    loss : torch.Tensor scalar
+    grad_se3 : torch.Tensor (7,) or (B,7)
+    """
+    batched = se3_params.dim() == 2
+    U = VAA_total + VBB_total
+
+    # Precompute pair weights (n_fit, n_ref) — broadcasts with (B, n_fit, n_ref)
+    # cdist(fit_t, ref) has fit as rows → charges_1=fit, charges_2=ref
+    pair_weights_AB = _compute_esp_pair_weights(fit_charges, ref_charges, lam)
+
+    if batched:
+        B = se3_params.shape[0]
+        q_raw = se3_params[:, :4]
+        t = se3_params[:, 4:]
+
+        q_norm_val = torch.norm(q_raw, dim=1, keepdim=True)
+        q_norm = q_raw / q_norm_val
+
+        R = _rotation_matrix_from_unit_quat(q_norm)
+
+        O_AB, grad_R, grad_t = compute_overlap_and_grad_shape(
+            R, t, ref_points, fit_points, alpha, pair_weights=pair_weights_AB
+        )
+
+        loss, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+
+        grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
+
+        q_norm_expanded = q_norm.unsqueeze(-1)
+        I_mat = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype).unsqueeze(0)
+        proj = I_mat - q_norm_expanded @ q_norm_expanded.transpose(-1, -2)
+        grad_q_raw = (proj @ grad_q_norm.unsqueeze(-1)).squeeze(-1) / q_norm_val
+
+        grad_se3 = torch.cat([grad_q_raw, scaled_grad_t], dim=1)
+        return loss.mean(), grad_se3 / B
+
+    else:
+        q_raw = se3_params[:4]
+        t = se3_params[4:]
+
+        q_norm_val = torch.norm(q_raw)
+        q_norm = q_raw / q_norm_val
+
+        R = _rotation_matrix_from_unit_quat(q_norm)
+
+        O_AB, grad_R, grad_t = compute_overlap_and_grad_shape(
+            R, t, ref_points, fit_points, alpha, pair_weights=pair_weights_AB
+        )
+
+        loss, scaled_grad_R, scaled_grad_t = apply_tanimoto_chain_rule(O_AB, U, grad_R, grad_t)
+
+        grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
+
+        q_hat = q_norm.unsqueeze(-1)
+        proj = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype) - q_hat @ q_hat.T
+        grad_q_raw = (proj @ grad_q_norm) / q_norm_val
+
+        grad_se3 = torch.cat([grad_q_raw, scaled_grad_t])
+        return loss, grad_se3
 
 
 def compute_analytical_grad_se3_shape(
