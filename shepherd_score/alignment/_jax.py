@@ -12,7 +12,7 @@ import optax
 
 import torch
 
-from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_linear_hard_sphere_overlap_jax
+from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_linear_hard_sphere_overlap_jax, VAB_2nd_order_jax
 from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax
 from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, get_overlap_pharm_jax_vectorized, _SIM_TYPE
 from shepherd_score.alignment.utils.pca_jax import quaternions_for_principal_component_alignment_jax, rotation_axis_jax, vmap_angle_between_vecs_jax, vmap_quaternion_from_axis_angle_jax
@@ -493,6 +493,66 @@ def _initialize_se3_params_jax(ref_points: Array,
 jit_val_grad_obj_ROCS = jit(value_and_grad(objective_ROCS_overlay_jax))
 jit_val_grad_obj_ROCS_with_avoid = jit(value_and_grad(objective_ROCS_overlay_with_avoid_jax))
 
+
+def _objective_ROCS_overlay_precomputed_jax(se3_params, ref_points, fit_points, alpha, VAA, VBB):
+    """Single-instance ROCS objective using precomputed self-overlaps."""
+    se3_matrix = get_SE3_transform_jax(se3_params)
+    fit_t = apply_SE3_transform_jax(fit_points, se3_matrix)
+    VAB = VAB_2nd_order_jax(ref_points, fit_t, alpha)
+    return VAB / (VAA + VBB - VAB)
+
+batched_obj_ROCS_overlay_precomputed = vmap(
+    _objective_ROCS_overlay_precomputed_jax, (0, None, None, None, None, None)
+)
+
+def objective_ROCS_overlay_precomputed_jax(se3_params, ref, fit, alpha, VAA, VBB):
+    scores = batched_obj_ROCS_overlay_precomputed(se3_params, ref, fit, alpha, VAA, VBB)
+    return 1 - scores.mean()
+
+jit_val_grad_obj_ROCS_precomputed = jit(value_and_grad(objective_ROCS_overlay_precomputed_jax))
+
+
+def _score_ROCS_overlay_with_avoid_precomputed_jax(ref_points, fit_points, alpha,
+                                                    VAA, VBB,
+                                                    fit_points_for_avoid, avoid_points,
+                                                    avoid_min_dist, avoid_weight):
+    VAB = VAB_2nd_order_jax(ref_points, fit_points, alpha)
+    score = VAB / (VAA + VBB - VAB)
+    avoid_score = get_linear_hard_sphere_overlap_jax(avoid_points, fit_points_for_avoid, avoid_min_dist)
+    return score - avoid_weight * avoid_score
+
+
+def _objective_ROCS_overlay_with_avoid_precomputed_jax(se3_params, ref_points, fit_points, alpha,
+                                                        VAA, VBB,
+                                                        fit_points_for_avoid, avoid_points,
+                                                        avoid_min_dist, avoid_weight):
+    se3_matrix = get_SE3_transform_jax(se3_params)
+    fit_points_t = apply_SE3_transform_jax(fit_points, se3_matrix)
+    fit_points_for_avoid_t = apply_SE3_transform_jax(fit_points_for_avoid, se3_matrix)
+    return _score_ROCS_overlay_with_avoid_precomputed_jax(
+        ref_points, fit_points_t, alpha, VAA, VBB,
+        fit_points_for_avoid_t, avoid_points, avoid_min_dist, avoid_weight)
+
+
+batched_obj_ROCS_overlay_with_avoid_precomputed = vmap(
+    _objective_ROCS_overlay_with_avoid_precomputed_jax,
+    (0, None, None, None, None, None, None, None, None, None)
+)
+
+
+def objective_ROCS_overlay_with_avoid_precomputed_jax(se3_params, ref, fit, alpha,
+                                                       VAA, VBB,
+                                                       fit_for_avoid, avoid, min_dist, weight):
+    scores = batched_obj_ROCS_overlay_with_avoid_precomputed(
+        se3_params, ref, fit, alpha, VAA, VBB, fit_for_avoid, avoid, min_dist, weight)
+    return 1 - scores.mean()
+
+
+jit_val_grad_obj_ROCS_with_avoid_precomputed = jit(
+    value_and_grad(objective_ROCS_overlay_with_avoid_precomputed_jax)
+)
+
+
 @partial(jax.jit, static_argnames=['val_and_grad_fn', 'max_num_steps'])
 def _generic_optimize_loop(
     se3_params: jnp.ndarray,
@@ -645,26 +705,25 @@ def optimize_ROCS_overlay_jax(ref_points: Array,
         print(f'Initial score: {get_overlap_jax(ref_points, fit_points, alpha):.3f}')
 
     if avoid_points is None:
-        data_args = (ref_points, fit_points, alpha)
+        VAA = VAB_2nd_order_jax(ref_points, ref_points, alpha)
+        VBB = VAB_2nd_order_jax(fit_points, fit_points, alpha)
+        data_args = (ref_points, fit_points, alpha, VAA, VBB)
         se3_opt = _generic_optimize_loop(
             se3_params,
             data_args,
-            jit_val_grad_obj_ROCS,
+            jit_val_grad_obj_ROCS_precomputed,
             lr,
             max_num_steps
         )
     else:
-        data_args = (ref_points,
-                     fit_points,
-                     alpha,
-                     fit_points_for_avoid,
-                     avoid_points,
-                     avoid_min_dist,
-                     avoid_weight)
+        VAA = VAB_2nd_order_jax(ref_points, ref_points, alpha)
+        VBB = VAB_2nd_order_jax(fit_points, fit_points, alpha)
+        data_args = (ref_points, fit_points, alpha, VAA, VBB,
+                     fit_points_for_avoid, avoid_points, avoid_min_dist, avoid_weight)
         se3_opt = _generic_optimize_loop(
             se3_params,
             data_args,
-            jit_val_grad_obj_ROCS_with_avoid,
+            jit_val_grad_obj_ROCS_with_avoid_precomputed,
             lr,
             max_num_steps
         )
