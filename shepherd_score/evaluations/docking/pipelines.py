@@ -172,7 +172,7 @@ class DockingEvalPipeline:
     def __init__(self,
                  pdb_id: str,
                  num_processes: int = 4,
-                 docking_target_info_dict: Dict = docking_target_info,
+                 docking_target_info_dict: Optional[Dict] = None,
                  verbose: int = 0,
                  path_to_bin: str = ''):
         """
@@ -188,7 +188,9 @@ class DockingEvalPipeline:
         num_processes : int, optional
             Number of CPUs to use for scoring. Default is 4.
         docking_target_info_dict : dict, optional
-            Dict holding minimum information needed for docking. Example format::
+            Dict holding minimum information needed for docking. Defaults to
+            the built-in target info for the seven targets listed above.
+            Custom dicts must follow the format::
 
                 {"1iep": {"center": (15.614, 53.380, 15.455),
                           "size": (15, 15, 15),
@@ -199,6 +201,8 @@ class DockingEvalPipeline:
         path_to_bin : str, optional
             Path to environment bin containing ``mk_prepare_ligand.py``. Default is ''.
         """
+        if docking_target_info_dict is None:
+            docking_target_info_dict = docking_target_info
         self.pdb_id = pdb_id
         self.path_to_bin = path_to_bin
         self.docking_target_info = docking_target_info_dict
@@ -727,7 +731,7 @@ class DockingEvalPipeline:
 def run_docking_benchmark(save_dir_path: str,
                           pdb_id: str,
                           num_processes: int = 4,
-                          docking_target_info_dict=docking_target_info,
+                          docking_target_info_dict: Optional[Dict] = None,
                           protonate: bool = False
                           ) -> None:
     """
@@ -745,7 +749,9 @@ def run_docking_benchmark(save_dir_path: str,
     num_processes : int, optional
         Number of CPUs to use for scoring. Default is 4.
     docking_target_info_dict : dict, optional
-        Dict holding minimum information needed for docking. Example format::
+        Dict holding minimum information needed for docking. Defaults to
+        the built-in target info for the seven targets listed above.
+        Custom dicts must follow the format::
 
             {"1iep": {"center": (15.614, 53.380, 15.455),
                       "size": (15, 15, 15),
@@ -772,7 +778,7 @@ def run_docking_evaluation(atoms: List[np.ndarray],
                            positions: List[np.ndarray],
                            pdb_id: str,
                            num_processes: int = 4,
-                           docking_target_info_dict=docking_target_info,
+                           docking_target_info_dict: Optional[Dict] = None,
                            exhaustiveness: int = 32,
                            n_poses: int = 1,
                            protonate: bool = False,
@@ -798,7 +804,9 @@ def run_docking_evaluation(atoms: List[np.ndarray],
     num_processes : int, optional
         Number of CPUs to use for Autodock Vina. Default is 4.
     docking_target_info_dict : dict, optional
-        Dict holding minimum information needed for docking. Example format::
+        Dict holding minimum information needed for docking. Defaults to
+        the built-in target info for the seven targets listed above.
+        Custom dicts must follow the format::
 
             {"1iep": {"center": (15.614, 53.380, 15.455),
                       "size": (15, 15, 15),
@@ -846,7 +854,7 @@ def run_docking_evaluation(atoms: List[np.ndarray],
 def run_docking_evaluation_from_smiles(smiles: List[str],
                                        pdb_id: str,
                                        num_processes: int = 4,
-                                       docking_target_info_dict=docking_target_info,
+                                       docking_target_info_dict: Optional[Dict] = None,
                                        exhaustiveness: int = 32,
                                        n_poses: int = 1,
                                        protonate: bool = False,
@@ -869,7 +877,9 @@ def run_docking_evaluation_from_smiles(smiles: List[str],
     num_processes : int, optional
         Number of CPUs to use for Autodock Vina. Default is 4.
     docking_target_info_dict : dict, optional
-        Dict holding minimum information needed for docking. Example format::
+        Dict holding minimum information needed for docking. Defaults to
+        the built-in target info for the seven targets listed above.
+        Custom dicts must follow the format::
 
             {"1iep": {"center": (15.614, 53.380, 15.455),
                       "size": (15, 15, 15),

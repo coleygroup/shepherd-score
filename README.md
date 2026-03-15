@@ -45,7 +45,8 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 │   │   ├── utils/                        # SE(3) and PCA utilities (torch, numpy, jax)
 │   │   │   ├── se3*.py                   # SE(3) transformations (torch, numpy, jax)
 │   │   │   └── pca*.py                   # Principal component alignment (torch, numpy, jax)
-│   │   ├── _torch.py                     # PyTorch alignment algorithms
+│   │   ├── _torch.py                     # PyTorch alignment algorithms (autograd)
+│   │   ├── _torch_analytical.py          # PyTorch alignment algorithms (analytical gradients)
 │   │   └── _jax.py                       # JAX alignment algorithms
 │   ├── alignment_jax.py                  # Backwards compatibility shim
 │   ├── evaluations/                      # Evaluation suite
@@ -60,6 +61,8 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 │   ├── pharm_utils/                      # Pharmacophore definitions
 │   ├── protonation/                      # Functions for protonation
 │   ├── score/                            # Scoring related functions and constants
+│   │   ├── analytical_gradients/         # Analytical gradient implementations
+│   │   │   └── _torch.py                 # PyTorch analytical gradients for shape, ESP, pharmacophore
 │   │   ├── constants.py
 │   │   ├── electrostatic_scoring.py
 │   │   ├── gaussian_overlap.py
