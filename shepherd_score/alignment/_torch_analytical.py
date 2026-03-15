@@ -1,7 +1,7 @@
 """
 Alignment algorithms using analytical gradients (no PyTorch autograd).
 These functions replace the autograd-based counterparts in _torch.py and
-provide ~2–3.5× speedup by injecting hand-derived gradients into PyTorch's
+provide ~1.5-2.5x speedup by injecting hand-derived gradients into PyTorch's
 Adam optimizer.
 """
 from typing import Union, Tuple, Optional
