@@ -1,7 +1,7 @@
 API Reference
 =============
 
-This section contains the complete API documentation for shepherd-score, automatically 
+This section contains the complete API documentation for shepherd-score, automatically
 generated from the source code docstrings.
 
 Core Modules
@@ -18,25 +18,25 @@ Scoring
 -------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
 
-   scoring
+   scoring/index
 
 Alignment
 ---------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
 
-   alignment
+   alignment/index
 
 Evaluations
 -----------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
 
-   evaluations
+   evaluations/index
 
 Utilities
 ---------

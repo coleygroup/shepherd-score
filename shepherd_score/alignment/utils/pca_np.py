@@ -7,7 +7,7 @@ Credit to Lewis J. Martin as this was adapted from
 https://github.com/ljmartin/align/blob/main/0.2%20aligning%20principal%20moments%20of%20inertia.ipynb
 """
 import numpy as np
-from shepherd_score.alignment_utils.se3_np import get_SE3_transform_np, apply_SE3_transform_np
+from shepherd_score.alignment.utils.se3_np import get_SE3_transform_np, apply_SE3_transform_np
 
 def compute_moment_of_inertia_np(points: np.ndarray) -> np.ndarray:
     """

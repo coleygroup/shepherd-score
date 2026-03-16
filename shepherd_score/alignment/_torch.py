@@ -12,17 +12,20 @@ from rdkit.Chem import rdMolDescriptors, rdMolAlign
 
 from shepherd_score.generate_point_cloud import _get_points_fibonacci
 from shepherd_score.score.gaussian_overlap import get_overlap, get_linear_hard_sphere_overlap
+from shepherd_score.score.gaussian_overlap import VAB_2nd_order
 from shepherd_score.score.electrostatic_scoring import get_overlap_esp, esp_combo_score
+from shepherd_score.score.electrostatic_scoring import VAB_2nd_order_esp
 from shepherd_score.score.pharmacophore_scoring import get_overlap_pharm, _SIM_TYPE
-from shepherd_score.alignment_utils.se3 import get_SE3_transform, apply_SE3_transform, quaternions_to_rotation_matrix, apply_SO3_transform
-from shepherd_score.alignment_utils.pca_np import quaternions_for_principal_component_alignment_np
-from shepherd_score.alignment_utils.pca import angle_between_vecs, rotation_axis, quaternion_from_axis_angle
+from shepherd_score.alignment.utils.se3 import get_SE3_transform, apply_SE3_transform, quaternions_to_rotation_matrix, apply_SO3_transform
+from shepherd_score.alignment.utils.pca_np import quaternions_for_principal_component_alignment_np
+from shepherd_score.alignment.utils.pca import angle_between_vecs, rotation_axis, quaternion_from_axis_angle
 
 
 def objective_ROCS_overlay(se3_params: torch.Tensor,
                            ref_points: torch.Tensor,
                            fit_points: torch.Tensor,
-                           alpha: float
+                           alpha: float,
+                           precomputed_U: Optional[torch.Tensor] = None,
                           ) -> torch.Tensor:
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
@@ -58,7 +61,11 @@ def objective_ROCS_overlay(se3_params: torch.Tensor,
 
     se3_matrix = get_SE3_transform(se3_params)
     fit_points = apply_SE3_transform(fit_points, se3_matrix)
-    score = get_overlap(ref_points, fit_points, alpha)
+    if precomputed_U is not None:
+        VAB = VAB_2nd_order(ref_points, fit_points, alpha)
+        score = VAB / (precomputed_U - VAB)
+    else:
+        score = get_overlap(ref_points, fit_points, alpha)
 
     # Single instance
     if len(se3_params.shape) == 1:
@@ -77,9 +84,14 @@ def score_ROCS_overlay_with_avoid(
         avoid_points: torch.Tensor,
         avoid_min_dist: float,
         avoid_weight: float,
+        precomputed_U: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """See objective_ROCS_overlay_with_avoid for parameter descriptions."""
-    overlap_score = get_overlap(ref_points, fit_points, alpha)
+    if precomputed_U is not None:
+        VAB = VAB_2nd_order(ref_points, fit_points, alpha)
+        overlap_score = VAB / (precomputed_U - VAB)
+    else:
+        overlap_score = get_overlap(ref_points, fit_points, alpha)
     avoid_score = get_linear_hard_sphere_overlap(fit_points_for_avoid, avoid_points, avoid_min_dist)
     return overlap_score - avoid_weight * avoid_score
 
@@ -93,6 +105,7 @@ def objective_ROCS_overlay_with_avoid(
         avoid_points: torch.Tensor,
         avoid_min_dist: float,
         avoid_weight: float,
+        precomputed_U: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
@@ -144,7 +157,8 @@ def objective_ROCS_overlay_with_avoid(
                                         fit_points_for_avoid=fit_points_for_avoid,
                                         avoid_points=avoid_points,
                                         avoid_min_dist=avoid_min_dist,
-                                        avoid_weight=avoid_weight)
+                                        avoid_weight=avoid_weight,
+                                        precomputed_U=precomputed_U)
 
     # Single instance
     if len(se3_params.shape) == 1:
@@ -482,6 +496,12 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
         if fit_points_for_avoid is not None:
             fit_points_for_avoid_to_transform = fit_points_for_avoid.repeat((num_repeats,1,1))
 
+    # Pre-compute SE(3)-invariant self-overlaps (VAA + VBB = U) once before the loop
+    with torch.no_grad():
+        _VAA = VAB_2nd_order(ref_points, ref_points, alpha)
+        _VBB = VAB_2nd_order(fit_points, fit_points, alpha)
+        _U = _VAA + _VBB
+
     for step in range(max_num_steps):
         # Forward pass: compute objective function and gradients
         if avoid_points is not None:
@@ -492,12 +512,14 @@ def optimize_ROCS_overlay(ref_points: torch.Tensor,
                                                     fit_points_for_avoid=fit_points_for_avoid_to_transform,
                                                     avoid_points=avoid_points,
                                                     avoid_min_dist=avoid_min_dist,
-                                                    avoid_weight=avoid_weight)
+                                                    avoid_weight=avoid_weight,
+                                                    precomputed_U=_U)
         else:
             loss = objective_ROCS_overlay(se3_params=se3_params,
                                             ref_points=ref_points,
                                             fit_points=fit_points_to_transform,
-                                            alpha=alpha)
+                                            alpha=alpha,
+                                            precomputed_U=_U)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -555,7 +577,8 @@ def objective_ROCS_esp_overlay(se3_params: torch.Tensor,
                                ref_charges: torch.Tensor,
                                fit_charges: torch.Tensor,
                                alpha: float,
-                               lam: float
+                               lam: float,
+                               precomputed_U: Optional[torch.Tensor] = None,
                                ) -> torch.Tensor:
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
@@ -600,12 +623,19 @@ def objective_ROCS_esp_overlay(se3_params: torch.Tensor,
 
     se3_matrix = get_SE3_transform(se3_params)
     transformed_fit_points = apply_SE3_transform(fit_points, se3_matrix)
-    score = get_overlap_esp(centers_1=ref_points,
-                            centers_2=transformed_fit_points,
-                            charges_1=ref_charges,
-                            charges_2=fit_charges,
-                            alpha=alpha,
-                            lam=lam)
+    if precomputed_U is not None:
+        # Apply same charge reshaping as get_overlap_esp
+        _rc = ref_charges.reshape((-1, 1)) if ref_charges.dim() == 1 else ref_charges.unsqueeze(2)
+        _fc = fit_charges.reshape((-1, 1)) if fit_charges.dim() == 1 else fit_charges.unsqueeze(2)
+        VAB = VAB_2nd_order_esp(ref_points, transformed_fit_points, _rc, _fc, alpha, lam)
+        score = VAB / (precomputed_U - VAB)
+    else:
+        score = get_overlap_esp(centers_1=ref_points,
+                                centers_2=transformed_fit_points,
+                                charges_1=ref_charges,
+                                charges_2=fit_charges,
+                                alpha=alpha,
+                                lam=lam)
 
     # Single instance
     if len(se3_params.shape) == 1:
@@ -693,6 +723,14 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
     last_loss = torch.tensor(float('inf'), device=ref_points.device) # Initialize with a high value
     counter = 0
 
+    # Pre-compute SE(3)-invariant self-overlaps (VAA + VBB = U) once before the loop
+    with torch.no_grad():
+        _rc = ref_charges.reshape((-1, 1)) if ref_charges.dim() == 1 else ref_charges.unsqueeze(2)
+        _fc = fit_charges.reshape((-1, 1)) if fit_charges.dim() == 1 else fit_charges.unsqueeze(2)
+        _VAA_esp = VAB_2nd_order_esp(ref_points, ref_points, _rc, _rc, alpha, lam)
+        _VBB_esp = VAB_2nd_order_esp(fit_points, fit_points, _fc, _fc, alpha, lam)
+        _U_esp = _VAA_esp + _VBB_esp
+
     # Prepare fit_points and fit_charges for transformation loop
     if current_num_repeats == 1:
         fit_points_to_transform = fit_points
@@ -717,7 +755,8 @@ def optimize_ROCS_esp_overlay(ref_points: torch.Tensor,
                                           ref_charges=ref_charges,
                                           fit_charges=fit_charges_for_objective,
                                           alpha=alpha,
-                                          lam=lam)
+                                          lam=lam,
+                                          precomputed_U=_U_esp)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -1015,7 +1054,8 @@ def objective_pharm_overlay(se3_params: torch.Tensor,
                             fit_vectors: torch.Tensor,
                             similarity: _SIM_TYPE = 'tanimoto',
                             extended_points: bool = False,
-                            only_extended: bool = False
+                            only_extended: bool = False,
+                            precomputed_self_overlaps: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
                             ) -> torch.Tensor:
     """
     Objective function to optimize ROCS overlay. Supports batched and non-batched inputs.
@@ -1067,7 +1107,8 @@ def objective_pharm_overlay(se3_params: torch.Tensor,
                             vectors_2=fit_vectors,
                             similarity=similarity,
                             extended_points=extended_points,
-                            only_extended=only_extended)
+                            only_extended=only_extended,
+                            precomputed_self_overlaps=precomputed_self_overlaps)
     # Single instance
     if len(se3_params.shape) == 1:
         return 1-score # maximize overlap
@@ -1175,6 +1216,17 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
     ref_vectors_rep = ref_vectors.repeat((num_repeats,1,1)).squeeze(0)
     fit_vectors_rep = fit_vectors.repeat((num_repeats,1,1)).squeeze(0)
 
+    # Pre-compute SE(3)-invariant self-overlaps once before the loop
+    if not extended_points:
+        from shepherd_score.score.analytical_gradients import compute_self_overlaps_pharm
+        with torch.no_grad():
+            _VAA_pharm, _VBB_pharm = compute_self_overlaps_pharm(
+                ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
+            )
+        _precomputed_self_overlaps = (_VAA_pharm, _VBB_pharm)
+    else:
+        _precomputed_self_overlaps = None
+
     for step in range(max_num_steps):
         # Forward pass: compute objective function and gradients
         loss = objective_pharm_overlay(
@@ -1187,7 +1239,8 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
             fit_vectors=fit_vectors_rep,
             similarity=similarity,
             extended_points=extended_points,
-            only_extended=only_extended
+            only_extended=only_extended,
+            precomputed_self_overlaps=_precomputed_self_overlaps,
         )
         optimizer.zero_grad()
         loss.backward()
