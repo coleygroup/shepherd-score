@@ -197,7 +197,7 @@ class TestOverlapGradientTranslation:
         fit_t = (R @ fit_anchors.T).T + t_ag
         fit_v_t = (R @ fit_vecs.T).T
 
-        score = get_overlap_pharm(
+        _ = get_overlap_pharm(
             ptype_1=ref_pharms, ptype_2=fit_pharms,
             anchors_1=ref_anchors, anchors_2=fit_t,
             vectors_1=ref_vecs, vectors_2=fit_v_t,
@@ -645,8 +645,10 @@ class TestShapeOverlapGradientTranslation:
         eps = 1e-6
         grad_t_fd = torch.zeros(3, dtype=torch.float64)
         for i in range(3):
-            t_plus = t.clone(); t_plus[i] += eps
-            t_minus = t.clone(); t_minus[i] -= eps
+            t_plus = t.clone()
+            t_plus[i] += eps
+            t_minus = t.clone()
+            t_minus[i] -= eps
             O_plus, _, _ = compute_overlap_and_grad_shape(R, t_plus, ref_points, fit_points, alpha)
             O_minus, _, _ = compute_overlap_and_grad_shape(R, t_minus, ref_points, fit_points, alpha)
             grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
@@ -666,8 +668,10 @@ class TestShapeOverlapGradientTranslation:
             eps = 1e-6
             grad_t_fd = torch.zeros(3, dtype=torch.float64)
             for i in range(3):
-                t_plus = t.clone(); t_plus[i] += eps
-                t_minus = t.clone(); t_minus[i] -= eps
+                t_plus = t.clone()
+                t_plus[i] += eps
+                t_minus = t.clone()
+                t_minus[i] -= eps
                 O_plus, _, _ = compute_overlap_and_grad_shape(R, t_plus, ref_points, fit_points, alpha)
                 O_minus, _, _ = compute_overlap_and_grad_shape(R, t_minus, ref_points, fit_points, alpha)
                 grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
@@ -693,8 +697,10 @@ class TestShapeOverlapGradientRotation:
         grad_R_fd = torch.zeros(3, 3, dtype=torch.float64)
         for i in range(3):
             for j in range(3):
-                R_plus = R.clone(); R_plus[i, j] += eps
-                R_minus = R.clone(); R_minus[i, j] -= eps
+                R_plus = R.clone()
+                R_plus[i, j] += eps
+                R_minus = R.clone()
+                R_minus[i, j] -= eps
                 O_plus, _, _ = compute_overlap_and_grad_shape(R_plus, t, ref_points, fit_points, alpha)
                 O_minus, _, _ = compute_overlap_and_grad_shape(R_minus, t, ref_points, fit_points, alpha)
                 grad_R_fd[i, j] = (O_plus - O_minus) / (2 * eps)
@@ -949,8 +955,10 @@ class TestAvoidAndGrad:
 
         fd_grad = torch.zeros(3, dtype=t.dtype)
         for i in range(3):
-            t_p = t.clone(); t_p[i] += eps
-            t_m = t.clone(); t_m[i] -= eps
+            t_p = t.clone()
+            t_p[i] += eps
+            t_m = t.clone()
+            t_m[i] -= eps
             A_p, _, _ = compute_avoid_and_grad(R, t_p, fit_orig, avoid, min_dist)
             A_m, _, _ = compute_avoid_and_grad(R, t_m, fit_orig, avoid, min_dist)
             fd_grad[i] = (A_p - A_m) / (2 * eps)
@@ -968,8 +976,10 @@ class TestAvoidAndGrad:
         fd_grad_R = torch.zeros(3, 3, dtype=R.dtype)
         for i in range(3):
             for j in range(3):
-                R_p = R.clone(); R_p[i, j] += eps
-                R_m = R.clone(); R_m[i, j] -= eps
+                R_p = R.clone()
+                R_p[i, j] += eps
+                R_m = R.clone()
+                R_m[i, j] -= eps
                 A_p, _, _ = compute_avoid_and_grad(R_p, t, fit_orig, avoid, min_dist)
                 A_m, _, _ = compute_avoid_and_grad(R_m, t, fit_orig, avoid, min_dist)
                 fd_grad_R[i, j] = (A_p - A_m) / (2 * eps)
@@ -1013,7 +1023,10 @@ class TestAvoidFullAnalyticalGradient:
 
         # objective_ROCS_overlay_with_avoid only supports float32 (se3.py dtype constraint)
         ref, fit, avoid, se3_init = self._get_data(seed=77)
-        ref = ref.float(); fit = fit.float(); avoid = avoid.float(); se3_init = se3_init.float()
+        ref = ref.float()
+        fit = fit.float()
+        avoid = avoid.float()
+        se3_init = se3_init.float()
         alpha = 0.81
         avoid_min_dist = 2.0
         avoid_weight = 0.5
@@ -1061,8 +1074,10 @@ class TestAvoidFullAnalyticalGradient:
 
         fd_grad = torch.zeros(7, dtype=torch.float64)
         for i in range(7):
-            p = se3_init.clone(); p[i] += eps
-            m = se3_init.clone(); m[i] -= eps
+            p = se3_init.clone()
+            p[i] += eps
+            m = se3_init.clone()
+            m[i] -= eps
             lp, _ = compute_analytical_grad_se3_shape_with_avoid(p, ref, fit, alpha, VAA, VBB, fit, avoid, avoid_min_dist, avoid_weight)
             lm, _ = compute_analytical_grad_se3_shape_with_avoid(m, ref, fit, alpha, VAA, VBB, fit, avoid, avoid_min_dist, avoid_weight)
             fd_grad[i] = (lp - lm) / (2 * eps)
@@ -1195,8 +1210,10 @@ class TestESPOverlapGradientTranslation:
 
         fd_grad = torch.zeros(3, dtype=t.dtype)
         for i in range(3):
-            t_p = t.clone(); t_p[i] += eps
-            t_m = t.clone(); t_m[i] -= eps
+            t_p = t.clone()
+            t_p[i] += eps
+            t_m = t.clone()
+            t_m[i] -= eps
             O_p, _, _ = compute_overlap_and_grad_shape(R, t_p, ref_points, fit_points, alpha, pair_weights=pair_weights)
             O_m, _, _ = compute_overlap_and_grad_shape(R, t_m, ref_points, fit_points, alpha, pair_weights=pair_weights)
             fd_grad[i] = (O_p - O_m) / (2 * eps)
@@ -1242,8 +1259,10 @@ class TestESPOverlapGradientRotation:
         fd_grad_R = torch.zeros(3, 3, dtype=R.dtype)
         for i in range(3):
             for j in range(3):
-                R_p = R.clone(); R_p[i, j] += eps
-                R_m = R.clone(); R_m[i, j] -= eps
+                R_p = R.clone()
+                R_p[i, j] += eps
+                R_m = R.clone()
+                R_m[i, j] -= eps
                 O_p, _, _ = compute_overlap_and_grad_shape(R_p, t, ref_points, fit_points, alpha, pair_weights=pair_weights)
                 O_m, _, _ = compute_overlap_and_grad_shape(R_m, t, ref_points, fit_points, alpha, pair_weights=pair_weights)
                 fd_grad_R[i, j] = (O_p - O_m) / (2 * eps)

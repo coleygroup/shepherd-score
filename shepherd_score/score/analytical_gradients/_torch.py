@@ -313,11 +313,11 @@ def compute_self_overlaps_pharm(
     """
     Compute self-overlaps VAA and VBB vectorially.
     """
-    I = torch.eye(3, device=anchors_1.device, dtype=anchors_1.dtype)
+    eye3 = torch.eye(3, device=anchors_1.device, dtype=anchors_1.dtype)
     zero = torch.zeros(3, device=anchors_1.device, dtype=anchors_1.dtype)
 
-    VAA, _, _ = compute_overlap_and_grad_pharm(I, zero, ptype_1, ptype_1, anchors_1, anchors_1, vectors_1, vectors_1)
-    VBB, _, _ = compute_overlap_and_grad_pharm(I, zero, ptype_2, ptype_2, anchors_2, anchors_2, vectors_2, vectors_2)
+    VAA, _, _ = compute_overlap_and_grad_pharm(eye3, zero, ptype_1, ptype_1, anchors_1, anchors_1, vectors_1, vectors_1)
+    VBB, _, _ = compute_overlap_and_grad_pharm(eye3, zero, ptype_2, ptype_2, anchors_2, anchors_2, vectors_2, vectors_2)
 
     return VAA, VBB
 
@@ -467,10 +467,10 @@ def compute_self_overlaps_shape(
     -------
     VAA, VBB : torch.Tensor scalars
     """
-    I = torch.eye(3, device=ref_points.device, dtype=ref_points.dtype)
+    eye3 = torch.eye(3, device=ref_points.device, dtype=ref_points.dtype)
     zero = torch.zeros(3, device=ref_points.device, dtype=ref_points.dtype)
-    VAA, _, _ = compute_overlap_and_grad_shape(I, zero, ref_points, ref_points, alpha)
-    VBB, _, _ = compute_overlap_and_grad_shape(I, zero, fit_points, fit_points, alpha)
+    VAA, _, _ = compute_overlap_and_grad_shape(eye3, zero, ref_points, ref_points, alpha)
+    VBB, _, _ = compute_overlap_and_grad_shape(eye3, zero, fit_points, fit_points, alpha)
     return VAA, VBB
 
 
@@ -523,12 +523,12 @@ def compute_self_overlaps_esp(
     -------
     VAA, VBB : torch.Tensor scalars
     """
-    I = torch.eye(3, device=ref_points.device, dtype=ref_points.dtype)
+    eye3 = torch.eye(3, device=ref_points.device, dtype=ref_points.dtype)
     zero = torch.zeros(3, device=ref_points.device, dtype=ref_points.dtype)
     w_AA = _compute_esp_pair_weights(ref_charges, ref_charges, lam)
     w_BB = _compute_esp_pair_weights(fit_charges, fit_charges, lam)
-    VAA, _, _ = compute_overlap_and_grad_shape(I, zero, ref_points, ref_points, alpha, pair_weights=w_AA)
-    VBB, _, _ = compute_overlap_and_grad_shape(I, zero, fit_points, fit_points, alpha, pair_weights=w_BB)
+    VAA, _, _ = compute_overlap_and_grad_shape(eye3, zero, ref_points, ref_points, alpha, pair_weights=w_AA)
+    VBB, _, _ = compute_overlap_and_grad_shape(eye3, zero, fit_points, fit_points, alpha, pair_weights=w_BB)
     return VAA, VBB
 
 
@@ -885,12 +885,12 @@ def compute_analytical_grad_se3(
     batched = se3_params.dim() == 2
 
     if similarity == 'tanimoto':
-        chain_rule_fn = lambda O_AB, grad_R, grad_t: apply_tanimoto_chain_rule(
+        chain_rule_fn = lambda O_AB, grad_R, grad_t: apply_tanimoto_chain_rule(  # noqa: E731
             O_AB, VAA_total + VBB_total, grad_R, grad_t
         )
     else:
         D = sigma * VAA_total + (1 - sigma) * VBB_total
-        chain_rule_fn = lambda O_AB, grad_R, grad_t: apply_tversky_chain_rule(
+        chain_rule_fn = lambda O_AB, grad_R, grad_t: apply_tversky_chain_rule(  # noqa: E731
             O_AB, D, grad_R, grad_t
         )
 
@@ -913,8 +913,8 @@ def compute_analytical_grad_se3(
         grad_q_norm = project_grad_R_to_quaternion(scaled_grad_R, q_norm)
 
         q_norm_expanded = q_norm.unsqueeze(-1)
-        I = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype).unsqueeze(0)
-        proj = I - q_norm_expanded @ q_norm_expanded.transpose(-1, -2)
+        eye4 = torch.eye(4, device=se3_params.device, dtype=se3_params.dtype).unsqueeze(0)
+        proj = eye4 - q_norm_expanded @ q_norm_expanded.transpose(-1, -2)
         grad_q_raw = (proj @ grad_q_norm.unsqueeze(-1)).squeeze(-1) / q_norm_val
 
         grad_se3 = torch.cat([grad_q_raw, scaled_grad_t], dim=1)
