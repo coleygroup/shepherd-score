@@ -1433,3 +1433,187 @@ class MoleculePairBatch:
             aligned_list.append(aligned_pts)
 
         return scores, aligned_list
+
+    def _pad_and_mask_pharm(self):
+        """Extract, pad, and create masks for pharmacophore alignment.
+
+        Validates that all pairs have pharmacophore data. Does NOT modify the
+        pair objects. Returns padded arrays and masks.
+
+        Returns
+        -------
+        entries : list of tuples
+            Each tuple is (ref_ptypes, fit_ptypes,
+                           ref_ancs_pad, fit_ancs_pad,
+                           ref_vecs_pad, fit_vecs_pad,
+                           mask_ref, mask_fit,
+                           orig_ref_len, orig_fit_len).
+        max_ref_len : int
+        max_fit_len : int
+        """
+        for i, pair in enumerate(self.pairs):
+            if (pair.ref_molec.pharm_types is None or
+                    pair.fit_molec.pharm_types is None):
+                raise ValueError(
+                    f'Pair {i} is missing pharmacophore data. '
+                    'Create Molecule objects with pharm_multi_vector set to True or False.'
+                )
+
+        ref_types_list = [p.ref_molec.pharm_types for p in self.pairs]
+        fit_types_list = [p.fit_molec.pharm_types for p in self.pairs]
+        ref_ancs_list  = [p.ref_molec.pharm_ancs  for p in self.pairs]
+        fit_ancs_list  = [p.fit_molec.pharm_ancs  for p in self.pairs]
+        ref_vecs_list  = [p.ref_molec.pharm_vecs  for p in self.pairs]
+        fit_vecs_list  = [p.fit_molec.pharm_vecs  for p in self.pairs]
+
+        max_ref_len = max(t.shape[0] for t in ref_types_list)
+        max_fit_len = max(t.shape[0] for t in fit_types_list)
+
+        DUMMY_TYPE = 8  # index of 'Dummy' in P_TYPES
+
+        entries = []
+        for (ref_types, fit_types,
+             ref_ancs, fit_ancs,
+             ref_vecs, fit_vecs) in zip(ref_types_list, fit_types_list,
+                                        ref_ancs_list, fit_ancs_list,
+                                        ref_vecs_list, fit_vecs_list):
+            orig_ref = ref_types.shape[0]
+            orig_fit = fit_types.shape[0]
+
+            # types: pad with DUMMY_TYPE
+            ref_types_pad = np.full(max_ref_len, DUMMY_TYPE, dtype=np.int32)
+            ref_types_pad[:orig_ref] = ref_types
+            fit_types_pad = np.full(max_fit_len, DUMMY_TYPE, dtype=np.int32)
+            fit_types_pad[:orig_fit] = fit_types
+
+            # anchors / vectors: pad with zeros
+            ref_ancs_pad = np.zeros((max_ref_len, 3), dtype=np.float32)
+            ref_ancs_pad[:orig_ref] = ref_ancs
+            fit_ancs_pad = np.zeros((max_fit_len, 3), dtype=np.float32)
+            fit_ancs_pad[:orig_fit] = fit_ancs
+
+            ref_vecs_pad = np.zeros((max_ref_len, 3), dtype=np.float32)
+            ref_vecs_pad[:orig_ref] = ref_vecs
+            fit_vecs_pad = np.zeros((max_fit_len, 3), dtype=np.float32)
+            fit_vecs_pad[:orig_fit] = fit_vecs
+
+            # binary masks (float for JAX)
+            mask_ref = np.zeros(max_ref_len, dtype=np.float32)
+            mask_ref[:orig_ref] = 1.0
+            mask_fit = np.zeros(max_fit_len, dtype=np.float32)
+            mask_fit[:orig_fit] = 1.0
+
+            entries.append((ref_types_pad, fit_types_pad,
+                            ref_ancs_pad, fit_ancs_pad,
+                            ref_vecs_pad, fit_vecs_pad,
+                            mask_ref, mask_fit,
+                            orig_ref, orig_fit))
+
+        return entries, max_ref_len, max_fit_len
+
+    def align_with_pharm(self,
+                         similarity: str = 'tanimoto',
+                         extended_points: bool = False,
+                         only_extended: bool = False,
+                         num_repeats: int = 50,
+                         trans_init: bool = False,
+                         lr: float = 0.1,
+                         max_num_steps: int = 200,
+                         verbose: bool = False
+                         ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
+        """Align all pairs using padded masked pharmacophore similarity via JAX.
+
+        Because all padded arrays have the same shape, JAX's XLA compiler
+        reuses one compiled kernel for every pair — no recompilation overhead.
+
+        Results are stored in-place on each MoleculePair:
+        - ``pair.transform_pharm`` and ``pair.sim_aligned_pharm``
+
+        Parameters
+        ----------
+        similarity : str
+            One of ``'tanimoto'``, ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'``.
+        extended_points : bool
+            Score HBA/HBD with extended-point Gaussians.
+        only_extended : bool
+            When ``extended_points`` is True, ignore anchor overlaps.
+        num_repeats : int
+            Number of SE(3) initializations per pair.
+        trans_init : bool
+            If True, initialize translations to each ref pharmacophore anchor.
+        lr : float
+            Optimizer learning rate.
+        max_num_steps : int
+            Maximum optimization steps.
+        verbose : bool
+            Print scores per pair.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Shape: (N,).
+        aligned_anchors_list : list of np.ndarray
+            Aligned fit pharmacophore anchors (unpadded) for each pair.
+        aligned_vectors_list : list of np.ndarray
+            Aligned fit pharmacophore vectors (unpadded) for each pair.
+        """
+        try:
+            import jax.numpy as jnp
+        except ImportError as exc:
+            raise ImportError(
+                'JAX is required for MoleculePairBatch.align_with_pharm. '
+                'Install it with: pip install "shepherd-score[jax]"'
+            ) from exc
+
+        from .alignment_jax import optimize_pharm_overlay_jax_vectorized_mask
+
+        entries, _, _ = self._pad_and_mask_pharm()
+        aligned_anchors_list = []
+        aligned_vectors_list = []
+        scores = np.zeros((len(self.pairs),))
+
+        for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
+            (ref_types_pad, fit_types_pad,
+             ref_ancs_pad, fit_ancs_pad,
+             ref_vecs_pad, fit_vecs_pad,
+             mask_ref, mask_fit,
+             orig_ref, orig_fit) = entry
+
+            trans_centers = None
+            if trans_init:
+                trans_centers = pair.ref_molec.pharm_ancs
+
+            aligned_ancs, aligned_vecs, se3_transform, score = optimize_pharm_overlay_jax_vectorized_mask(
+                ref_pharms=jnp.array(ref_types_pad),
+                fit_pharms=jnp.array(fit_types_pad),
+                ref_anchors=jnp.array(ref_ancs_pad),
+                fit_anchors=jnp.array(fit_ancs_pad),
+                ref_vectors=jnp.array(ref_vecs_pad),
+                fit_vectors=jnp.array(fit_vecs_pad),
+                mask_ref=jnp.array(mask_ref),
+                mask_fit=jnp.array(mask_fit),
+                similarity=similarity,
+                extended_points=extended_points,
+                only_extended=only_extended,
+                num_repeats=num_repeats,
+                trans_centers=trans_centers,
+                init_ref_anchors=pair.ref_molec.pharm_ancs,
+                init_fit_anchors=pair.fit_molec.pharm_ancs,
+                lr=lr,
+                max_num_steps=max_num_steps,
+                verbose=verbose,
+            )
+
+            se3_transform = np.array(se3_transform)
+            score = float(np.array(score))
+            aligned_ancs = np.array(aligned_ancs)[:orig_fit]
+            aligned_vecs = np.array(aligned_vecs)[:orig_fit]
+
+            scores[i] = score
+            pair.transform_pharm = se3_transform
+            pair.sim_aligned_pharm = score
+
+            aligned_anchors_list.append(aligned_ancs)
+            aligned_vectors_list.append(aligned_vecs)
+
+        return scores, aligned_anchors_list, aligned_vectors_list

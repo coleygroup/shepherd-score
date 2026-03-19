@@ -14,7 +14,7 @@ import torch
 
 from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_linear_hard_sphere_overlap_jax, VAB_2nd_order_jax, VAB_2nd_order_jax_mask, get_overlap_jax_mask
 from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax
-from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, get_overlap_pharm_jax_vectorized, _SIM_TYPE
+from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, get_overlap_pharm_jax_vectorized, get_overlap_pharm_jax_vectorized_mask, _SIM_TYPE
 from shepherd_score.alignment.utils.pca_jax import quaternions_for_principal_component_alignment_jax, rotation_axis_jax, vmap_angle_between_vecs_jax, vmap_quaternion_from_axis_angle_jax
 from shepherd_score.alignment.utils.se3_jax import get_SE3_transform_jax, apply_SE3_transform_jax
 from shepherd_score.alignment import _initialize_se3_params, _initialize_se3_params_with_translations
@@ -1689,6 +1689,202 @@ def optimize_pharm_overlay_jax_vectorized(
         in_axes=(None, None, None, 0, None, 0)
     )(ref_pharms, fit_pharms, ref_anchors, aligned_anchors,
       ref_vectors, aligned_vectors)
+
+    eps = 1e-6
+    if similarity == 'tanimoto':
+        final_scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + eps)
+    elif similarity == 'tversky_ref':
+        final_scores = vab_scores / (ref_self_score + eps)
+    elif similarity == 'tversky_fit':
+        final_scores = vab_scores / (fit_self_score + eps)
+    else:
+        final_scores = vab_scores
+
+    best_idx = jnp.argmax(final_scores)
+
+    if verbose:
+        print(f'Optimized pharmacophore similarity score -- max: {final_scores.max():.3f} | mean: {final_scores.mean():.3f}')
+
+    if current_num_repeats == 1:
+        return (aligned_anchors.squeeze(), aligned_vectors.squeeze(),
+                SE3_transform.squeeze(), final_scores.squeeze())
+
+    return (aligned_anchors[best_idx], aligned_vectors[best_idx],
+            SE3_transform[best_idx], final_scores[best_idx])
+
+
+def _loss_fn_pharm_vectorized_mask(
+    se3_params,
+    ref_pharms, fit_pharms,
+    ref_anchors, fit_anchors,
+    ref_vectors, fit_vectors,
+    mask_ref, mask_fit,
+    ref_self_score, fit_self_score,
+    similarity='tanimoto',
+    extended_points=False,
+    only_extended=False
+):
+    """
+    Batched loss for masked pharmacophore overlay optimization.
+
+    Parameters
+    ----------
+    se3_params : Array (num_repeats, 7)
+    ref_pharms, fit_pharms : Array (N,), (M,)  — padded type indices
+    ref_anchors, fit_anchors : Array (N,3), (M,3)  — padded
+    ref_vectors, fit_vectors : Array (N,3), (M,3)  — padded
+    mask_ref : Array (N,)  — 1.0 for real, 0.0 for padding
+    mask_fit : Array (M,)  — 1.0 for real, 0.0 for padding
+    ref_self_score, fit_self_score : scalar Arrays
+    similarity : str
+    extended_points, only_extended : bool
+    """
+    se3_matrices = vmap(get_SE3_transform_jax)(se3_params)
+    fit_anchors_transformed = vmap(apply_SE3_transform_jax, (None, 0))(fit_anchors, se3_matrices)
+    fit_vectors_transformed = vmap(apply_SO3_transform_jax, (None, 0))(fit_vectors, se3_matrices)
+
+    # mask_ref / mask_fit are the same for all repeats — not vmapped
+    vab_scores = vmap(
+        partial(get_overlap_pharm_jax_vectorized_mask,
+                extended_points=extended_points,
+                only_extended=only_extended),
+        in_axes=(None, None, None, 0, None, 0, None, None)
+    )(ref_pharms, fit_pharms, ref_anchors, fit_anchors_transformed,
+      ref_vectors, fit_vectors_transformed, mask_ref, mask_fit)
+
+    eps = 1e-6
+    if similarity == 'tanimoto':
+        scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + eps)
+    elif similarity == 'tversky_ref':
+        scores = vab_scores / (ref_self_score + eps)
+    elif similarity == 'tversky_fit':
+        scores = vab_scores / (fit_self_score + eps)
+    else:
+        scores = vab_scores
+
+    return 1.0 - jnp.mean(scores)
+
+
+@lru_cache(maxsize=8)
+def _make_jit_val_grad_pharm_vectorized_mask(similarity: str,
+                                             extended_points: bool,
+                                             only_extended: bool):
+    """
+    Return a JIT-compiled value_and_grad function for masked pharmacophore
+    alignment, with static args baked in via closure and lru_cache'd so that
+    _generic_optimize_loop never recompiles across molecule pairs.
+    """
+    def _loss(se3_params,
+              ref_pharms, fit_pharms,
+              ref_anchors, fit_anchors,
+              ref_vectors, fit_vectors,
+              mask_ref, mask_fit,
+              ref_self_score, fit_self_score):
+        return _loss_fn_pharm_vectorized_mask(
+            se3_params,
+            ref_pharms, fit_pharms,
+            ref_anchors, fit_anchors,
+            ref_vectors, fit_vectors,
+            mask_ref, mask_fit,
+            ref_self_score, fit_self_score,
+            similarity=similarity,
+            extended_points=extended_points,
+            only_extended=only_extended,
+        )
+    return jit(value_and_grad(_loss))
+
+
+def optimize_pharm_overlay_jax_vectorized_mask(
+    ref_pharms: Array,
+    fit_pharms: Array,
+    ref_anchors: Array,
+    fit_anchors: Array,
+    ref_vectors: Array,
+    fit_vectors: Array,
+    mask_ref: Array,
+    mask_fit: Array,
+    similarity: str = 'tanimoto',
+    extended_points: bool = False,
+    only_extended: bool = False,
+    num_repeats: int = 50,
+    trans_centers: Union[Array, np.ndarray, None] = None,
+    init_ref_anchors: Union[np.ndarray, None] = None,
+    init_fit_anchors: Union[np.ndarray, None] = None,
+    lr: float = 0.1,
+    max_num_steps: int = 200,
+    verbose: bool = False
+) -> Tuple[Array, Array, Array, Array]:
+    """
+    Optimize pharmacophore overlay with padded/masked arrays via JAX.
+
+    Uses ``get_overlap_pharm_jax_vectorized_mask`` so that padding entries never
+    contribute to the overlap.  Accepts ``init_ref_anchors`` / ``init_fit_anchors``
+    (original unpadded arrays) for PCA/COM-based SE(3) initialization to avoid
+    zero-padding bias.
+    """
+    # Use original unpadded anchors for SE3 initialization if provided
+    se3_ref = init_ref_anchors if init_ref_anchors is not None else np.array(ref_anchors)
+    se3_fit = init_fit_anchors if init_fit_anchors is not None else np.array(fit_anchors)
+
+    if trans_centers is None:
+        se3_params = _initialize_se3_params(
+            ref_points=torch.Tensor(se3_ref),
+            fit_points=torch.Tensor(se3_fit),
+            num_repeats=num_repeats
+        ).detach()
+        if num_repeats == 1:
+            se3_params = se3_params.unsqueeze(0)
+    else:
+        se3_params = _initialize_se3_params_with_translations(
+            ref_points=torch.Tensor(se3_ref),
+            fit_points=torch.Tensor(se3_fit),
+            trans_centers=torch.Tensor(np.array(trans_centers)),
+            num_repeats_per_trans=10
+        ).detach()
+
+    if len(se3_params.shape) == 1:
+        se3_params = se3_params.unsqueeze(0)
+    se3_params = jnp.array(se3_params)
+    current_num_repeats = se3_params.shape[0]
+
+    # Pre-compute self-overlaps once (scalars)
+    ref_self_score = get_overlap_pharm_jax_vectorized_mask(
+        ref_pharms, ref_pharms, ref_anchors, ref_anchors, ref_vectors, ref_vectors,
+        mask_ref, mask_ref,
+        extended_points=extended_points, only_extended=only_extended
+    )
+    fit_self_score = get_overlap_pharm_jax_vectorized_mask(
+        fit_pharms, fit_pharms, fit_anchors, fit_anchors, fit_vectors, fit_vectors,
+        mask_fit, mask_fit,
+        extended_points=extended_points, only_extended=only_extended
+    )
+
+    # Optimization
+    val_and_grad_fn = _make_jit_val_grad_pharm_vectorized_mask(similarity, extended_points, only_extended)
+    data_args = (ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                 ref_vectors, fit_vectors, mask_ref, mask_fit,
+                 ref_self_score, fit_self_score)
+
+    se3_params = _generic_optimize_loop(
+        se3_params=se3_params,
+        data_args=data_args,
+        val_and_grad_fn=val_and_grad_fn,
+        lr=lr,
+        max_num_steps=max_num_steps
+    )
+
+    # Final output
+    SE3_transform = vmap_get_SE3_transform_jax(se3_params)
+    aligned_anchors = vmap_apply_SE3_transform_jax(fit_anchors, SE3_transform)
+    aligned_vectors = vmap_apply_SO3_transform_jax(fit_vectors, SE3_transform)
+
+    vab_scores = vmap(
+        partial(get_overlap_pharm_jax_vectorized_mask,
+                extended_points=extended_points,
+                only_extended=only_extended),
+        in_axes=(None, None, None, 0, None, 0, None, None)
+    )(ref_pharms, fit_pharms, ref_anchors, aligned_anchors,
+      ref_vectors, aligned_vectors, mask_ref, mask_fit)
 
     eps = 1e-6
     if similarity == 'tanimoto':

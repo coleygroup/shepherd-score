@@ -7,6 +7,8 @@ from shepherd_score.alignment._jax import (   # explicit for IDE/type checkers
     optimize_esp_combo_score_overlay_jax,
     optimize_pharm_overlay_jax,
     optimize_pharm_overlay_jax_vectorized,
+    optimize_pharm_overlay_jax_vectorized_mask,
     convert_to_jnp_array,
     _make_jit_val_grad_pharm_vectorized,
+    _make_jit_val_grad_pharm_vectorized_mask,
 )
