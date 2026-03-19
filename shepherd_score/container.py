@@ -2,7 +2,7 @@
 Molecule class to hold molecule geometries and extract interaction profiles.
 MoleculePair class facilitates alignment with interaction profiles.
 """
-from typing import Union, List, Optional, Tuple
+from typing import Union, List, Optional, Tuple, Literal
 from copy import deepcopy
 import sys
 
@@ -1281,3 +1281,155 @@ class MoleculePair:
                                          pharm_vecs=transformed_pharm_vecs
                                          )
         return transformed_fit_molec
+
+
+class MoleculePairBatch:
+    """Batch of MoleculePair objects for fast sequential JAX alignment.
+
+    Pads all atom coordinate arrays to common max shapes so JAX's XLA compiler
+    reuses the same compiled function for every pair, avoiding recompilation.
+    This modifies each MoleculePair in-place (stores results on the pair).
+    """
+
+    def __init__(self, pairs: List[MoleculePair]):
+        self.pairs = pairs
+
+    def _pad_and_mask_vol(self, no_H: bool = True):
+        """Extract, pad, and create masks for volumetric alignment.
+
+        Does NOT modify the pair objects. Returns padded arrays and masks.
+
+        Parameters
+        ----------
+        no_H : bool
+            If True, use heavy-atom positions (atom_pos). If False, use all atoms.
+
+        Returns
+        -------
+        entries : list of tuples
+            Each tuple is (ref_padded, fit_padded, mask_ref, mask_fit,
+                           orig_ref_len, orig_fit_len).
+        max_ref_len : int
+        max_fit_len : int
+        """
+        if no_H:
+            ref_arrays = [p.ref_molec.atom_pos for p in self.pairs]
+            fit_arrays = [p.fit_molec.atom_pos for p in self.pairs]
+        else:
+            ref_arrays = [p.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                          for p in self.pairs]
+            fit_arrays = [p.fit_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                          for p in self.pairs]
+
+        max_ref_len = max(a.shape[0] for a in ref_arrays)
+        max_fit_len = max(a.shape[0] for a in fit_arrays)
+
+        entries = []
+        for ref_pos, fit_pos in zip(ref_arrays, fit_arrays):
+            orig_ref = ref_pos.shape[0]
+            orig_fit = fit_pos.shape[0]
+
+            ref_padded = np.zeros((max_ref_len, 3), dtype=np.float32)
+            ref_padded[:orig_ref] = ref_pos
+            mask_ref = np.zeros(max_ref_len, dtype=np.float32)
+            mask_ref[:orig_ref] = 1.0
+
+            fit_padded = np.zeros((max_fit_len, 3), dtype=np.float32)
+            fit_padded[:orig_fit] = fit_pos
+            mask_fit = np.zeros(max_fit_len, dtype=np.float32)
+            mask_fit[:orig_fit] = 1.0
+
+            entries.append((ref_padded, fit_padded, mask_ref, mask_fit, orig_ref, orig_fit))
+
+        return entries, max_ref_len, max_fit_len
+
+    def align_with_vol(self,
+                       no_H: bool = True,
+                       num_repeats: int = 50,
+                       trans_init: bool = False,
+                       lr: float = 0.1,
+                       max_num_steps: int = 200,
+                       verbose: bool = False) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs using padded masked volumetric similarity via JAX.
+
+        Because all padded arrays have the same shape, JAX's XLA compiler
+        reuses one compiled kernel for every pair — no recompilation overhead.
+
+        Results are stored in-place on each MoleculePair:
+        - ``pair.transform_vol_noH`` / ``pair.sim_aligned_vol_noH`` (when ``no_H=True``)
+        - ``pair.transform_vol``     / ``pair.sim_aligned_vol``      (when ``no_H=False``)
+
+        Parameters
+        ----------
+        no_H : bool
+            Whether to exclude hydrogens. Default is True.
+        num_repeats : int
+            Number of SE(3) initializations per pair. Default is 50.
+        trans_init : bool
+            If True, initialize translations to each ref atom position. Default is False.
+        lr : float
+            Optimizer learning rate. Default is 0.1.
+        max_num_steps : int
+            Maximum optimization steps. Default is 200.
+        verbose : bool
+            Print scores per pair. Default is False.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Scores for each pair. Shape: (N,).
+        aligned_list : list of np.ndarray
+            Aligned fit atom coordinates (unpadded) for each pair.
+        """
+        try:
+            import jax.numpy as jnp
+        except ImportError as exc:
+            raise ImportError(
+                'JAX is required for MoleculePairBatch.align_with_vol. '
+                'Install it with: pip install "shepherd-score[jax]"'
+            ) from exc
+
+        from .alignment_jax import optimize_ROCS_overlay_jax_mask
+
+        entries, _, _ = self._pad_and_mask_vol(no_H=no_H)
+        aligned_list = []
+        scores = np.zeros((len(self.pairs),))
+
+        for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
+            ref_padded, fit_padded, mask_ref, mask_fit, orig_ref, orig_fit = entry
+
+            trans_centers = None
+            if trans_init:
+                if no_H:
+                    trans_centers = pair.ref_molec.atom_pos
+                else:
+                    trans_centers = pair.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+
+            aligned_pts, se3_transform, score = optimize_ROCS_overlay_jax_mask(
+                ref_points=jnp.array(ref_padded),
+                fit_points=jnp.array(fit_padded),
+                mask_ref=jnp.array(mask_ref),
+                mask_fit=jnp.array(mask_fit),
+                alpha=0.81,
+                num_repeats=num_repeats,
+                trans_centers=trans_centers,
+                lr=lr,
+                max_num_steps=max_num_steps,
+                verbose=verbose,
+            )
+
+            se3_transform = np.array(se3_transform)
+            score = np.array(score)
+            aligned_pts = np.array(aligned_pts)[:orig_fit]
+            scores[i] = score
+
+            if no_H:
+                pair.transform_vol_noH = se3_transform
+                pair.sim_aligned_vol_noH = score
+            else:
+                pair.transform_vol = se3_transform
+                pair.sim_aligned_vol = score
+
+            aligned_list.append(aligned_pts)
+
+        return scores, aligned_list
