@@ -13,7 +13,7 @@ import optax
 import torch
 
 from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_linear_hard_sphere_overlap_jax, VAB_2nd_order_jax, VAB_2nd_order_jax_mask, get_overlap_jax_mask
-from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax
+from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax, VAB_2nd_order_esp_jax_mask, get_overlap_esp_jax_mask
 from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, get_overlap_pharm_jax_vectorized, get_overlap_pharm_jax_vectorized_mask, _SIM_TYPE
 from shepherd_score.alignment.utils.pca_jax import quaternions_for_principal_component_alignment_jax, rotation_axis_jax, vmap_angle_between_vecs_jax, vmap_quaternion_from_axis_angle_jax
 from shepherd_score.alignment.utils.se3_jax import get_SE3_transform_jax, apply_SE3_transform_jax
@@ -539,6 +539,147 @@ jit_val_grad_obj_ROCS_precomputed_mask = jit(
 )
 
 vmap_get_overlap_jax_mask = vmap(get_overlap_jax_mask, (None, 0, None, None, None))
+
+
+def _objective_ROCS_esp_overlay_precomputed_jax_mask(se3_params, ref_points, fit_points,
+                                                      ref_charges, fit_charges,
+                                                      mask_ref, mask_fit, alpha, lam, VAA, VBB):
+    """Single-instance masked ROCS ESP objective using precomputed self-overlaps."""
+    se3_matrix = get_SE3_transform_jax(se3_params)
+    fit_t = apply_SE3_transform_jax(fit_points, se3_matrix)
+    VAB = VAB_2nd_order_esp_jax_mask(ref_points, fit_t, ref_charges, fit_charges,
+                                      mask_ref, mask_fit, alpha, lam)
+    return VAB / (VAA + VBB - VAB)
+
+
+batched_obj_ROCS_esp_overlay_precomputed_mask = vmap(
+    _objective_ROCS_esp_overlay_precomputed_jax_mask,
+    (0, None, None, None, None, None, None, None, None, None, None)
+)
+
+
+def objective_ROCS_esp_overlay_precomputed_jax_mask(se3_params, ref, fit,
+                                                     ref_charges, fit_charges,
+                                                     mask_ref, mask_fit, alpha, lam, VAA, VBB):
+    scores = batched_obj_ROCS_esp_overlay_precomputed_mask(
+        se3_params, ref, fit, ref_charges, fit_charges, mask_ref, mask_fit, alpha, lam, VAA, VBB)
+    return 1 - scores.mean()
+
+
+jit_val_grad_obj_ROCS_esp_precomputed_mask = jit(
+    value_and_grad(objective_ROCS_esp_overlay_precomputed_jax_mask)
+)
+
+vmap_get_overlap_esp_jax_mask = vmap(get_overlap_esp_jax_mask, (None, 0, None, None, None, None, None, None))
+
+
+def optimize_ROCS_esp_overlay_jax_mask(ref_points: Array,
+                                       fit_points: Array,
+                                       ref_charges: Array,
+                                       fit_charges: Array,
+                                       mask_ref: Array,
+                                       mask_fit: Array,
+                                       alpha: float,
+                                       lam: float,
+                                       *,
+                                       num_repeats: int = 50,
+                                       trans_centers: Union[Array, np.ndarray, None] = None,
+                                       lr: float = 0.1,
+                                       max_num_steps: int = 200,
+                                       verbose: bool = False
+                                       ) -> Tuple[Array, Array, Array]:
+    """
+    Optimize alignment of fit_points with respect to ref_points using SE(3) transformations and
+    maximizing masked electrostatic-weighted Gaussian overlap score.
+
+    Identical to ``optimize_ROCS_esp_overlay_jax`` but accepts binary mask arrays so that padded
+    (zero) entries are excluded from the overlap computation. Padding all arrays to a common
+    maximum shape and passing masks allows JAX's XLA compiler to reuse a single compiled
+    function across all pairs in a batch, avoiding recompilation overhead.
+
+    Parameters
+    ----------
+    ref_points : Array (N, 3)
+        Reference points (may include zero-padding beyond mask_ref).
+    fit_points : Array (M, 3)
+        Fit points (may include zero-padding beyond mask_fit).
+    ref_charges : Array (N,)
+        Charges for reference points.
+    fit_charges : Array (M,)
+        Charges for fit points.
+    mask_ref : Array (N,)
+        Binary mask: 1 for real atoms, 0 for padding.
+    mask_fit : Array (M,)
+        Binary mask: 1 for real atoms, 0 for padding.
+    alpha : float
+        Gaussian width parameter.
+    lam : float
+        Charge weighting parameter.
+    num_repeats : int (default=50)
+    trans_centers : array (P, 3) (default=None)
+    lr : float (default=0.1)
+    max_num_steps : int (default=200)
+    verbose : bool (default=False)
+
+    Returns
+    -------
+    tuple
+        aligned_points : Array (M, 3)
+        SE3_transform : Array (4, 4)
+        score : Array (1,)
+    """
+    if trans_centers is None:
+        se3_params = _initialize_se3_params(ref_points=torch.Tensor(np.array(ref_points)),
+                                            fit_points=torch.Tensor(np.array(fit_points)),
+                                            num_repeats=num_repeats).detach()
+        if num_repeats == 1:
+            se3_params = se3_params.unsqueeze(0)
+    else:
+        se3_params = _initialize_se3_params_with_translations(
+            ref_points=torch.Tensor(np.array(ref_points)),
+            fit_points=torch.Tensor(np.array(fit_points)),
+            trans_centers=torch.Tensor(np.array(trans_centers)),
+            num_repeats_per_trans=10).detach()
+
+    if len(se3_params.shape) == 1:
+        se3_params = se3_params.unsqueeze(0)
+    se3_params = jnp.array(se3_params)
+
+    # Reshape charges to (-1, 1) for jax_sq_cdist inside VAB_2nd_order_esp_jax_mask
+    ref_charges_col = jnp.reshape(ref_charges, (-1, 1))
+    fit_charges_col = jnp.reshape(fit_charges, (-1, 1))
+
+    VAA = VAB_2nd_order_esp_jax_mask(ref_points, ref_points, ref_charges_col, ref_charges_col,
+                                      mask_ref, mask_ref, alpha, lam)
+    VBB = VAB_2nd_order_esp_jax_mask(fit_points, fit_points, fit_charges_col, fit_charges_col,
+                                      mask_fit, mask_fit, alpha, lam)
+
+    if verbose:
+        print(f'Initial score: {get_overlap_esp_jax_mask(ref_points, fit_points, ref_charges, fit_charges, mask_ref, mask_fit, alpha, lam):.3f}')
+
+    data_args = (ref_points, fit_points, ref_charges_col, fit_charges_col,
+                 mask_ref, mask_fit, alpha, lam, VAA, VBB)
+    se3_opt = _generic_optimize_loop(
+        se3_params,
+        data_args,
+        jit_val_grad_obj_ROCS_esp_precomputed_mask,
+        lr,
+        max_num_steps
+    )
+
+    SE3_transform = vmap_get_SE3_transform_jax(se3_opt)
+    aligned_points = vmap_apply_SE3_transform_jax(fit_points, SE3_transform)
+    scores = vmap_get_overlap_esp_jax_mask(ref_points, aligned_points,
+                                            ref_charges, fit_charges,
+                                            mask_ref, mask_fit, alpha, lam)
+
+    if verbose:
+        print(f'Optimized score max: {scores.max():.3f} | mean: {scores.mean():.3f}')
+
+    best_idx = jnp.argmax(scores)
+    return (aligned_points.at[best_idx].get(),
+            SE3_transform.at[best_idx].get(),
+            scores.at[best_idx].get())
 
 
 def _score_ROCS_overlay_with_avoid_precomputed_jax(ref_points, fit_points, alpha,

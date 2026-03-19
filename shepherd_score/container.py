@@ -1289,6 +1289,9 @@ class MoleculePairBatch:
     Pads all atom coordinate arrays to common max shapes so JAX's XLA compiler
     reuses the same compiled function for every pair, avoiding recompilation.
     This modifies each MoleculePair in-place (stores results on the pair).
+
+    This is currently optimized for CPU. A GPU-optimized version would
+    benefit from optimizing batches of pairs and using a GPU-optimized alignment.
     """
 
     def __init__(self, pairs: List[MoleculePair]):
@@ -1430,6 +1433,294 @@ class MoleculePairBatch:
                 pair.transform_vol = se3_transform
                 pair.sim_aligned_vol = score
 
+            aligned_list.append(aligned_pts)
+
+        return scores, aligned_list
+
+    def _pad_and_mask_vol_esp(self, no_H: bool = True):
+        """Extract, pad, and create masks for volumetric ESP alignment.
+
+        Does NOT modify the pair objects. Returns padded arrays and masks.
+
+        Parameters
+        ----------
+        no_H : bool
+            If True, use heavy-atom positions and non-H partial charges.
+            If False, use all-atom positions and all partial charges.
+
+        Returns
+        -------
+        entries : list of tuples
+            Each tuple is (ref_pos_pad, fit_pos_pad, ref_ch_pad, fit_ch_pad,
+                           mask_ref, mask_fit, orig_ref_len, orig_fit_len).
+        max_ref_len : int
+        max_fit_len : int
+        """
+        if no_H:
+            ref_pos_arrays = [p.ref_molec.atom_pos for p in self.pairs]
+            fit_pos_arrays = [p.fit_molec.atom_pos for p in self.pairs]
+            ref_ch_arrays = [p.ref_molec.partial_charges[p.ref_molec._nonH_atoms_idx]
+                             for p in self.pairs]
+            fit_ch_arrays = [p.fit_molec.partial_charges[p.fit_molec._nonH_atoms_idx]
+                             for p in self.pairs]
+        else:
+            ref_pos_arrays = [p.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                              for p in self.pairs]
+            fit_pos_arrays = [p.fit_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                              for p in self.pairs]
+            ref_ch_arrays = [p.ref_molec.partial_charges for p in self.pairs]
+            fit_ch_arrays = [p.fit_molec.partial_charges for p in self.pairs]
+
+        max_ref_len = max(a.shape[0] for a in ref_pos_arrays)
+        max_fit_len = max(a.shape[0] for a in fit_pos_arrays)
+
+        entries = []
+        for ref_pos, fit_pos, ref_ch, fit_ch in zip(ref_pos_arrays, fit_pos_arrays,
+                                                      ref_ch_arrays, fit_ch_arrays):
+            orig_ref = ref_pos.shape[0]
+            orig_fit = fit_pos.shape[0]
+
+            ref_pos_pad = np.zeros((max_ref_len, 3), dtype=np.float32)
+            ref_pos_pad[:orig_ref] = ref_pos
+            mask_ref = np.zeros(max_ref_len, dtype=np.float32)
+            mask_ref[:orig_ref] = 1.0
+
+            fit_pos_pad = np.zeros((max_fit_len, 3), dtype=np.float32)
+            fit_pos_pad[:orig_fit] = fit_pos
+            mask_fit = np.zeros(max_fit_len, dtype=np.float32)
+            mask_fit[:orig_fit] = 1.0
+
+            ref_ch_pad = np.zeros(max_ref_len, dtype=np.float32)
+            ref_ch_pad[:orig_ref] = ref_ch
+            fit_ch_pad = np.zeros(max_fit_len, dtype=np.float32)
+            fit_ch_pad[:orig_fit] = fit_ch
+
+            entries.append((ref_pos_pad, fit_pos_pad, ref_ch_pad, fit_ch_pad,
+                            mask_ref, mask_fit, orig_ref, orig_fit))
+
+        return entries, max_ref_len, max_fit_len
+
+    def align_with_vol_esp(self,
+                           lam: float,
+                           no_H: bool = True,
+                           num_repeats: int = 50,
+                           trans_init: bool = False,
+                           lr: float = 0.1,
+                           max_num_steps: int = 200,
+                           verbose: bool = False
+                           ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs using padded masked volumetric ESP similarity via JAX.
+
+        Because all padded arrays have the same shape, JAX's XLA compiler
+        reuses one compiled kernel for every pair — no recompilation overhead.
+
+        Results are stored in-place on each MoleculePair:
+        - ``pair.transform_vol_esp_noH`` / ``pair.sim_aligned_vol_esp_noH`` (when ``no_H=True``)
+        - ``pair.transform_vol_esp``     / ``pair.sim_aligned_vol_esp``      (when ``no_H=False``)
+
+        Parameters
+        ----------
+        lam : float
+            Partial charge weighting parameter. Typically 0.1 for volumetric.
+        no_H : bool
+            Whether to exclude hydrogens. Default is True.
+        num_repeats : int
+            Number of SE(3) initializations per pair. Default is 50.
+        trans_init : bool
+            If True, initialize translations to each ref atom position. Default is False.
+        lr : float
+            Optimizer learning rate. Default is 0.1.
+        max_num_steps : int
+            Maximum optimization steps. Default is 200.
+        verbose : bool
+            Print scores per pair. Default is False.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Scores for each pair. Shape: (N,).
+        aligned_list : list of np.ndarray
+            Aligned fit atom coordinates (unpadded) for each pair.
+        """
+        try:
+            import jax.numpy as jnp
+        except ImportError as exc:
+            raise ImportError(
+                'JAX is required for MoleculePairBatch.align_with_vol_esp. '
+                'Install it with: pip install "shepherd-score[jax]"'
+            ) from exc
+
+        from .alignment_jax import optimize_ROCS_esp_overlay_jax_mask
+
+        entries, _, _ = self._pad_and_mask_vol_esp(no_H=no_H)
+        aligned_list = []
+        scores = np.zeros((len(self.pairs),))
+
+        for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
+            (ref_pos_pad, fit_pos_pad, ref_ch_pad, fit_ch_pad,
+             mask_ref, mask_fit, orig_ref, orig_fit) = entry
+
+            trans_centers = None
+            if trans_init:
+                if no_H:
+                    trans_centers = pair.ref_molec.atom_pos
+                else:
+                    trans_centers = pair.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+
+            aligned_pts, se3_transform, score = optimize_ROCS_esp_overlay_jax_mask(
+                ref_points=jnp.array(ref_pos_pad),
+                fit_points=jnp.array(fit_pos_pad),
+                ref_charges=jnp.array(ref_ch_pad),
+                fit_charges=jnp.array(fit_ch_pad),
+                mask_ref=jnp.array(mask_ref),
+                mask_fit=jnp.array(mask_fit),
+                alpha=0.81,
+                lam=lam,
+                num_repeats=num_repeats,
+                trans_centers=trans_centers,
+                lr=lr,
+                max_num_steps=max_num_steps,
+                verbose=verbose,
+            )
+
+            se3_transform = np.array(se3_transform)
+            score = np.array(score)
+            aligned_pts = np.array(aligned_pts)[:orig_fit]
+            scores[i] = score
+
+            if no_H:
+                pair.transform_vol_esp_noH = se3_transform
+                pair.sim_aligned_vol_esp_noH = score
+            else:
+                pair.transform_vol_esp = se3_transform
+                pair.sim_aligned_vol_esp = score
+
+            aligned_list.append(aligned_pts)
+
+        return scores, aligned_list
+
+    def align_with_surf(self,
+                        alpha: float,
+                        num_repeats: int = 50,
+                        trans_init: bool = False,
+                        lr: float = 0.1,
+                        max_num_steps: int = 200,
+                        use_jax: bool = True,
+                        use_analytical: bool = True,
+                        verbose: bool = False
+                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs using surface similarity by delegating to MoleculePair.
+
+        Surface arrays are same-sized across all pairs so no padding is needed.
+        Results are stored in-place on each MoleculePair:
+        - ``pair.transform_surf`` and ``pair.sim_aligned_surf``
+
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        num_repeats : int
+            Number of SE(3) initializations per pair. Default is 50.
+        trans_init : bool
+            Apply translation initialization for alignment. Default is False.
+        lr : float
+            Optimizer learning rate. Default is 0.1.
+        max_num_steps : int
+            Maximum optimization steps. Default is 200.
+        use_jax : bool
+            Whether to use JAX backend. Default is True.
+        use_analytical : bool
+            Whether to use analytical gradients (PyTorch only). Default is True.
+        verbose : bool
+            Print scores per pair. Default is False.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Scores for each pair. Shape: (N,).
+        aligned_list : list of np.ndarray
+            Aligned fit surface coordinates for each pair.
+        """
+        aligned_list = []
+        scores = np.zeros((len(self.pairs),))
+
+        for i, pair in enumerate(self.pairs):
+            aligned_pts = pair.align_with_surf(
+                alpha=alpha,
+                num_repeats=num_repeats,
+                trans_init=trans_init,
+                lr=lr,
+                max_num_steps=max_num_steps,
+                use_jax=use_jax,
+                use_analytical=use_analytical,
+                verbose=verbose,
+            )
+            scores[i] = float(pair.sim_aligned_surf)
+            aligned_list.append(aligned_pts)
+
+        return scores, aligned_list
+
+    def align_with_esp(self,
+                       alpha: float,
+                       lam: float = 0.3,
+                       num_repeats: int = 50,
+                       trans_init: bool = False,
+                       lr: float = 0.1,
+                       max_num_steps: int = 200,
+                       use_jax: bool = True,
+                       use_analytical: bool = True,
+                       verbose: bool = False
+                       ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs using ESP+surface similarity by delegating to MoleculePair.
+
+        Surface arrays are same-sized across all pairs so no padding is needed.
+        Results are stored in-place on each MoleculePair:
+        - ``pair.transform_esp`` and ``pair.sim_aligned_esp``
+
+        Parameters
+        ----------
+        alpha : float
+            Gaussian width parameter for overlap.
+        lam : float
+            Weighting factor for ESP scoring. Scaled internally. Default is 0.3.
+        num_repeats : int
+            Number of SE(3) initializations per pair. Default is 50.
+        trans_init : bool
+            Apply translation initialization for alignment. Default is False.
+        lr : float
+            Optimizer learning rate. Default is 0.1.
+        max_num_steps : int
+            Maximum optimization steps. Default is 200.
+        use_jax : bool
+            Whether to use JAX backend. Default is True.
+        use_analytical : bool
+            Whether to use analytical gradients (PyTorch only). Default is True.
+        verbose : bool
+            Print scores per pair. Default is False.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Scores for each pair. Shape: (N,).
+        aligned_list : list of np.ndarray
+            Aligned fit surface coordinates for each pair.
+        """
+        aligned_list = []
+        scores = np.zeros((len(self.pairs),))
+
+        for i, pair in enumerate(self.pairs):
+            aligned_pts = pair.align_with_esp(
+                alpha=alpha,
+                lam=lam,
+                num_repeats=num_repeats,
+                trans_init=trans_init,
+                lr=lr,
+                max_num_steps=max_num_steps,
+                use_jax=use_jax,
+                use_analytical=use_analytical,
+                verbose=verbose,
+            )
+            scores[i] = float(pair.sim_aligned_esp)
             aligned_list.append(aligned_pts)
 
         return scores, aligned_list

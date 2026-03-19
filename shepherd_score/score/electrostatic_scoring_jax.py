@@ -6,7 +6,7 @@ JAX VERSIONS
 from shepherd_score.score.constants import COULOMB_SCALING, LAM_SCALING
 from jax import jit, Array
 import jax.numpy as jnp
-from shepherd_score.score.gaussian_overlap_jax import jax_sq_cdist, get_overlap_jax, jax_cdist
+from shepherd_score.score.gaussian_overlap_jax import jax_sq_cdist, get_overlap_jax, jax_cdist, _mask_prod_jax
 
 
 def VAB_2nd_order_esp_jax(centers_1: Array,
@@ -26,6 +26,85 @@ def VAB_2nd_order_esp_jax(centers_1: Array,
                            * jnp.exp(-C2/lam)
                           )
     return VAB_2nd_order
+
+
+def VAB_2nd_order_esp_jax_mask(centers_1: Array,
+                              centers_2: Array,
+                              charges_1: Array,
+                              charges_2: Array,
+                              mask_1: Array,
+                              mask_2: Array,
+                              alpha: float,
+                              lam: float
+                              ) -> Array:
+    """ 2nd order volume overlap of AB with masking for padded entries.
+    charges expected as shape (-1, 1). """
+    R2 = jax_sq_cdist(centers_1, centers_2)
+    C2 = jax_sq_cdist(charges_1, charges_2)
+    M2 = _mask_prod_jax(mask_1, mask_2)
+    VAB_2nd_order = jnp.sum(M2 * jnp.pi**(1.5) \
+                           * jnp.exp(-(alpha / 2) * R2) \
+                           / ((2*alpha)**(1.5))\
+                           * jnp.exp(-C2/lam)
+                          )
+    return VAB_2nd_order
+
+
+def shape_tanimoto_esp_jax_mask(centers_1: Array,
+                                centers_2: Array,
+                                charges_1: Array,
+                                charges_2: Array,
+                                mask_1: Array,
+                                mask_2: Array,
+                                alpha: float,
+                                lam: float
+                                ) -> Array:
+    """ Compute Tanimoto ESP similarity with masking for padded entries. """
+    VAA = VAB_2nd_order_esp_jax_mask(centers_1, centers_1, charges_1, charges_1, mask_1, mask_1, alpha, lam)
+    VBB = VAB_2nd_order_esp_jax_mask(centers_2, centers_2, charges_2, charges_2, mask_2, mask_2, alpha, lam)
+    VAB = VAB_2nd_order_esp_jax_mask(centers_1, centers_2, charges_1, charges_2, mask_1, mask_2, alpha, lam)
+    return VAB / (VAA + VBB - VAB)
+
+
+@jit
+def get_overlap_esp_jax_mask(centers_1: Array,
+                             centers_2: Array,
+                             charges_1: Array,
+                             charges_2: Array,
+                             mask_1: Array,
+                             mask_2: Array,
+                             alpha: float = 0.81,
+                             lam: float = 0.3*LAM_SCALING
+                             ) -> Array:
+    """
+    Jitted Jax function. Masked version of get_overlap_esp_jax.
+    Padding entries indicated by mask arrays are excluded from the overlap computation.
+
+    Parameters
+    ----------
+    centers_1 : Array (N, 3)
+    centers_2 : Array (N, 3)
+    charges_1 : Array (N,) or (N, 1)
+    charges_2 : Array (N,) or (N, 1)
+    mask_1 : Array (N,)
+        Binary mask: 1 for real entries, 0 for padding.
+    mask_2 : Array (N,)
+        Binary mask: 1 for real entries, 0 for padding.
+    alpha : float
+    lam : float
+
+    Returns
+    -------
+    Array scalar
+        Tanimoto ESP similarity.
+    """
+    charges_1 = jnp.reshape(charges_1, (-1, 1))
+    charges_2 = jnp.reshape(charges_2, (-1, 1))
+    tanimoto = shape_tanimoto_esp_jax_mask(centers_1, centers_2,
+                                           charges_1, charges_2,
+                                           mask_1, mask_2,
+                                           alpha, lam)
+    return tanimoto
 
 
 def shape_tanimoto_esp_jax(centers_1: Array,
