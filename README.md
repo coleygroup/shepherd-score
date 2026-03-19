@@ -68,7 +68,7 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 │   │   ├── gaussian_overlap.py
 │   │   └── pharmacophore_scoring.py
 │   ├── conformer_generation.py           # RDKit and xtb related functions for conformers
-│   ├── container.py                      # Molecule and MoleculePair classes
+│   ├── container/                        # Molecule, MoleculePair, MoleculePairBatch classes
 │   ├── extract_profiles.py               # Functions to extract interaction profiles
 │   ├── generate_point_cloud.py
 │   ├── objective.py                      # Objective function used for REINVENT
