@@ -36,7 +36,6 @@ def _make_mol_pair(smiles_ref, smiles_fit):
         m = Chem.MolFromSmiles(smi)
         m = Chem.AddHs(m)
         AllChem.EmbedMolecule(m, AllChem.ETKDGv3())
-        m = Chem.RemoveHs(m)
         return m
 
     return MoleculePair(_mol(smiles_ref), _mol(smiles_fit))
@@ -52,7 +51,6 @@ def _make_mol_pair_with_pharm(smiles_ref, smiles_fit):
         m = Chem.MolFromSmiles(smi)
         m = Chem.AddHs(m)
         AllChem.EmbedMolecule(m, AllChem.ETKDGv3())
-        m = Chem.RemoveHs(m)
         return Molecule(m, pharm_multi_vector=False)
 
     ref_mol = _mol_obj(smiles_ref)
@@ -246,11 +244,9 @@ def test_masked_pharm_alignment_matches_unmasked():
     from rdkit.Chem import AllChem
     from shepherd_score.container import Molecule
 
-    # Acetaminophen: aromatic + HBD (OH, NH) + HBA (O) -> enough 3D pharmacophores
-    m = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)O")
+    m = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OCCCC")
     m = Chem.AddHs(m)
     AllChem.EmbedMolecule(m, AllChem.ETKDGv3())
-    m = Chem.RemoveHs(m)
     mol = Molecule(m, pharm_multi_vector=False)
 
     pt = jnp.array(mol.pharm_types)
