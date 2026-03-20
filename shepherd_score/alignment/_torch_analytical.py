@@ -196,7 +196,7 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
     analytical gradients with PyTorch's Adam optimizer, eliminating PyTorch autograd overhead.
 
     Supports ``similarity='tanimoto'``, ``'tversky'``, ``'tversky_ref'``, and
-    ``'tversky_fit'``. Does not support ``extended_points=True``.
+    ``'tversky_fit'``, and ``extended_points=True``.
 
     Parameters
     ----------
@@ -236,11 +236,6 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
             "Expected one of: 'tanimoto', 'tversky', 'tversky_ref', 'tversky_fit'."
         )
 
-    if extended_points:
-        raise NotImplementedError(
-            "Analytical gradients do not support extended_points=True."
-        )
-
     # Initialize SE(3) parameters (without requires_grad)
     if trans_centers is None:
         se3_params = _initialize_se3_params(ref_points=ref_anchors, fit_points=fit_anchors, num_repeats=num_repeats)
@@ -254,7 +249,8 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
 
     # Precompute self-overlaps (invariant to SE(3))
     VAA_total, VBB_total = compute_self_overlaps_pharm(
-        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors,
+        extended_points=extended_points, only_extended=only_extended,
     )
 
     # Replicate data for batched computation
@@ -294,6 +290,7 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
                 ref_anchors_rep, fit_anchors_rep, ref_vectors_rep, fit_vectors_rep,
                 VAA_total, VBB_total,
                 similarity=sim_lower, sigma=sigma,
+                extended_points=extended_points, only_extended=only_extended,
             )
 
         optimizer.zero_grad()
@@ -324,7 +321,9 @@ def optimize_pharm_overlay_analytical(ref_pharms: torch.Tensor,
         anchors_2=aligned_anchors,
         vectors_1=ref_vectors_rep,
         vectors_2=aligned_vectors,
-        similarity=similarity
+        similarity=similarity,
+        extended_points=extended_points,
+        only_extended=only_extended,
     )
 
     if num_repeats == 1:
