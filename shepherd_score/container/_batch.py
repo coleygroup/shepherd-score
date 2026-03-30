@@ -1,53 +1,18 @@
 """MoleculePairBatch: batch of MoleculePair objects for fast sequential JAX alignment."""
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
 from shepherd_score.container._core import MoleculePair
-
-
-def _pad_arrays(arrays, pad_value=0.0, dtype=np.float32):
-    """Pad a list of arrays to the same max length along axis 0.
-
-    Parameters
-    ----------
-    arrays : list of np.ndarray
-        Arrays to pad; each shape (N,) or (N, k).
-    pad_value : float
-        Fill value for padding regions.
-    dtype : numpy dtype
-        Output dtype.
-
-    Returns
-    -------
-    padded : list of np.ndarray
-        Padded arrays, all shape (max_len,) or (max_len, k).
-    masks : list of np.ndarray
-        Binary float32 masks, each shape (max_len,).
-    orig_lens : list of int
-        Original lengths before padding.
-    max_len : int
-    """
-    max_len = max(a.shape[0] for a in arrays)
-    is_2d = arrays[0].ndim == 2
-    cols = arrays[0].shape[1] if is_2d else None
-
-    padded, masks, orig_lens = [], [], []
-    for a in arrays:
-        orig_len = a.shape[0]
-        orig_lens.append(orig_len)
-        if is_2d:
-            p = np.full((max_len, cols), pad_value, dtype=dtype)
-        else:
-            p = np.full(max_len, pad_value, dtype=dtype)
-        p[:orig_len] = a.astype(dtype)
-        padded.append(p)
-
-        mask = np.zeros(max_len, dtype=np.float32)
-        mask[:orig_len] = 1.0
-        masks.append(mask)
-
-    return padded, masks, orig_lens, max_len
+from shepherd_score.container._batch_utils import (
+    _pad_arrays,
+    _dispatch_parallel,
+    _align_vol_worker,
+    _align_vol_esp_worker,
+    _align_surf_worker,
+    _align_esp_worker,
+    _align_pharm_worker,
+)
 
 
 class MoleculePairBatch:
@@ -132,11 +97,20 @@ class MoleculePairBatch:
                        trans_init: bool = False,
                        lr: float = 0.1,
                        max_num_steps: int = 200,
-                       verbose: bool = False) -> Tuple[np.ndarray, List[np.ndarray]]:
+                       num_workers: int = 1,
+                       verbose: bool = False,
+                       ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using padded masked volumetric similarity via JAX.
 
         Because all padded arrays have the same shape, JAX's XLA compiler
         reuses one compiled kernel for every pair — no recompilation overhead.
+
+        When ``num_workers > 1`` the pairs are split into chunks and processed in
+        parallel using ``multiprocessing`` with a ``'spawn'`` start method (safe
+        for JAX, which is multithreaded and can deadlock under ``fork``).  Each
+        worker independently pads its chunk and runs a fresh JAX session.
+        Results are gathered and written back to the pair objects in original
+        order, identical to the sequential case.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_vol_noH`` / ``pair.sim_aligned_vol_noH`` (when ``no_H=True``)
@@ -154,6 +128,12 @@ class MoleculePairBatch:
             Optimizer learning rate. Default is 0.1.
         max_num_steps : int
             Maximum optimization steps. Default is 200.
+        num_workers : int
+            Number of parallel worker processes.  ``1`` (default) runs
+            sequentially in-process.  Values greater than ``len(self.pairs)``
+            are clamped to ``len(self.pairs)``.  Use
+            ``multiprocessing.cpu_count()`` or a fraction thereof for
+            CPU-bound workloads.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -172,48 +152,84 @@ class MoleculePairBatch:
                 'Install it with: pip install "shepherd-score[jax]"'
             ) from exc
 
-        from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax_mask
+        # build raw (unpadded) position arrays for every pair
+        raw_refs, raw_fits, trans_centers_list = [], [], []
+        for pair in self.pairs:
+            if no_H:
+                ref_pos = pair.ref_molec.atom_pos
+                fit_pos = pair.fit_molec.atom_pos
+            else:
+                ref_pos = pair.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                fit_pos = pair.fit_molec.mol.GetConformer().GetPositions().astype(np.float32)
+            raw_refs.append(ref_pos)
+            raw_fits.append(fit_pos)
 
-        entries, _, _ = self._pad_and_mask_vol(no_H=no_H)
-        aligned_list = []
-        scores = np.zeros((len(self.pairs),))
-
-        for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
-            ref_padded, fit_padded, mask_ref, mask_fit, orig_ref, orig_fit = entry
-
-            trans_centers = None
+            tc = None
             if trans_init:
-                if no_H:
-                    trans_centers = pair.ref_molec.atom_pos
-                else:
-                    trans_centers = pair.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                tc = ref_pos  # already numpy; worker copies implicitly
+            trans_centers_list.append(tc)
 
-            aligned_pts, se3_transform, score = optimize_ROCS_overlay_jax_mask(
-                ref_points=jnp.array(ref_padded),
-                fit_points=jnp.array(fit_padded),
-                mask_ref=jnp.array(mask_ref),
-                mask_fit=jnp.array(mask_fit),
-                alpha=0.81,
-                num_repeats=num_repeats,
-                trans_centers=trans_centers,
-                lr=lr,
-                max_num_steps=max_num_steps,
-                verbose=verbose,
+        n_pairs = len(self.pairs)
+        scores = np.zeros(n_pairs)
+        aligned_list = [None] * n_pairs
+
+        if num_workers > 1: # parallel
+            pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
+            ref_sizes = np.array([len(r) for r in raw_refs])
+            fit_sizes = np.array([len(f) for f in raw_fits])
+            # Primary key: max(ref, fit) — dominates padding; secondary: min.
+            sort_keys = np.array([np.minimum(ref_sizes, fit_sizes),
+                                   np.maximum(ref_sizes, fit_sizes)])
+            index_splits, chunk_results = _dispatch_parallel(
+                pair_data, sort_keys, _align_vol_worker, num_workers,
+                (num_repeats, lr, max_num_steps, verbose),
             )
 
-            se3_transform = np.array(se3_transform)
-            score = np.array(score)
-            aligned_pts = np.array(aligned_pts)[:orig_fit]
-            scores[i] = score
+            for idx_list, chunk_result in zip(index_splits, chunk_results):
+                for global_i, (score, se3_transform, aligned_pts) in zip(idx_list, chunk_result):
+                    scores[global_i] = score
+                    aligned_list[global_i] = aligned_pts
+                    pair = self.pairs[global_i]
+                    if no_H:
+                        pair.transform_vol_noH = se3_transform
+                        pair.sim_aligned_vol_noH = score
+                    else:
+                        pair.transform_vol = se3_transform
+                        pair.sim_aligned_vol = score
 
-            if no_H:
-                pair.transform_vol_noH = se3_transform
-                pair.sim_aligned_vol_noH = score
-            else:
-                pair.transform_vol = se3_transform
-                pair.sim_aligned_vol = score
+        else: # sequential
+            from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax_mask
 
-            aligned_list.append(aligned_pts)
+            ref_padded_all, masks_ref, _orig_refs, _ = _pad_arrays(raw_refs)
+            fit_padded_all, masks_fit, orig_fits, _ = _pad_arrays(raw_fits)
+
+            for i, pair in enumerate(self.pairs):
+                aligned_pts, se3_transform, score = optimize_ROCS_overlay_jax_mask(
+                    ref_points=jnp.array(ref_padded_all[i]),
+                    fit_points=jnp.array(fit_padded_all[i]),
+                    mask_ref=jnp.array(masks_ref[i]),
+                    mask_fit=jnp.array(masks_fit[i]),
+                    alpha=0.81,
+                    num_repeats=num_repeats,
+                    trans_centers=trans_centers_list[i],
+                    lr=lr,
+                    max_num_steps=max_num_steps,
+                    verbose=verbose,
+                )
+
+                se3_transform = np.array(se3_transform)
+                score = float(np.array(score))
+                aligned_pts = np.array(aligned_pts)[:orig_fits[i]]
+                scores[i] = score
+
+                if no_H:
+                    pair.transform_vol_noH = se3_transform
+                    pair.sim_aligned_vol_noH = score
+                else:
+                    pair.transform_vol = se3_transform
+                    pair.sim_aligned_vol = score
+
+                aligned_list[i] = aligned_pts
 
         return scores, aligned_list
 
@@ -224,12 +240,18 @@ class MoleculePairBatch:
                            trans_init: bool = False,
                            lr: float = 0.1,
                            max_num_steps: int = 200,
-                           verbose: bool = False
+                           num_workers: int = 1,
+                           verbose: bool = False,
                            ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using padded masked volumetric ESP similarity via JAX.
 
         Because all padded arrays have the same shape, JAX's XLA compiler
         reuses one compiled kernel for every pair — no recompilation overhead.
+
+        When ``num_workers > 1`` the pairs are split into size-sorted chunks
+        and processed in parallel using ``multiprocessing`` with a ``'spawn'``
+        start method (safe for JAX). See ``align_with_vol`` for details on the
+        multiprocessing strategy.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_vol_esp_noH`` / ``pair.sim_aligned_vol_esp_noH`` (when ``no_H=True``)
@@ -249,6 +271,10 @@ class MoleculePairBatch:
             Optimizer learning rate. Default is 0.1.
         max_num_steps : int
             Maximum optimization steps. Default is 200.
+        num_workers : int
+            Number of parallel worker processes. ``1`` (default) runs
+            sequentially in-process. Values greater than ``len(self.pairs)``
+            are clamped to ``len(self.pairs)``.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -267,52 +293,91 @@ class MoleculePairBatch:
                 'Install it with: pip install "shepherd-score[jax]"'
             ) from exc
 
-        from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax_mask
+        # Build raw (unpadded) per-pair data tuples (plain numpy — picklable).
+        raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list = [], [], [], [], []
+        for pair in self.pairs:
+            if no_H:
+                ref_pos = pair.ref_molec.atom_pos
+                fit_pos = pair.fit_molec.atom_pos
+                ref_ch = pair.ref_molec.partial_charges[pair.ref_molec._nonH_atoms_idx]
+                fit_ch = pair.fit_molec.partial_charges[pair.fit_molec._nonH_atoms_idx]
+            else:
+                ref_pos = pair.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                fit_pos = pair.fit_molec.mol.GetConformer().GetPositions().astype(np.float32)
+                ref_ch = pair.ref_molec.partial_charges
+                fit_ch = pair.fit_molec.partial_charges
+            raw_refs.append(ref_pos)
+            raw_fits.append(fit_pos)
+            raw_ref_ch.append(ref_ch)
+            raw_fit_ch.append(fit_ch)
+            tc = ref_pos if trans_init else None
+            trans_centers_list.append(tc)
 
-        entries, _, _ = self._pad_and_mask_vol(no_H=no_H, include_charges=True)
-        aligned_list = []
-        scores = np.zeros((len(self.pairs),))
+        n_pairs = len(self.pairs)
+        scores = np.zeros(n_pairs)
+        aligned_list = [None] * n_pairs
 
-        for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
-            (ref_pos_pad, fit_pos_pad, ref_ch_pad, fit_ch_pad,
-             mask_ref, mask_fit, orig_ref, orig_fit) = entry
-
-            trans_centers = None
-            if trans_init:
-                if no_H:
-                    trans_centers = pair.ref_molec.atom_pos
-                else:
-                    trans_centers = pair.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
-
-            aligned_pts, se3_transform, score = optimize_ROCS_esp_overlay_jax_mask(
-                ref_points=jnp.array(ref_pos_pad),
-                fit_points=jnp.array(fit_pos_pad),
-                ref_charges=jnp.array(ref_ch_pad),
-                fit_charges=jnp.array(fit_ch_pad),
-                mask_ref=jnp.array(mask_ref),
-                mask_fit=jnp.array(mask_fit),
-                alpha=0.81,
-                lam=lam,
-                num_repeats=num_repeats,
-                trans_centers=trans_centers,
-                lr=lr,
-                max_num_steps=max_num_steps,
-                verbose=verbose,
+        if num_workers > 1: # parallel
+            pair_data = list(zip(raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list))
+            ref_sizes = np.array([len(r) for r in raw_refs])
+            fit_sizes = np.array([len(f) for f in raw_fits])
+            sort_keys = np.array([np.minimum(ref_sizes, fit_sizes),
+                                   np.maximum(ref_sizes, fit_sizes)])
+            index_splits, chunk_results = _dispatch_parallel(
+                pair_data, sort_keys, _align_vol_esp_worker, num_workers,
+                (lam, num_repeats, lr, max_num_steps, verbose),
             )
 
-            se3_transform = np.array(se3_transform)
-            score = np.array(score)
-            aligned_pts = np.array(aligned_pts)[:orig_fit]
-            scores[i] = score
+            for idx_list, chunk_result in zip(index_splits, chunk_results):
+                for global_i, (score, se3_transform, aligned_pts) in zip(idx_list, chunk_result):
+                    scores[global_i] = score
+                    aligned_list[global_i] = aligned_pts
+                    pair = self.pairs[global_i]
+                    if no_H:
+                        pair.transform_vol_esp_noH = se3_transform
+                        pair.sim_aligned_vol_esp_noH = score
+                    else:
+                        pair.transform_vol_esp = se3_transform
+                        pair.sim_aligned_vol_esp = score
 
-            if no_H:
-                pair.transform_vol_esp_noH = se3_transform
-                pair.sim_aligned_vol_esp_noH = score
-            else:
-                pair.transform_vol_esp = se3_transform
-                pair.sim_aligned_vol_esp = score
+        else: # sequential
+            from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax_mask
 
-            aligned_list.append(aligned_pts)
+            ref_padded_all, masks_ref, _orig_refs, _ = _pad_arrays(raw_refs)
+            fit_padded_all, masks_fit, orig_fits, _ = _pad_arrays(raw_fits)
+            ref_ch_padded_all, _, _, _ = _pad_arrays(raw_ref_ch)
+            fit_ch_padded_all, _, _, _ = _pad_arrays(raw_fit_ch)
+
+            for i, pair in enumerate(self.pairs):
+                aligned_pts, se3_transform, score = optimize_ROCS_esp_overlay_jax_mask(
+                    ref_points=jnp.array(ref_padded_all[i]),
+                    fit_points=jnp.array(fit_padded_all[i]),
+                    ref_charges=jnp.array(ref_ch_padded_all[i]),
+                    fit_charges=jnp.array(fit_ch_padded_all[i]),
+                    mask_ref=jnp.array(masks_ref[i]),
+                    mask_fit=jnp.array(masks_fit[i]),
+                    alpha=0.81,
+                    lam=lam,
+                    num_repeats=num_repeats,
+                    trans_centers=trans_centers_list[i],
+                    lr=lr,
+                    max_num_steps=max_num_steps,
+                    verbose=verbose,
+                )
+
+                se3_transform = np.array(se3_transform)
+                score = float(np.array(score))
+                aligned_pts = np.array(aligned_pts)[:orig_fits[i]]
+                scores[i] = score
+
+                if no_H:
+                    pair.transform_vol_esp_noH = se3_transform
+                    pair.sim_aligned_vol_esp_noH = score
+                else:
+                    pair.transform_vol_esp = se3_transform
+                    pair.sim_aligned_vol_esp = score
+
+                aligned_list[i] = aligned_pts
 
         return scores, aligned_list
 
@@ -351,11 +416,16 @@ class MoleculePairBatch:
                         max_num_steps: int = 200,
                         use_jax: bool = True,
                         use_analytical: bool = True,
-                        verbose: bool = False
+                        num_workers: int = 1,
+                        verbose: bool = False,
                         ) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Align all pairs using surface similarity by delegating to MoleculePair.
+        """Align all pairs using surface similarity.
 
-        Surface arrays are same-sized across all pairs so no padding is needed.
+        Surface arrays are the same size across all pairs so no padding or
+        size-sorting is needed.  When ``num_workers > 1`` pairs are split into
+        equal chunks and processed in parallel using ``multiprocessing`` with a
+        ``'spawn'`` start method.
+
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_surf`` and ``pair.sim_aligned_surf``
 
@@ -375,6 +445,10 @@ class MoleculePairBatch:
             Whether to use JAX backend. Default is True.
         use_analytical : bool
             Whether to use analytical gradients (PyTorch only). Default is True.
+        num_workers : int
+            Number of parallel worker processes. ``1`` (default) runs
+            sequentially in-process. Values greater than ``len(self.pairs)``
+            are clamped to ``len(self.pairs)``.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -385,6 +459,31 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
+        if num_workers > 1: # parallel
+            n_pairs = len(self.pairs)
+            pair_data = [
+                (pair.ref_molec.surf_pos,
+                 pair.fit_molec.surf_pos,
+                 pair.ref_molec.atom_pos if trans_init else None)
+                for pair in self.pairs
+            ]
+            index_splits, chunk_results = _dispatch_parallel(
+                pair_data, None, _align_surf_worker, num_workers,
+                (alpha, num_repeats, lr, max_num_steps, use_jax, use_analytical, verbose),
+            )
+
+            scores = np.zeros(n_pairs)
+            aligned_list = [None] * n_pairs
+            for idx_list, chunk_result in zip(index_splits, chunk_results):
+                for global_i, (score, se3_transform, aligned_pts) in zip(idx_list, chunk_result):
+                    scores[global_i] = score
+                    aligned_list[global_i] = aligned_pts
+                    pair = self.pairs[global_i]
+                    pair.transform_surf = se3_transform
+                    pair.sim_aligned_surf = score
+            return scores, aligned_list
+
+        # sequential
         return self._delegate_alignment(
             'align_with_surf', 'sim_aligned_surf',
             alpha=alpha,
@@ -406,11 +505,16 @@ class MoleculePairBatch:
                        max_num_steps: int = 200,
                        use_jax: bool = True,
                        use_analytical: bool = True,
-                       verbose: bool = False
+                       num_workers: int = 1,
+                       verbose: bool = False,
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Align all pairs using ESP+surface similarity by delegating to MoleculePair.
+        """Align all pairs using ESP+surface similarity.
 
-        Surface arrays are same-sized across all pairs so no padding is needed.
+        Surface arrays are the same size across all pairs so no padding or
+        size-sorting is needed.  When ``num_workers > 1`` pairs are split into
+        equal chunks and processed in parallel using ``multiprocessing`` with a
+        ``'spawn'`` start method.
+
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_esp`` and ``pair.sim_aligned_esp``
 
@@ -432,6 +536,10 @@ class MoleculePairBatch:
             Whether to use JAX backend. Default is True.
         use_analytical : bool
             Whether to use analytical gradients (PyTorch only). Default is True.
+        num_workers : int
+            Number of parallel worker processes. ``1`` (default) runs
+            sequentially in-process. Values greater than ``len(self.pairs)``
+            are clamped to ``len(self.pairs)``.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -442,6 +550,37 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
+        if num_workers > 1: # parallel
+            from shepherd_score.score.constants import LAM_SCALING
+            lam_scaled = float(LAM_SCALING * lam)
+
+            n_pairs = len(self.pairs)
+            pair_data = [
+                (pair.ref_molec.surf_pos,
+                 pair.fit_molec.surf_pos,
+                 pair.ref_molec.surf_esp,
+                 pair.fit_molec.surf_esp,
+                 pair.ref_molec.atom_pos if trans_init else None)
+                for pair in self.pairs
+            ]
+            index_splits, chunk_results = _dispatch_parallel(
+                pair_data, None, _align_esp_worker, num_workers,
+                (alpha, lam_scaled, num_repeats, lr, max_num_steps,
+                 use_jax, use_analytical, verbose),
+            )
+
+            scores = np.zeros(n_pairs)
+            aligned_list = [None] * n_pairs
+            for idx_list, chunk_result in zip(index_splits, chunk_results):
+                for global_i, (score, se3_transform, aligned_pts) in zip(idx_list, chunk_result):
+                    scores[global_i] = score
+                    aligned_list[global_i] = aligned_pts
+                    pair = self.pairs[global_i]
+                    pair.transform_esp = se3_transform
+                    pair.sim_aligned_esp = score
+            return scores, aligned_list
+
+        # sequential
         return self._delegate_alignment(
             'align_with_esp', 'sim_aligned_esp',
             alpha=alpha,
@@ -526,12 +665,18 @@ class MoleculePairBatch:
                          trans_init: bool = False,
                          lr: float = 0.1,
                          max_num_steps: int = 200,
-                         verbose: bool = False
+                         num_workers: int = 1,
+                         verbose: bool = False,
                          ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
         """Align all pairs using padded masked pharmacophore similarity via JAX.
 
         Because all padded arrays have the same shape, JAX's XLA compiler
         reuses one compiled kernel for every pair — no recompilation overhead.
+
+        When ``num_workers > 1`` the pairs are split into size-sorted chunks and
+        processed in parallel using ``multiprocessing`` with a ``'spawn'`` start
+        method (safe for JAX). See ``align_with_vol`` for details on the
+        multiprocessing strategy.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_pharm`` and ``pair.sim_aligned_pharm``
@@ -552,6 +697,10 @@ class MoleculePairBatch:
             Optimizer learning rate.
         max_num_steps : int
             Maximum optimization steps.
+        num_workers : int
+            Number of parallel worker processes. ``1`` (default) runs
+            sequentially in-process. Values greater than ``len(self.pairs)``
+            are clamped to ``len(self.pairs)``.
         verbose : bool
             Print scores per pair.
 
@@ -572,55 +721,104 @@ class MoleculePairBatch:
                 'Install it with: pip install "shepherd-score[jax]"'
             ) from exc
 
-        from shepherd_score.alignment_jax import optimize_pharm_overlay_jax_vectorized_mask
+        # Validate pharmacophore data and collect raw arrays for all pairs.
+        for idx, pair in enumerate(self.pairs):
+            if (pair.ref_molec.pharm_types is None or
+                    pair.fit_molec.pharm_types is None):
+                raise ValueError(
+                    f'Pair {idx} is missing pharmacophore data. '
+                    'Create Molecule objects with pharm_multi_vector set to True or False.'
+                )
 
-        entries, _, _ = self._pad_and_mask_pharm()
-        aligned_anchors_list = []
-        aligned_vectors_list = []
-        scores = np.zeros((len(self.pairs),))
+        n_pairs = len(self.pairs)
+        scores = np.zeros(n_pairs)
+        aligned_anchors_list = [None] * n_pairs
+        aligned_vectors_list = [None] * n_pairs
 
-        for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
-            (ref_types_pad, fit_types_pad,
-             ref_ancs_pad, fit_ancs_pad,
-             ref_vecs_pad, fit_vecs_pad,
-             mask_ref, mask_fit,
-             orig_ref, orig_fit) = entry
+        # Build raw (unpadded) per-pair data tuples (plain numpy — picklable).
+        pair_data = []
+        for pair in self.pairs:
+            tc = pair.ref_molec.pharm_ancs if trans_init else None
+            pair_data.append((
+                pair.ref_molec.pharm_types,
+                pair.fit_molec.pharm_types,
+                pair.ref_molec.pharm_ancs,
+                pair.fit_molec.pharm_ancs,
+                pair.ref_molec.pharm_vecs,
+                pair.fit_molec.pharm_vecs,
+                tc,
+                pair.ref_molec.pharm_ancs,
+                pair.fit_molec.pharm_ancs,
+            ))
 
-            trans_centers = None
-            if trans_init:
-                trans_centers = pair.ref_molec.pharm_ancs
-
-            aligned_ancs, aligned_vecs, se3_transform, score = optimize_pharm_overlay_jax_vectorized_mask(
-                ref_pharms=jnp.array(ref_types_pad),
-                fit_pharms=jnp.array(fit_types_pad),
-                ref_anchors=jnp.array(ref_ancs_pad),
-                fit_anchors=jnp.array(fit_ancs_pad),
-                ref_vectors=jnp.array(ref_vecs_pad),
-                fit_vectors=jnp.array(fit_vecs_pad),
-                mask_ref=jnp.array(mask_ref),
-                mask_fit=jnp.array(mask_fit),
-                similarity=similarity,
-                extended_points=extended_points,
-                only_extended=only_extended,
-                num_repeats=num_repeats,
-                trans_centers=trans_centers,
-                init_ref_anchors=pair.ref_molec.pharm_ancs,
-                init_fit_anchors=pair.fit_molec.pharm_ancs,
-                lr=lr,
-                max_num_steps=max_num_steps,
-                verbose=verbose,
+        if num_workers > 1: # parallel
+            ref_sizes = np.array([len(d[2]) for d in pair_data])  # ref_ancs
+            fit_sizes = np.array([len(d[3]) for d in pair_data])  # fit_ancs
+            # Primary key: max(ref, fit) — dominates padding; secondary: min.
+            sort_keys = np.array([np.minimum(ref_sizes, fit_sizes),
+                                   np.maximum(ref_sizes, fit_sizes)])
+            index_splits, chunk_results = _dispatch_parallel(
+                pair_data, sort_keys, _align_pharm_worker, num_workers,
+                (similarity, extended_points, only_extended,
+                 num_repeats, lr, max_num_steps, verbose),
             )
 
-            se3_transform = np.array(se3_transform)
-            score = float(np.array(score))
-            aligned_ancs = np.array(aligned_ancs)[:orig_fit]
-            aligned_vecs = np.array(aligned_vecs)[:orig_fit]
+            for idx_list, chunk_result in zip(index_splits, chunk_results):
+                for global_i, (score, se3_transform, aligned_ancs, aligned_vecs) in zip(
+                    idx_list, chunk_result
+                ):
+                    scores[global_i] = score
+                    aligned_anchors_list[global_i] = aligned_ancs
+                    aligned_vectors_list[global_i] = aligned_vecs
+                    pair = self.pairs[global_i]
+                    pair.transform_pharm = se3_transform
+                    pair.sim_aligned_pharm = score
 
-            scores[i] = score
-            pair.transform_pharm = se3_transform
-            pair.sim_aligned_pharm = score
+        else: # sequential
+            from shepherd_score.alignment_jax import optimize_pharm_overlay_jax_vectorized_mask
 
-            aligned_anchors_list.append(aligned_ancs)
-            aligned_vectors_list.append(aligned_vecs)
+            entries, _, _ = self._pad_and_mask_pharm()
+
+            for i, (pair, entry) in enumerate(zip(self.pairs, entries)):
+                (ref_types_pad, fit_types_pad,
+                 ref_ancs_pad, fit_ancs_pad,
+                 ref_vecs_pad, fit_vecs_pad,
+                 mask_ref, mask_fit,
+                 _orig_ref, orig_fit) = entry
+
+                trans_centers = pair.ref_molec.pharm_ancs if trans_init else None
+
+                aligned_ancs, aligned_vecs, se3_transform, score = \
+                    optimize_pharm_overlay_jax_vectorized_mask(
+                        ref_pharms=jnp.array(ref_types_pad),
+                        fit_pharms=jnp.array(fit_types_pad),
+                        ref_anchors=jnp.array(ref_ancs_pad),
+                        fit_anchors=jnp.array(fit_ancs_pad),
+                        ref_vectors=jnp.array(ref_vecs_pad),
+                        fit_vectors=jnp.array(fit_vecs_pad),
+                        mask_ref=jnp.array(mask_ref),
+                        mask_fit=jnp.array(mask_fit),
+                        similarity=similarity,
+                        extended_points=extended_points,
+                        only_extended=only_extended,
+                        num_repeats=num_repeats,
+                        trans_centers=trans_centers,
+                        init_ref_anchors=pair.ref_molec.pharm_ancs,
+                        init_fit_anchors=pair.fit_molec.pharm_ancs,
+                        lr=lr,
+                        max_num_steps=max_num_steps,
+                        verbose=verbose,
+                    )
+
+                se3_transform = np.array(se3_transform)
+                score = float(np.array(score))
+                aligned_ancs = np.array(aligned_ancs)[:orig_fit]
+                aligned_vecs = np.array(aligned_vecs)[:orig_fit]
+
+                scores[i] = score
+                pair.transform_pharm = se3_transform
+                pair.sim_aligned_pharm = score
+                aligned_anchors_list[i] = aligned_ancs
+                aligned_vectors_list[i] = aligned_vecs
 
         return scores, aligned_anchors_list, aligned_vectors_list
