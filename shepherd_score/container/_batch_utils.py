@@ -4,6 +4,14 @@ import multiprocessing as mp
 
 import numpy as np
 
+def _jax_worker_init():
+    """Initialize worker process to use CPU for JAX."""
+    import os
+    os.environ['JAX_PLATFORMS'] = 'cpu'
+
+    import jax
+    jax.config.update('jax_platform_name', 'cpu')
+
 
 def _pad_arrays(arrays, pad_value=0.0, dtype=np.float32):
     """Pad a list of arrays to the same max length along axis 0.
@@ -98,7 +106,7 @@ def _dispatch_parallel(pair_data, sort_keys, worker_fn, num_workers, shared_args
         for idx_list in index_splits
     ]
     ctx = mp.get_context('spawn')
-    with ctx.Pool(processes=len(work_items)) as pool:
+    with ctx.Pool(processes=len(work_items), initializer=_jax_worker_init) as pool:
         chunk_results = pool.map(worker_fn, work_items)
     return index_splits, chunk_results
 

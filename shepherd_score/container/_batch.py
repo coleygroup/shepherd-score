@@ -1,5 +1,5 @@
 """MoleculePairBatch: batch of MoleculePair objects for fast sequential JAX alignment."""
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
@@ -144,14 +144,6 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit atom coordinates (unpadded) for each pair.
         """
-        try:
-            import jax.numpy as jnp
-        except ImportError as exc:
-            raise ImportError(
-                'JAX is required for MoleculePairBatch.align_with_vol. '
-                'Install it with: pip install "shepherd-score[jax]"'
-            ) from exc
-
         # build raw (unpadded) position arrays for every pair
         raw_refs, raw_fits, trans_centers_list = [], [], []
         for pair in self.pairs:
@@ -198,6 +190,14 @@ class MoleculePairBatch:
                         pair.sim_aligned_vol = score
 
         else: # sequential
+            try:
+                import jax.numpy as jnp
+            except ImportError as exc:
+                raise ImportError(
+                    'JAX is required for MoleculePairBatch.align_with_vol. '
+                    'Install it with: pip install "shepherd-score[jax]"'
+                ) from exc
+
             from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax_mask
 
             ref_padded_all, masks_ref, _orig_refs, _ = _pad_arrays(raw_refs)
@@ -285,14 +285,6 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit atom coordinates (unpadded) for each pair.
         """
-        try:
-            import jax.numpy as jnp
-        except ImportError as exc:
-            raise ImportError(
-                'JAX is required for MoleculePairBatch.align_with_vol_esp. '
-                'Install it with: pip install "shepherd-score[jax]"'
-            ) from exc
-
         # Build raw (unpadded) per-pair data tuples (plain numpy — picklable).
         raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list = [], [], [], [], []
         for pair in self.pairs:
@@ -341,6 +333,14 @@ class MoleculePairBatch:
                         pair.sim_aligned_vol_esp = score
 
         else: # sequential
+            try:
+                import jax.numpy as jnp
+            except ImportError as exc:
+                raise ImportError(
+                    'JAX is required for MoleculePairBatch.align_with_vol_esp. '
+                    'Install it with: pip install "shepherd-score[jax]"'
+                ) from exc
+
             from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax_mask
 
             ref_padded_all, masks_ref, _orig_refs, _ = _pad_arrays(raw_refs)
@@ -713,14 +713,6 @@ class MoleculePairBatch:
         aligned_vectors_list : list of np.ndarray
             Aligned fit pharmacophore vectors (unpadded) for each pair.
         """
-        try:
-            import jax.numpy as jnp
-        except ImportError as exc:
-            raise ImportError(
-                'JAX is required for MoleculePairBatch.align_with_pharm. '
-                'Install it with: pip install "shepherd-score[jax]"'
-            ) from exc
-
         # Validate pharmacophore data and collect raw arrays for all pairs.
         for idx, pair in enumerate(self.pairs):
             if (pair.ref_molec.pharm_types is None or
@@ -775,6 +767,14 @@ class MoleculePairBatch:
                     pair.sim_aligned_pharm = score
 
         else: # sequential
+            try:
+                import jax.numpy as jnp
+            except ImportError as exc:
+                raise ImportError(
+                    'JAX is required for MoleculePairBatch.align_with_pharm. '
+                    'Install it with: pip install "shepherd-score[jax]"'
+                ) from exc
+
             from shepherd_score.alignment_jax import optimize_pharm_overlay_jax_vectorized_mask
 
             entries, _, _ = self._pad_and_mask_pharm()
