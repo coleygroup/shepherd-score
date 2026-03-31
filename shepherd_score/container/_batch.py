@@ -1,4 +1,5 @@
 """MoleculePairBatch: batch of MoleculePair objects for fast sequential JAX alignment."""
+from importlib.metadata import version as _pkg_version
 from typing import List, Tuple
 
 import numpy as np
@@ -183,6 +184,15 @@ class MoleculePairBatch:
         n_pairs = len(self.pairs)
         scores = np.zeros(n_pairs)
         aligned_list = [None] * n_pairs
+
+        if use_shmap:
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
 
         if use_shmap and num_workers > 1:  # shard_map path (single process, multi-device)
             pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
