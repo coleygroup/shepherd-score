@@ -4,6 +4,25 @@ import multiprocessing as mp
 
 import numpy as np
 
+# Lazily initialised jit+vmap wrapper for batched self-overlap computation.
+_batched_self_overlap = None
+
+
+def _get_batched_self_overlap():
+    """Return a jit+vmap'd VAB_2nd_order_jax_mask for batched self-overlaps.
+
+    Lazily initialised on first call so JAX is only imported when needed.
+    Caches the compiled function across calls within the same process.
+    """
+    global _batched_self_overlap
+    if _batched_self_overlap is None:
+        import jax
+        from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax_mask
+        _batched_self_overlap = jax.jit(
+            jax.vmap(VAB_2nd_order_jax_mask, in_axes=(0, 0, 0, 0, None))
+        )
+    return _batched_self_overlap
+
 def _jax_worker_init():
     """Initialize worker process to use CPU for JAX."""
     import os
@@ -160,20 +179,13 @@ def _init_se3_batch(raw_refs, raw_fits, trans_centers_list, num_repeats):
 
 def _align_vol_shmap(
     pair_data_list, num_workers, num_repeats, lr, max_num_steps, verbose,
-    n_buckets=None,
+    num_buckets: int = 1,
 ):
     """Parallel volumetric alignment via ``jax.shard_map`` across virtual CPU devices.
 
     ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` must be set
     **before JAX is first imported** so that ``len(jax.devices()) >= 1``.
     The number of devices actually used equals ``len(jax.devices())``.
-
-    Pairs are sorted by ``max(len(ref), len(fit))`` and grouped into
-    ``n_buckets`` equal-sized buckets before alignment.  Each bucket pads
-    only to its own local maximum atom count, reducing wasted computation for
-    molecule sets with varied sizes.  Because ``jit(shard_map(...))``
-    automatically caches one compiled XLA kernel per unique input shape, each
-    bucket reuses a cached kernel after the first call at that shape.
 
     Parameters
     ----------
@@ -187,12 +199,14 @@ def _align_vol_shmap(
     lr : float
     max_num_steps : int
     verbose : bool
-    n_buckets : int or None
-        Number of size buckets to split pairs into before padding.  Larger
-        values reduce average padding waste at the cost of more JIT
-        compilations on the first call.  ``None`` (default) sets
-        ``n_buckets = len(jax.devices())``, matching the actual degree of
-        parallelism.
+    num_buckets : int
+        Number of size buckets.  ``1`` (default) pads all pairs to the
+        global atom-count maximum and runs a single shard_map call.
+        Values > 1 sort pairs by ``(max(ref,fit), min(ref,fit))`` via
+        ``np.lexsort`` and divide them into that many equal groups, each
+        padded to its local maximum — reducing wasted computation for large
+        heterogeneous molecule sets at the cost of multiple sequential
+        shard_map calls (one JIT compilation per unique bucket shape).
 
     Returns
     -------
@@ -208,7 +222,6 @@ def _align_vol_shmap(
         ) from exc
 
     from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax_vol_shmap
-    from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax_mask
 
     n_pairs = len(pair_data_list)
     raw_refs = [d[0] for d in pair_data_list]
@@ -222,20 +235,28 @@ def _align_vol_shmap(
 
     alpha = 0.81
     n_devices = len(jax.devices())
-    if n_buckets is None:
-        n_buckets = n_devices
 
-    # Sort pairs by dominant padding dimension (max of ref/fit size) and group
-    # into buckets so each bucket pads only to its local maximum.
-    pair_sizes = np.array([max(len(raw_refs[i]), len(raw_fits[i])) for i in range(n_pairs)])
-    sorted_order = np.argsort(pair_sizes, kind='stable')
-    n_buckets_actual = min(n_buckets, n_pairs)
-    bucket_splits = [
-        arr.tolist()
-        for arr in np.array_split(sorted_order, n_buckets_actual)
-        if len(arr) > 0
-    ]
+    # Build bucket index lists.
+    if num_buckets <= 1:
+        # Single pass — no sorting, pad all pairs to global max.
+        bucket_splits = [list(range(n_pairs))]
+    else:
+        # Sort by (max(ref,fit), min(ref,fit)) — primary key is the dominant
+        # padding dimension; ties broken by the minor dimension.  Matches the
+        # lexsort convention used by the multiprocessing path in _batch.py.
+        ref_sizes = np.array([len(r) for r in raw_refs])
+        fit_sizes = np.array([len(f) for f in raw_fits])
+        sort_keys = np.array([np.minimum(ref_sizes, fit_sizes),
+                               np.maximum(ref_sizes, fit_sizes)])
+        sorted_order = np.lexsort(sort_keys)
+        num_buckets_actual = min(num_buckets, n_pairs)
+        bucket_splits = [
+            arr.tolist()
+            for arr in np.array_split(sorted_order, num_buckets_actual)
+            if len(arr) > 0
+        ]
 
+    batched_self_overlap = _get_batched_self_overlap()
     results = [None] * n_pairs
 
     for bucket_idx_list in bucket_splits:
@@ -246,19 +267,19 @@ def _align_vol_shmap(
         ref_padded, masks_ref, orig_refs_b, _ = _pad_arrays(bucket_refs)
         fit_padded, masks_fit, orig_fits_b, _ = _pad_arrays(bucket_fits)
 
-        # Pre-compute self-overlaps for this bucket (invariant; once per loop)
-        VAA_bucket = np.array([
-            float(VAB_2nd_order_jax_mask(
-                jnp.array(ref_padded[j]), jnp.array(ref_padded[j]),
-                jnp.array(masks_ref[j]), jnp.array(masks_ref[j]), alpha,
-            )) for j in range(len(bucket_idx_list))
-        ], dtype=np.float32)
-        VBB_bucket = np.array([
-            float(VAB_2nd_order_jax_mask(
-                jnp.array(fit_padded[j]), jnp.array(fit_padded[j]),
-                jnp.array(masks_fit[j]), jnp.array(masks_fit[j]), alpha,
-            )) for j in range(len(bucket_idx_list))
-        ], dtype=np.float32)
+        # Pre-compute self-overlaps in one jit+vmap call (invariant to SE(3))
+        ref_stacked = jnp.array(np.stack(ref_padded))
+        fit_stacked = jnp.array(np.stack(fit_padded))
+        mr_stacked  = jnp.array(np.stack(masks_ref))
+        mf_stacked  = jnp.array(np.stack(masks_fit))
+        VAA_bucket = np.array(
+            batched_self_overlap(ref_stacked, ref_stacked, mr_stacked, mr_stacked, alpha),
+            dtype=np.float32,
+        )
+        VBB_bucket = np.array(
+            batched_self_overlap(fit_stacked, fit_stacked, mf_stacked, mf_stacked, alpha),
+            dtype=np.float32,
+        )
 
         # Pad pair count to a multiple of n_devices (dummy pairs carry zero masks)
         n_bucket = len(bucket_idx_list)
@@ -275,10 +296,10 @@ def _align_vol_shmap(
 
         # Pass flat (pad_to, ...) arrays — shard_map distributes across devices
         # automatically via P('i') on axis 0. Do NOT pre-reshape to (D, B, ...).
-        ref_all = _pad_to_devices(np.stack(ref_padded))
-        fit_all = _pad_to_devices(np.stack(fit_padded))
-        mr_all  = _pad_to_devices(np.stack(masks_ref))
-        mf_all  = _pad_to_devices(np.stack(masks_fit))
+        ref_all = _pad_to_devices(np.array(ref_stacked))
+        fit_all = _pad_to_devices(np.array(fit_stacked))
+        mr_all  = _pad_to_devices(np.array(mr_stacked))
+        mf_all  = _pad_to_devices(np.array(mf_stacked))
         se3_all = _pad_to_devices(se3_init_all[bucket_idx_list])
         VAA_arr = _pad_to_devices(VAA_bucket)
         VBB_arr = _pad_to_devices(VBB_bucket)
