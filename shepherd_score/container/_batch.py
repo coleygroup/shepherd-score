@@ -100,6 +100,7 @@ class MoleculePairBatch:
                        max_num_steps: int = 200,
                        num_workers: int = 1,
                        use_shmap: bool = True,
+                       n_buckets = None,
                        verbose: bool = False,
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using padded masked volumetric similarity via JAX.
@@ -145,6 +146,16 @@ class MoleculePairBatch:
             no early stopping) instead of the ``while_loop``-based sequential
             path.  Recommended on Linux HPC where ``multiprocessing`` spawn
             can be unreliable with JAX.  Default is ``False``.
+        n_buckets : int or None
+            Only used when ``use_shmap=True``.  Number of size buckets to
+            group pairs into before padding and alignment.  Pairs are sorted
+            by ``max(len(ref), len(fit))`` and divided evenly; each bucket
+            pads only to its local atom-count maximum, reducing wasted
+            computation for diverse molecule sizes.  Larger values reduce
+            padding waste further but trigger more JIT compilations on the
+            first call (one per unique padded shape).  ``None`` (default)
+            auto-sets ``n_buckets = len(jax.devices())``, matching the
+            actual degree of parallelism.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -179,7 +190,8 @@ class MoleculePairBatch:
         if use_shmap and num_workers > 1:  # shard_map path (single process, multi-device)
             pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
             results = _align_vol_shmap(
-                pair_data, num_workers, num_repeats, lr, max_num_steps, verbose
+                pair_data, num_workers, num_repeats, lr, max_num_steps, verbose,
+                n_buckets=n_buckets,
             )
             for i, (score, se3_transform, aligned_pts) in enumerate(results):
                 scores[i] = score

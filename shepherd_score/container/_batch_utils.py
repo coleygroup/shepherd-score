@@ -158,12 +158,22 @@ def _init_se3_batch(raw_refs, raw_fits, trans_centers_list, num_repeats):
     return padded, max_repeats
 
 
-def _align_vol_shmap(pair_data_list, num_workers, num_repeats, lr, max_num_steps, verbose):
+def _align_vol_shmap(
+    pair_data_list, num_workers, num_repeats, lr, max_num_steps, verbose,
+    n_buckets=None,
+):
     """Parallel volumetric alignment via ``jax.shard_map`` across virtual CPU devices.
 
     ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` must be set
     **before JAX is first imported** so that ``len(jax.devices()) >= 1``.
     The number of devices actually used equals ``len(jax.devices())``.
+
+    Pairs are sorted by ``max(len(ref), len(fit))`` and grouped into
+    ``n_buckets`` equal-sized buckets before alignment.  Each bucket pads
+    only to its own local maximum atom count, reducing wasted computation for
+    molecule sets with varied sizes.  Because ``jit(shard_map(...))``
+    automatically caches one compiled XLA kernel per unique input shape, each
+    bucket reuses a cached kernel after the first call at that shape.
 
     Parameters
     ----------
@@ -177,6 +187,12 @@ def _align_vol_shmap(pair_data_list, num_workers, num_repeats, lr, max_num_steps
     lr : float
     max_num_steps : int
     verbose : bool
+    n_buckets : int or None
+        Number of size buckets to split pairs into before padding.  Larger
+        values reduce average padding waste at the cost of more JIT
+        compilations on the first call.  ``None`` (default) sets
+        ``n_buckets = len(jax.devices())``, matching the actual degree of
+        parallelism.
 
     Returns
     -------
@@ -199,77 +215,98 @@ def _align_vol_shmap(pair_data_list, num_workers, num_repeats, lr, max_num_steps
     raw_fits = [d[1] for d in pair_data_list]
     trans_centers_list = [d[2] for d in pair_data_list]
 
-    # Pad atom arrays to a common shape
-    ref_padded, masks_ref, orig_refs, _ = _pad_arrays(raw_refs)
-    fit_padded, masks_fit, orig_fits, _ = _pad_arrays(raw_fits)
-
     # Pre-compute SE(3) initialisations: (n_pairs, max_repeats, 7)
     se3_init_all, _actual_repeats = _init_se3_batch(
         raw_refs, raw_fits, trans_centers_list, num_repeats
     )
 
-    # Pre-compute self-overlaps (invariant; compute once outside the loop)
     alpha = 0.81
-    VAA_all = np.array([
-        float(VAB_2nd_order_jax_mask(
-            jnp.array(ref_padded[i]), jnp.array(ref_padded[i]),
-            jnp.array(masks_ref[i]), jnp.array(masks_ref[i]), alpha,
-        )) for i in range(n_pairs)
-    ], dtype=np.float32)
-    VBB_all = np.array([
-        float(VAB_2nd_order_jax_mask(
-            jnp.array(fit_padded[i]), jnp.array(fit_padded[i]),
-            jnp.array(masks_fit[i]), jnp.array(masks_fit[i]), alpha,
-        )) for i in range(n_pairs)
-    ], dtype=np.float32)
-
-    # Pad pair count to a multiple of n_devices (dummy pairs carry zero masks)
     n_devices = len(jax.devices())
-    pad_to = int(np.ceil(n_pairs / n_devices)) * n_devices
+    if n_buckets is None:
+        n_buckets = n_devices
 
-    def _pad_pairs(arr, pad_val=0.0):
-        """Pad leading pair axis to `pad_to`."""
-        if pad_to == len(arr):
-            return arr
-        extra = np.full(
-            (pad_to - len(arr),) + arr.shape[1:], pad_val, dtype=arr.dtype
+    # Sort pairs by dominant padding dimension (max of ref/fit size) and group
+    # into buckets so each bucket pads only to its local maximum.
+    pair_sizes = np.array([max(len(raw_refs[i]), len(raw_fits[i])) for i in range(n_pairs)])
+    sorted_order = np.argsort(pair_sizes, kind='stable')
+    n_buckets_actual = min(n_buckets, n_pairs)
+    bucket_splits = [
+        arr.tolist()
+        for arr in np.array_split(sorted_order, n_buckets_actual)
+        if len(arr) > 0
+    ]
+
+    results = [None] * n_pairs
+
+    for bucket_idx_list in bucket_splits:
+        bucket_refs = [raw_refs[i] for i in bucket_idx_list]
+        bucket_fits = [raw_fits[i] for i in bucket_idx_list]
+
+        # Pad to bucket-local maximum atom count
+        ref_padded, masks_ref, orig_refs_b, _ = _pad_arrays(bucket_refs)
+        fit_padded, masks_fit, orig_fits_b, _ = _pad_arrays(bucket_fits)
+
+        # Pre-compute self-overlaps for this bucket (invariant; once per loop)
+        VAA_bucket = np.array([
+            float(VAB_2nd_order_jax_mask(
+                jnp.array(ref_padded[j]), jnp.array(ref_padded[j]),
+                jnp.array(masks_ref[j]), jnp.array(masks_ref[j]), alpha,
+            )) for j in range(len(bucket_idx_list))
+        ], dtype=np.float32)
+        VBB_bucket = np.array([
+            float(VAB_2nd_order_jax_mask(
+                jnp.array(fit_padded[j]), jnp.array(fit_padded[j]),
+                jnp.array(masks_fit[j]), jnp.array(masks_fit[j]), alpha,
+            )) for j in range(len(bucket_idx_list))
+        ], dtype=np.float32)
+
+        # Pad pair count to a multiple of n_devices (dummy pairs carry zero masks)
+        n_bucket = len(bucket_idx_list)
+        pad_to = int(np.ceil(n_bucket / n_devices)) * n_devices
+
+        def _pad_to_devices(arr, pad_val=0.0, _pad_to=pad_to):
+            """Pad leading pair axis to `_pad_to` (multiple of n_devices)."""
+            if _pad_to == len(arr):
+                return arr
+            extra = np.full(
+                (_pad_to - len(arr),) + arr.shape[1:], pad_val, dtype=arr.dtype
+            )
+            return np.concatenate([arr, extra], axis=0)
+
+        # Pass flat (pad_to, ...) arrays — shard_map distributes across devices
+        # automatically via P('i') on axis 0. Do NOT pre-reshape to (D, B, ...).
+        ref_all = _pad_to_devices(np.stack(ref_padded))
+        fit_all = _pad_to_devices(np.stack(fit_padded))
+        mr_all  = _pad_to_devices(np.stack(masks_ref))
+        mf_all  = _pad_to_devices(np.stack(masks_fit))
+        se3_all = _pad_to_devices(se3_init_all[bucket_idx_list])
+        VAA_arr = _pad_to_devices(VAA_bucket)
+        VBB_arr = _pad_to_devices(VBB_bucket)
+
+        aligned_b, se3_b, scores_b = optimize_ROCS_overlay_jax_vol_shmap(
+            jnp.array(ref_all),
+            jnp.array(fit_all),
+            jnp.array(mr_all),
+            jnp.array(mf_all),
+            jnp.array(VAA_arr),
+            jnp.array(VBB_arr),
+            jnp.array(se3_all),
+            alpha, lr, max_num_steps,
         )
-        return np.concatenate([arr, extra], axis=0)
 
-    # Pass flat (pad_to, ...) arrays — shard_map distributes across devices
-    # automatically via P('i') on axis 0. Do NOT pre-reshape to (D, B, ...).
-    ref_all = _pad_pairs(np.stack(ref_padded))
-    fit_all = _pad_pairs(np.stack(fit_padded))
-    mr_all  = _pad_pairs(np.stack(masks_ref))
-    mf_all  = _pad_pairs(np.stack(masks_fit))
-    se3_all = _pad_pairs(se3_init_all)
-    VAA_arr = _pad_pairs(VAA_all)
-    VBB_arr = _pad_pairs(VBB_all)
+        # Outputs are already (pad_to, ...) — no reshape needed
+        aligned_flat = np.array(aligned_b)   # (pad_to, M, 3)
+        se3_flat     = np.array(se3_b)       # (pad_to, 4, 4)
+        scores_flat  = np.array(scores_b)    # (pad_to,)
 
-    aligned_b, se3_b, scores_b = optimize_ROCS_overlay_jax_vol_shmap(
-        jnp.array(ref_all),
-        jnp.array(fit_all),
-        jnp.array(mr_all),
-        jnp.array(mf_all),
-        jnp.array(VAA_arr),
-        jnp.array(VBB_arr),
-        jnp.array(se3_all),
-        alpha, lr, max_num_steps,
-    )
+        for local_j, global_i in enumerate(bucket_idx_list):
+            score = float(scores_flat[local_j])
+            se3t  = se3_flat[local_j]
+            apts  = aligned_flat[local_j][:orig_fits_b[local_j]]
+            if verbose:
+                print(f'Pair {global_i}: score={score:.4f}')
+            results[global_i] = (score, se3t, apts)
 
-    # Outputs are already (pad_to, ...) — no reshape needed
-    aligned_flat = np.array(aligned_b)   # (pad_to, M, 3)
-    se3_flat     = np.array(se3_b)       # (pad_to, 4, 4)
-    scores_flat  = np.array(scores_b)    # (pad_to,)
-
-    results = []
-    for i in range(n_pairs):
-        score = float(scores_flat[i])
-        se3t  = se3_flat[i]
-        apts  = aligned_flat[i][:orig_fits[i]]
-        if verbose:
-            print(f'Pair {i}: score={score:.4f}')
-        results.append((score, se3t, apts))
     return results
 
 
