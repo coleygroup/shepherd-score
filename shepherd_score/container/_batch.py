@@ -7,6 +7,7 @@ from shepherd_score.container._core import MoleculePair
 from shepherd_score.container._batch_utils import (
     _pad_arrays,
     _dispatch_parallel,
+    _align_vol_shmap,
     _align_vol_worker,
     _align_vol_esp_worker,
     _align_surf_worker,
@@ -98,6 +99,7 @@ class MoleculePairBatch:
                        lr: float = 0.1,
                        max_num_steps: int = 200,
                        num_workers: int = 1,
+                       use_shmap: bool = True,
                        verbose: bool = False,
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using padded masked volumetric similarity via JAX.
@@ -129,11 +131,20 @@ class MoleculePairBatch:
         max_num_steps : int
             Maximum optimization steps. Default is 200.
         num_workers : int
-            Number of parallel worker processes.  ``1`` (default) runs
-            sequentially in-process.  Values greater than ``len(self.pairs)``
-            are clamped to ``len(self.pairs)``.  Use
-            ``multiprocessing.cpu_count()`` or a fraction thereof for
-            CPU-bound workloads.
+            Number of parallel workers.  ``1`` (default) runs sequentially
+            in-process.  When ``use_shmap=False`` (the default), values greater
+            than ``1`` use ``multiprocessing`` with a ``'spawn'`` start method.
+            When ``use_shmap=True``, this value is informational; actual
+            parallelism equals ``len(jax.devices())``, which is set by
+            ``XLA_FLAGS`` **before** JAX is first imported.
+        use_shmap : bool
+            If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
+            to parallelise across virtual CPU devices in a single process.
+            Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
+            to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
+            no early stopping) instead of the ``while_loop``-based sequential
+            path.  Recommended on Linux HPC where ``multiprocessing`` spawn
+            can be unreliable with JAX.  Default is ``False``.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -165,7 +176,23 @@ class MoleculePairBatch:
         scores = np.zeros(n_pairs)
         aligned_list = [None] * n_pairs
 
-        if num_workers > 1: # parallel
+        if use_shmap and num_workers > 1:  # shard_map path (single process, multi-device)
+            pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
+            results = _align_vol_shmap(
+                pair_data, num_workers, num_repeats, lr, max_num_steps, verbose
+            )
+            for i, (score, se3_transform, aligned_pts) in enumerate(results):
+                scores[i] = score
+                aligned_list[i] = aligned_pts
+                pair = self.pairs[i]
+                if no_H:
+                    pair.transform_vol_noH = se3_transform
+                    pair.sim_aligned_vol_noH = score
+                else:
+                    pair.transform_vol = se3_transform
+                    pair.sim_aligned_vol = score
+
+        elif num_workers > 1:  # multiprocessing path
             pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
             ref_sizes = np.array([len(r) for r in raw_refs])
             fit_sizes = np.array([len(f) for f in raw_fits])

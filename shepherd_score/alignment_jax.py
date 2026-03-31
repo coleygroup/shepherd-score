@@ -12,3 +12,6 @@ from shepherd_score.alignment._jax import (   # explicit for IDE/type checkers
     _make_jit_val_grad_pharm_vectorized,
     _make_jit_val_grad_pharm_vectorized_mask,
 )
+from shepherd_score.alignment._jax_parallel import (  # parallel (shard_map) functions
+    optimize_ROCS_overlay_jax_vol_shmap,
+)

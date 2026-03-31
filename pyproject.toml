@@ -65,9 +65,9 @@ docs = [
     "myst-nb>=1.0",
 ]
 jax = [
-    "jax>=0.4.20",
-    "jaxlib>=0.4.20",
-    "optax>=0.2.0",
+    "jax>=0.9.0",
+    "jaxlib>=0.9.0",
+    "optax>=0.2.6",
     "scikit-learn>=1.3",
 ]
 docking = [

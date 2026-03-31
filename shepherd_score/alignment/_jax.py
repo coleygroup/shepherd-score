@@ -1007,6 +1007,60 @@ def optimize_ROCS_overlay_jax_mask(ref_points: Array,
             scores.at[best_idx].get())
 
 
+def _per_pair_optimize_vol_mask_scan(
+    ref_pts, fit_pts, mask_ref, mask_fit, se3_init,
+    alpha, VAA, VBB, lr, max_num_steps,
+):
+    """Per-pair volumetric optimization via lax.scan — vmappable, fixed steps.
+
+    Unlike the ``while_loop``-based ``_generic_optimize_loop``, this variant
+    uses ``lax.scan`` with a static step count so it can be safely vmapped and
+    pmapped across many pairs simultaneously.  There is no early stopping;
+    ``max_num_steps`` must be a Python int (static at trace time).
+
+    Parameters
+    ----------
+    ref_pts       : (N, 3) padded reference atom positions
+    fit_pts       : (M, 3) padded fit atom positions
+    mask_ref      : (N,)   binary mask (1 = real atom, 0 = padding)
+    mask_fit      : (M,)   binary mask
+    se3_init      : (R, 7) pre-initialised SE(3) parameters
+    alpha         : scalar Gaussian width
+    VAA, VBB      : scalar pre-computed self-overlaps
+    lr            : scalar Adam learning rate
+    max_num_steps : Python int — compile-time constant
+
+    Returns
+    -------
+    aligned_pts   : (M, 3)
+    se3_transform : (4, 4)
+    score         : scalar
+    """
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(se3_init)
+
+    def scan_step(carry, _):
+        params, state = carry
+        loss, grads = value_and_grad(
+            objective_ROCS_overlay_precomputed_jax_mask
+        )(params, ref_pts, fit_pts, mask_ref, mask_fit, alpha, VAA, VBB)
+        updates, new_state = optimizer.update(grads, state, params)
+        new_params = optax.apply_updates(params, updates)
+        return (new_params, new_state), None
+
+    (se3_opt, _), _ = lax.scan(
+        scan_step, (se3_init, opt_state), None, length=max_num_steps
+    )
+
+    SE3_transforms = vmap_get_SE3_transform_jax(se3_opt)
+    aligned_pts_all = vmap_apply_SE3_transform_jax(fit_pts, SE3_transforms)
+    scores = vmap_get_overlap_jax_mask(
+        ref_pts, aligned_pts_all, mask_ref, mask_fit, alpha
+    )
+    best_idx = jnp.argmax(scores)
+    return aligned_pts_all[best_idx], SE3_transforms[best_idx], scores[best_idx]
+
+
 def _objective_ROCS_esp_overlay_jax(se3_params: Array,
                                     ref_points: Array,
                                     fit_points: Array,
@@ -1404,7 +1458,7 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
             num_repeats_per_trans=10).detach()
 
     if len(se3_params.shape) == 1:
-        se3_params.unsqueeze(0)
+        se3_params = se3_params.unsqueeze(0)
     se3_params = jnp.array(se3_params)
 
     ref_centers_w_H = convert_to_jnp_array(ref_centers_w_H)
@@ -1420,96 +1474,61 @@ def optimize_esp_combo_score_overlay_jax(ref_centers_w_H: Union[Array, np.ndarra
     ref_radii = convert_to_jnp_array(ref_radii)
     fit_radii = convert_to_jnp_array(fit_radii)
 
-    # Create optimizer
-    optimizer = optax.adam(learning_rate=lr)
-    opt_state = optimizer.init(se3_params)
+    # Pack arguments in the EXACT order expected by `objective_esp_combo_score_overlay_jax`
+    data_args = (
+        ref_centers_w_H, fit_centers_w_H,
+        ref_centers, fit_centers,
+        ref_points, fit_points,
+        ref_partial_charges, fit_partial_charges,
+        ref_surf_esp, fit_surf_esp,
+        ref_radii, fit_radii,
+        alpha, lam, probe_radius, esp_weight
+    )
 
-    # Optimization loop
     if verbose:
-        init_score = esp_combo_score_jax(ref_centers_w_H,
-                                         fit_centers_w_H,
-                                         ref_centers,
-                                         fit_centers,
-                                         ref_points,
-                                         fit_points,
-                                         ref_partial_charges,
-                                         fit_partial_charges,
-                                         ref_surf_esp,
-                                         fit_surf_esp,
-                                         ref_radii,
-                                         fit_radii,
-                                         alpha,
-                                         lam,
-                                         probe_radius,
-                                         esp_weight)
+        # We can just call the single-item scorer or the batched helper here for the initial print
+        # Note: Using your existing helper logic for consistency
+        init_score = esp_combo_score_jax(ref_centers_w_H, fit_centers_w_H, ref_centers, fit_centers,
+                                         ref_points, fit_points, ref_partial_charges, fit_partial_charges,
+                                         ref_surf_esp, fit_surf_esp, ref_radii, fit_radii,
+                                         alpha, lam, probe_radius, esp_weight)
         print(f'Initial ShaEP-inspired similarity score: {init_score:.3f}')
-    last_loss = 1
-    counter = 0
-    for step in range(max_num_steps):
-        loss, grads = jit_val_grad_obj_esp_combo_score_overlay(se3_params,
-                                                               ref_centers_w_H,
-                                                               fit_centers_w_H,
-                                                               ref_centers,
-                                                               fit_centers,
-                                                               ref_points,
-                                                               fit_points,
-                                                               ref_partial_charges,
-                                                               fit_partial_charges,
-                                                               ref_surf_esp,
-                                                               fit_surf_esp,
-                                                               ref_radii,
-                                                               fit_radii,
-                                                               alpha,
-                                                               lam,
-                                                               probe_radius,
-                                                               esp_weight)
-        updates, opt_state = optimizer.update(grads, opt_state, se3_params)
-        se3_params = optax.apply_updates(se3_params, updates)
 
-        # early stopping
-        if abs(loss - last_loss) > 1e-5:
-            counter = 0
-        else:
-            counter += 1
-        last_loss = loss
-        if counter > 10:
-            break
+    se3_opt = _generic_optimize_loop(
+        se3_params,
+        data_args,
+        jit_val_grad_obj_esp_combo_score_overlay,
+        lr,
+        max_num_steps
+    )
 
-    # Extract optimized SE(3) parameters
-    SE3_transform = vmap_get_SE3_transform_jax(se3_params)
+    SE3_transform = vmap_get_SE3_transform_jax(se3_opt)
+
+    # Apply transformations to all relevant fit coordinate sets
     aligned_points = vmap_apply_SE3_transform_jax(fit_points, SE3_transform)
     aligned_centers_w_H = vmap_apply_SE3_transform_jax(fit_centers_w_H, SE3_transform)
     aligned_centers = vmap_apply_SE3_transform_jax(fit_centers, SE3_transform)
-    scores = vmap_esp_combo_score(ref_centers_w_H,
-                                  aligned_centers_w_H,
-                                  ref_centers,
-                                  aligned_centers,
-                                  ref_points,
-                                  aligned_points,
-                                  ref_partial_charges,
-                                  fit_partial_charges,
-                                  ref_surf_esp,
-                                  fit_surf_esp,
-                                  ref_radii,
-                                  fit_radii,
-                                  alpha,
-                                  lam,
-                                  probe_radius,
-                                  esp_weight)
-    if num_repeats == 1:
-        if verbose:
-            print(f'Optimized ShaEP inspired similarity score: {scores:.3f}')
-        best_alignment = aligned_points
-        best_transform = SE3_transform
-        best_score = scores
-    else:
-        if verbose:
-            print(f'Optimized ShaEP inspired similarity score -- max: {scores.max():3f} | mean: {scores.mean():.3f} | min: {scores.min():3f}')
-        best_idx = jnp.argmax(scores)
-        best_alignment = aligned_points.at[best_idx].get()
-        best_transform = SE3_transform.at[best_idx].get()
-        best_score = scores.at[best_idx].get()
-    return best_alignment, best_transform, best_score
+
+    # Recalculate scores for the final optimized positions
+    # (assuming vmap_esp_combo_score is defined in your scope, as implied by your snippet)
+    scores = vmap_esp_combo_score(
+        ref_centers_w_H, aligned_centers_w_H,
+        ref_centers, aligned_centers,
+        ref_points, aligned_points,
+        ref_partial_charges, fit_partial_charges,
+        ref_surf_esp, fit_surf_esp,
+        ref_radii, fit_radii,
+        alpha, lam, probe_radius, esp_weight
+    )
+
+    best_idx = jnp.argmax(scores)
+
+    if verbose:
+         print(f'Optimized ShaEP inspired similarity score -- max: {scores.max():.3f} | mean: {scores.mean():.3f}')
+
+    return (aligned_points.at[best_idx].get(),
+            SE3_transform.at[best_idx].get(),
+            scores.at[best_idx].get())
 
 
 def _objective_pharm_overlay_jax(se3_params: Array,

@@ -111,6 +111,168 @@ def _dispatch_parallel(pair_data, sort_keys, worker_fn, num_workers, shared_args
     return index_splits, chunk_results
 
 
+def _init_se3_batch(raw_refs, raw_fits, trans_centers_list, num_repeats):
+    """Pre-compute SE(3) initialisations for all pairs using torch/numpy.
+
+    Returns all initialisations as a single float32 array padded to the
+    maximum number of repeats across pairs (repeats vary when
+    ``trans_centers`` is provided because the count is ``10 * n_ref_atoms``).
+
+    Parameters
+    ----------
+    raw_refs, raw_fits : list of np.ndarray
+        Unpadded atom coordinate arrays for each pair.
+    trans_centers_list : list of np.ndarray or None
+        Per-pair translation initialisation centres, or ``None``.
+    num_repeats : int
+        Number of random SE(3) repeats when ``trans_centers`` is ``None``.
+
+    Returns
+    -------
+    se3_all : np.ndarray of shape (n_pairs, max_repeats, 7), float32
+    max_repeats : int
+    """
+    import torch
+    from shepherd_score.alignment import (
+        _initialize_se3_params,
+        _initialize_se3_params_with_translations,
+    )
+
+    all_se3 = []
+    for ref, fit, tc in zip(raw_refs, raw_fits, trans_centers_list):
+        ref_t = torch.tensor(ref, dtype=torch.float32)
+        fit_t = torch.tensor(fit, dtype=torch.float32)
+        if tc is None:
+            p = _initialize_se3_params(ref_t, fit_t, num_repeats).detach().numpy()
+        else:
+            p = _initialize_se3_params_with_translations(
+                ref_t, fit_t, torch.tensor(tc, dtype=torch.float32),
+                num_repeats_per_trans=10
+            ).detach().numpy()
+        all_se3.append(p)
+
+    max_repeats = max(s.shape[0] for s in all_se3)
+    padded = np.zeros((len(all_se3), max_repeats, 7), dtype=np.float32)
+    for i, s in enumerate(all_se3):
+        padded[i, :s.shape[0]] = s
+    return padded, max_repeats
+
+
+def _align_vol_shmap(pair_data_list, num_workers, num_repeats, lr, max_num_steps, verbose):
+    """Parallel volumetric alignment via ``jax.shard_map`` across virtual CPU devices.
+
+    ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` must be set
+    **before JAX is first imported** so that ``len(jax.devices()) >= 1``.
+    The number of devices actually used equals ``len(jax.devices())``.
+
+    Parameters
+    ----------
+    pair_data_list : list of (ref_pos, fit_pos, trans_centers) tuples
+        Plain numpy arrays; ``trans_centers`` may be ``None``.
+    num_workers : int
+        Requested worker count (informational; actual parallelism is
+        determined by the number of JAX devices in the process).
+    num_repeats : int
+        SE(3) initialisations per pair when ``trans_centers`` is ``None``.
+    lr : float
+    max_num_steps : int
+    verbose : bool
+
+    Returns
+    -------
+    list of (score, se3_transform, aligned_pts) tuples, one per pair.
+    """
+    try:
+        import jax
+        import jax.numpy as jnp
+    except ImportError as exc:
+        raise ImportError(
+            'JAX is required for shard_map alignment. '
+            'Install with: pip install "shepherd-score[jax]"'
+        ) from exc
+
+    from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax_vol_shmap
+    from shepherd_score.score.gaussian_overlap_jax import VAB_2nd_order_jax_mask
+
+    n_pairs = len(pair_data_list)
+    raw_refs = [d[0] for d in pair_data_list]
+    raw_fits = [d[1] for d in pair_data_list]
+    trans_centers_list = [d[2] for d in pair_data_list]
+
+    # Pad atom arrays to a common shape
+    ref_padded, masks_ref, orig_refs, _ = _pad_arrays(raw_refs)
+    fit_padded, masks_fit, orig_fits, _ = _pad_arrays(raw_fits)
+
+    # Pre-compute SE(3) initialisations: (n_pairs, max_repeats, 7)
+    se3_init_all, _actual_repeats = _init_se3_batch(
+        raw_refs, raw_fits, trans_centers_list, num_repeats
+    )
+
+    # Pre-compute self-overlaps (invariant; compute once outside the loop)
+    alpha = 0.81
+    VAA_all = np.array([
+        float(VAB_2nd_order_jax_mask(
+            jnp.array(ref_padded[i]), jnp.array(ref_padded[i]),
+            jnp.array(masks_ref[i]), jnp.array(masks_ref[i]), alpha,
+        )) for i in range(n_pairs)
+    ], dtype=np.float32)
+    VBB_all = np.array([
+        float(VAB_2nd_order_jax_mask(
+            jnp.array(fit_padded[i]), jnp.array(fit_padded[i]),
+            jnp.array(masks_fit[i]), jnp.array(masks_fit[i]), alpha,
+        )) for i in range(n_pairs)
+    ], dtype=np.float32)
+
+    # Pad pair count to a multiple of n_devices (dummy pairs carry zero masks)
+    n_devices = len(jax.devices())
+    pad_to = int(np.ceil(n_pairs / n_devices)) * n_devices
+
+    def _pad_pairs(arr, pad_val=0.0):
+        """Pad leading pair axis to `pad_to`."""
+        if pad_to == len(arr):
+            return arr
+        extra = np.full(
+            (pad_to - len(arr),) + arr.shape[1:], pad_val, dtype=arr.dtype
+        )
+        return np.concatenate([arr, extra], axis=0)
+
+    # Pass flat (pad_to, ...) arrays — shard_map distributes across devices
+    # automatically via P('i') on axis 0. Do NOT pre-reshape to (D, B, ...).
+    ref_all = _pad_pairs(np.stack(ref_padded))
+    fit_all = _pad_pairs(np.stack(fit_padded))
+    mr_all  = _pad_pairs(np.stack(masks_ref))
+    mf_all  = _pad_pairs(np.stack(masks_fit))
+    se3_all = _pad_pairs(se3_init_all)
+    VAA_arr = _pad_pairs(VAA_all)
+    VBB_arr = _pad_pairs(VBB_all)
+
+    aligned_b, se3_b, scores_b = optimize_ROCS_overlay_jax_vol_shmap(
+        jnp.array(ref_all),
+        jnp.array(fit_all),
+        jnp.array(mr_all),
+        jnp.array(mf_all),
+        jnp.array(VAA_arr),
+        jnp.array(VBB_arr),
+        jnp.array(se3_all),
+        alpha, lr, max_num_steps,
+    )
+
+    # Outputs are already (pad_to, ...) — no reshape needed
+    aligned_flat = np.array(aligned_b)   # (pad_to, M, 3)
+    se3_flat     = np.array(se3_b)       # (pad_to, 4, 4)
+    scores_flat  = np.array(scores_b)    # (pad_to,)
+
+    results = []
+    for i in range(n_pairs):
+        score = float(scores_flat[i])
+        se3t  = se3_flat[i]
+        apts  = aligned_flat[i][:orig_fits[i]]
+        if verbose:
+            print(f'Pair {i}: score={score:.4f}')
+        results.append((score, se3t, apts))
+    return results
+
+
 def _align_vol_worker(args):
     """Worker for parallel JAX volumetric alignment.
 
