@@ -307,14 +307,12 @@ This project is licensed under the MIT License -- see [LICENSE](./LICENSE) file 
 If you use or adapt `shepherd_score` or [*ShEPhERD*](https://github.com/coleygroup/shepherd) in your work, please cite us:
 
 ```bibtex
-@misc{adamsShEPhERD2024,
-  title = {{{ShEPhERD}}: {{Diffusing}} Shape, Electrostatics, and Pharmacophores for Bioisosteric Drug Design},
-  author = {Adams, Keir and Abeywardane, Kento and Fromer, Jenna and Coley, Connor W.},
-  year = {2024},
-  number = {arXiv:2411.04130},
-  eprint = {2411.04130},
-  publisher = {arXiv},
-  doi = {10.48550/arXiv.2411.04130},
-  archiveprefix = {arXiv}
+@inproceedings{
+adams2025shepherd,
+title={Sh{EP}h{ERD}: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design},
+author={Keir Adams and Kento Abeywardane and Jenna Fromer and Connor W. Coley},
+booktitle={The Thirteenth International Conference on Learning Representations},
+year={2025},
+url={https://openreview.net/forum?id=KSLkFYHlYg}
 }
 ```
