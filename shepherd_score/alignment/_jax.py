@@ -13,7 +13,7 @@ import optax
 import torch
 
 from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_linear_hard_sphere_overlap_jax, VAB_2nd_order_jax, VAB_2nd_order_jax_mask, get_overlap_jax_mask
-from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, esp_combo_score_jax, VAB_2nd_order_esp_jax_mask, get_overlap_esp_jax_mask
+from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, VAB_2nd_order_esp_jax, esp_combo_score_jax, VAB_2nd_order_esp_jax_mask, get_overlap_esp_jax_mask
 from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax, get_overlap_pharm_jax_vectorized, get_overlap_pharm_jax_vectorized_mask, _SIM_TYPE
 from shepherd_score.alignment.utils.pca_jax import quaternions_for_principal_component_alignment_jax, rotation_axis_jax, vmap_angle_between_vecs_jax, vmap_quaternion_from_axis_angle_jax
 from shepherd_score.alignment.utils.se3_jax import get_SE3_transform_jax, apply_SE3_transform_jax
@@ -541,6 +541,33 @@ jit_val_grad_obj_ROCS_precomputed_mask = jit(
 vmap_get_overlap_jax_mask = vmap(get_overlap_jax_mask, (None, 0, None, None, None))
 
 
+def _objective_ROCS_esp_overlay_precomputed_jax(se3_params, ref_points, fit_points,
+                                                 ref_charges, fit_charges, alpha, lam, VAA, VBB):
+    """Single-instance non-masked ROCS ESP objective using precomputed self-overlaps."""
+    se3_matrix = get_SE3_transform_jax(se3_params)
+    fit_t = apply_SE3_transform_jax(fit_points, se3_matrix)
+    VAB = VAB_2nd_order_esp_jax(ref_points, fit_t, ref_charges, fit_charges, alpha, lam)
+    return VAB / (VAA + VBB - VAB)
+
+
+batched_obj_ROCS_esp_overlay_precomputed = vmap(
+    _objective_ROCS_esp_overlay_precomputed_jax,
+    (0, None, None, None, None, None, None, None, None)
+)
+
+
+def objective_ROCS_esp_overlay_precomputed_jax(se3_params, ref, fit,
+                                                ref_charges, fit_charges, alpha, lam, VAA, VBB):
+    scores = batched_obj_ROCS_esp_overlay_precomputed(
+        se3_params, ref, fit, ref_charges, fit_charges, alpha, lam, VAA, VBB)
+    return 1 - scores.mean()
+
+
+jit_val_grad_obj_ROCS_esp_precomputed = jit(
+    value_and_grad(objective_ROCS_esp_overlay_precomputed_jax)
+)
+
+
 def _objective_ROCS_esp_overlay_precomputed_jax_mask(se3_params, ref_points, fit_points,
                                                       ref_charges, fit_charges,
                                                       mask_ref, mask_fit, alpha, lam, VAA, VBB):
@@ -1059,6 +1086,248 @@ def _per_pair_optimize_vol_mask_scan(
     )
     best_idx = jnp.argmax(scores)
     return aligned_pts_all[best_idx], SE3_transforms[best_idx], scores[best_idx]
+
+
+def _per_pair_optimize_vol_esp_mask_scan(
+    ref_pts, fit_pts, ref_charges, fit_charges,
+    mask_ref, mask_fit, se3_init,
+    alpha, lam, VAA, VBB, lr, max_num_steps,
+):
+    """Per-pair masked volumetric ESP optimization via lax.scan — vmappable, fixed steps.
+
+    Parameters
+    ----------
+    ref_pts       : (N, 3) padded reference atom positions
+    fit_pts       : (M, 3) padded fit atom positions
+    ref_charges   : (N, 1) padded reference charges (column-shaped for jax_sq_cdist)
+    fit_charges   : (M, 1) padded fit charges
+    mask_ref      : (N,)   binary mask (1 = real atom, 0 = padding)
+    mask_fit      : (M,)   binary mask
+    se3_init      : (R, 7) pre-initialised SE(3) parameters
+    alpha         : scalar Gaussian width
+    lam           : scalar charge-weighting parameter
+    VAA, VBB      : scalar pre-computed ESP self-overlaps
+    lr            : scalar Adam learning rate
+    max_num_steps : Python int — compile-time constant
+
+    Returns
+    -------
+    aligned_pts   : (M, 3)
+    se3_transform : (4, 4)
+    score         : scalar
+    """
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(se3_init)
+
+    def scan_step(carry, _):
+        params, state = carry
+        loss, grads = value_and_grad(
+            objective_ROCS_esp_overlay_precomputed_jax_mask
+        )(params, ref_pts, fit_pts, ref_charges, fit_charges, mask_ref, mask_fit, alpha, lam, VAA, VBB)
+        updates, new_state = optimizer.update(grads, state, params)
+        new_params = optax.apply_updates(params, updates)
+        return (new_params, new_state), None
+
+    (se3_opt, _), _ = lax.scan(
+        scan_step, (se3_init, opt_state), None, length=max_num_steps
+    )
+
+    SE3_transforms = vmap_get_SE3_transform_jax(se3_opt)
+    aligned_pts_all = vmap_apply_SE3_transform_jax(fit_pts, SE3_transforms)
+    # squeeze charges to 1D for final scoring
+    scores = vmap_get_overlap_esp_jax_mask(
+        ref_pts, aligned_pts_all, ref_charges[..., 0], fit_charges[..., 0],
+        mask_ref, mask_fit, alpha, lam
+    )
+    best_idx = jnp.argmax(scores)
+    return aligned_pts_all[best_idx], SE3_transforms[best_idx], scores[best_idx]
+
+
+def _per_pair_optimize_surf_scan(
+    ref_pts, fit_pts, se3_init,
+    alpha, VAA, VBB, lr, max_num_steps,
+):
+    """Per-pair non-masked surface optimization via lax.scan — vmappable, fixed steps.
+
+    Parameters
+    ----------
+    ref_pts       : (N, 3) reference surface points (uniform size — no padding)
+    fit_pts       : (M, 3) fit surface points
+    se3_init      : (R, 7) pre-initialised SE(3) parameters
+    alpha         : scalar Gaussian width
+    VAA, VBB      : scalar pre-computed self-overlaps
+    lr            : scalar Adam learning rate
+    max_num_steps : Python int — compile-time constant
+
+    Returns
+    -------
+    aligned_pts   : (M, 3)
+    se3_transform : (4, 4)
+    score         : scalar
+    """
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(se3_init)
+
+    def scan_step(carry, _):
+        params, state = carry
+        loss, grads = value_and_grad(
+            objective_ROCS_overlay_precomputed_jax
+        )(params, ref_pts, fit_pts, alpha, VAA, VBB)
+        updates, new_state = optimizer.update(grads, state, params)
+        new_params = optax.apply_updates(params, updates)
+        return (new_params, new_state), None
+
+    (se3_opt, _), _ = lax.scan(
+        scan_step, (se3_init, opt_state), None, length=max_num_steps
+    )
+
+    SE3_transforms = vmap_get_SE3_transform_jax(se3_opt)
+    aligned_pts_all = vmap_apply_SE3_transform_jax(fit_pts, SE3_transforms)
+    scores = vmap_get_overlap_jax(ref_pts, aligned_pts_all, alpha)
+    best_idx = jnp.argmax(scores)
+    return aligned_pts_all[best_idx], SE3_transforms[best_idx], scores[best_idx]
+
+
+def _per_pair_optimize_surf_esp_scan(
+    ref_pts, fit_pts, ref_charges, fit_charges, se3_init,
+    alpha, lam, VAA, VBB, lr, max_num_steps,
+):
+    """Per-pair non-masked surface ESP optimization via lax.scan — vmappable, fixed steps.
+
+    Parameters
+    ----------
+    ref_pts       : (N, 3) reference surface points (uniform size — no padding)
+    fit_pts       : (M, 3) fit surface points
+    ref_charges   : (N,)   reference surface ESP values
+    fit_charges   : (M,)   fit surface ESP values
+    se3_init      : (R, 7) pre-initialised SE(3) parameters
+    alpha         : scalar Gaussian width
+    lam           : scalar charge-weighting parameter
+    VAA, VBB      : scalar pre-computed ESP self-overlaps
+    lr            : scalar Adam learning rate
+    max_num_steps : Python int — compile-time constant
+
+    Returns
+    -------
+    aligned_pts   : (M, 3)
+    se3_transform : (4, 4)
+    score         : scalar
+    """
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(se3_init)
+
+    def scan_step(carry, _):
+        params, state = carry
+        loss, grads = value_and_grad(
+            objective_ROCS_esp_overlay_precomputed_jax
+        )(params, ref_pts, fit_pts, ref_charges, fit_charges, alpha, lam, VAA, VBB)
+        updates, new_state = optimizer.update(grads, state, params)
+        new_params = optax.apply_updates(params, updates)
+        return (new_params, new_state), None
+
+    (se3_opt, _), _ = lax.scan(
+        scan_step, (se3_init, opt_state), None, length=max_num_steps
+    )
+
+    SE3_transforms = vmap_get_SE3_transform_jax(se3_opt)
+    aligned_pts_all = vmap_apply_SE3_transform_jax(fit_pts, SE3_transforms)
+    scores = vmap_get_overlap_esp_jax(ref_pts, aligned_pts_all, ref_charges, fit_charges, alpha, lam)
+    best_idx = jnp.argmax(scores)
+    return aligned_pts_all[best_idx], SE3_transforms[best_idx], scores[best_idx]
+
+
+@lru_cache(maxsize=8)
+def _per_pair_optimize_pharm_mask_scan_factory(similarity: str,
+                                               extended_points: bool,
+                                               only_extended: bool):
+    """Factory returning a lax.scan-based per-pair pharm optimizer with static args baked in.
+
+    Uses lru_cache so the inner function is only built once per unique
+    (similarity, extended_points, only_extended) combination — analogous to
+    ``_make_jit_val_grad_pharm_vectorized_mask``.
+
+    Returns
+    -------
+    Callable with signature:
+        _per_pair(ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                  ref_vectors, fit_vectors, mask_ref, mask_fit,
+                  se3_init, ref_self_score, fit_self_score, lr, max_num_steps)
+        -> (aligned_ancs (M,3), aligned_vecs (M,3), se3_transform (4,4), score scalar)
+    """
+    _overlap_fn = partial(get_overlap_pharm_jax_vectorized_mask,
+                          extended_points=extended_points,
+                          only_extended=only_extended)
+    _eps = 1e-6
+
+    def _loss(se3_params,
+              ref_pharms, fit_pharms,
+              ref_anchors, fit_anchors,
+              ref_vectors, fit_vectors,
+              mask_ref, mask_fit,
+              ref_self_score, fit_self_score):
+        return _loss_fn_pharm_vectorized_mask(
+            se3_params,
+            ref_pharms, fit_pharms,
+            ref_anchors, fit_anchors,
+            ref_vectors, fit_vectors,
+            mask_ref, mask_fit,
+            ref_self_score, fit_self_score,
+            similarity=similarity,
+            extended_points=extended_points,
+            only_extended=only_extended,
+        )
+
+    def _per_pair(ref_pharms, fit_pharms,
+                  ref_anchors, fit_anchors,
+                  ref_vectors, fit_vectors,
+                  mask_ref, mask_fit,
+                  se3_init, ref_self_score, fit_self_score,
+                  lr, max_num_steps):
+        optimizer = optax.adam(learning_rate=lr)
+        opt_state = optimizer.init(se3_init)
+
+        def scan_step(carry, _):
+            params, state = carry
+            loss, grads = value_and_grad(_loss)(
+                params,
+                ref_pharms, fit_pharms,
+                ref_anchors, fit_anchors,
+                ref_vectors, fit_vectors,
+                mask_ref, mask_fit,
+                ref_self_score, fit_self_score,
+            )
+            updates, new_state = optimizer.update(grads, state, params)
+            new_params = optax.apply_updates(params, updates)
+            return (new_params, new_state), None
+
+        (se3_opt, _), _ = lax.scan(
+            scan_step, (se3_init, opt_state), None, length=max_num_steps
+        )
+
+        SE3_transforms = vmap_get_SE3_transform_jax(se3_opt)
+        aligned_ancs_all = vmap_apply_SE3_transform_jax(fit_anchors, SE3_transforms)
+        aligned_vecs_all = vmap_apply_SO3_transform_jax(fit_vectors, SE3_transforms)
+
+        vab_scores = vmap(
+            _overlap_fn,
+            in_axes=(None, None, None, 0, None, 0, None, None)
+        )(ref_pharms, fit_pharms, ref_anchors, aligned_ancs_all,
+          ref_vectors, aligned_vecs_all, mask_ref, mask_fit)
+
+        if similarity == 'tanimoto':
+            final_scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + _eps)
+        elif similarity == 'tversky_ref':
+            final_scores = vab_scores / (ref_self_score + _eps)
+        elif similarity == 'tversky_fit':
+            final_scores = vab_scores / (fit_self_score + _eps)
+        else:
+            final_scores = vab_scores
+
+        best_idx = jnp.argmax(final_scores)
+        return (aligned_ancs_all[best_idx], aligned_vecs_all[best_idx],
+                SE3_transforms[best_idx], final_scores[best_idx])
+
+    return _per_pair
 
 
 def _objective_ROCS_esp_overlay_jax(se3_params: Array,

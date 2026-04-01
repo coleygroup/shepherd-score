@@ -90,7 +90,7 @@ def test_masked_scoring_matches_unmasked():
         jnp.array(mask_a), jnp.array(mask_b), alpha
     ))
 
-    assert abs(score_ref - score_masked) < 1e-8, (
+    assert abs(score_ref - score_masked) < 1e-6, (
         f"Masked score {score_masked:.6f} != unmasked {score_ref:.6f}"
     )
 

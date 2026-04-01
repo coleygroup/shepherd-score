@@ -9,6 +9,10 @@ from shepherd_score.container._batch_utils import (
     _pad_arrays,
     _dispatch_parallel,
     _align_vol_shmap,
+    _align_vol_esp_shmap,
+    _align_surf_shmap,
+    _align_esp_shmap,
+    _align_pharm_shmap,
     _align_vol_worker,
     _align_vol_esp_worker,
     _align_surf_worker,
@@ -109,12 +113,9 @@ class MoleculePairBatch:
         Because all padded arrays have the same shape, JAX's XLA compiler
         reuses one compiled kernel for every pair — no recompilation overhead.
 
-        When ``num_workers > 1`` the pairs are split into chunks and processed in
-        parallel using ``multiprocessing`` with a ``'spawn'`` start method (safe
-        for JAX, which is multithreaded and can deadlock under ``fork``).  Each
-        worker independently pads its chunk and runs a fresh JAX session.
-        Results are gathered and written back to the pair objects in original
-        order, identical to the sequential case.
+        When ``num_workers > 1`` the pairs are split into size-sorted chunks
+        and processed in parallel. It is recommended to use ``use_shmap=True``
+        instead of ``multiprocessing`` for this setting.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_vol_noH`` / ``pair.sim_aligned_vol_noH`` (when ``no_H=True``)
@@ -134,20 +135,19 @@ class MoleculePairBatch:
             Maximum optimization steps. Default is 200.
         num_workers : int
             Number of parallel workers.  ``1`` (default) runs sequentially
-            in-process.  When ``use_shmap=False`` (the default), values greater
-            than ``1`` use ``multiprocessing`` with a ``'spawn'`` start method.
-            When ``use_shmap=True``, this value is informational; actual
-            parallelism equals ``len(jax.devices())``, which is set by
-            ``XLA_FLAGS`` **before** JAX is first imported.
+            in-process. When ``use_shmap=True`` (the default), this value is informational;
+            actual parallelism equals ``len(jax.devices())``, which is set by
+            ``XLA_FLAGS`` **before** JAX is first imported. When ``use_shmap=False``
+            use ``multiprocessing`` with a ``'spawn'`` start method.
         use_shmap : bool
             If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
             to parallelise across virtual CPU devices in a single process.
             Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
             to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
             no early stopping) instead of the ``while_loop``-based sequential
-            path.  Recommended on Linux HPC where ``multiprocessing`` spawn
-            can be unreliable with JAX.  Default is ``False``.
-        n_buckets : int
+            path.  Required on Linux HPC if num_workers > 1 where ``multiprocessing``
+            spawn can be unreliable with JAX.  Default is ``True``.
+        num_buckets : int
             Only used when ``use_shmap=True``.  ``1`` (default) pads all
             pairs to the global atom-count maximum and runs a single
             shard_map call — lowest overhead for typical use.  Values > 1
@@ -287,6 +287,8 @@ class MoleculePairBatch:
                            lr: float = 0.1,
                            max_num_steps: int = 200,
                            num_workers: int = 1,
+                           use_shmap: bool = True,
+                           num_buckets: int = 1,
                            verbose: bool = False,
                            ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using padded masked volumetric ESP similarity via JAX.
@@ -295,9 +297,8 @@ class MoleculePairBatch:
         reuses one compiled kernel for every pair — no recompilation overhead.
 
         When ``num_workers > 1`` the pairs are split into size-sorted chunks
-        and processed in parallel using ``multiprocessing`` with a ``'spawn'``
-        start method (safe for JAX). See ``align_with_vol`` for details on the
-        multiprocessing strategy.
+        and processed in parallel. It is recommended to use ``use_shmap=True``
+        instead of ``multiprocessing`` for this setting.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_vol_esp_noH`` / ``pair.sim_aligned_vol_esp_noH`` (when ``no_H=True``)
@@ -321,6 +322,22 @@ class MoleculePairBatch:
             Number of parallel worker processes. ``1`` (default) runs
             sequentially in-process. Values greater than ``len(self.pairs)``
             are clamped to ``len(self.pairs)``.
+        use_shmap : bool
+            If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
+            to parallelise across virtual CPU devices in a single process.
+            Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
+            to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
+            no early stopping) instead of the ``while_loop``-based sequential
+            path.  Required on Linux HPC if num_workers > 1 where ``multiprocessing``
+            spawn can be unreliable with JAX.  Default is ``True``.
+        num_buckets : int
+            Only used when ``use_shmap=True``.  ``1`` (default) pads all
+            pairs to the global atom-count maximum and runs a single
+            shard_map call — lowest overhead for typical use.  Values > 1
+            sort pairs by ``(max(ref,fit), min(ref,fit))`` and process each
+            bucket separately with reduced per-bucket padding, which can be
+            beneficial for large (>10k) heterogeneous molecule sets.
+
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -355,7 +372,33 @@ class MoleculePairBatch:
         scores = np.zeros(n_pairs)
         aligned_list = [None] * n_pairs
 
-        if num_workers > 1: # parallel
+        if use_shmap:
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
+
+        if use_shmap and num_workers > 1:  # shard_map path
+            pair_data = list(zip(raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list))
+            results = _align_vol_esp_shmap(
+                pair_data, num_workers, lam, num_repeats, lr, max_num_steps, verbose,
+                num_buckets=num_buckets,
+            )
+            for i, (score, se3_transform, aligned_pts) in enumerate(results):
+                scores[i] = score
+                aligned_list[i] = aligned_pts
+                pair = self.pairs[i]
+                if no_H:
+                    pair.transform_vol_esp_noH = se3_transform
+                    pair.sim_aligned_vol_esp_noH = score
+                else:
+                    pair.transform_vol_esp = se3_transform
+                    pair.sim_aligned_vol_esp = score
+
+        elif num_workers > 1: # parallel
             pair_data = list(zip(raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list))
             ref_sizes = np.array([len(r) for r in raw_refs])
             fit_sizes = np.array([len(f) for f in raw_fits])
@@ -463,14 +506,14 @@ class MoleculePairBatch:
                         use_jax: bool = True,
                         use_analytical: bool = True,
                         num_workers: int = 1,
+                        use_shmap: bool = False,
                         verbose: bool = False,
                         ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using surface similarity.
 
         Surface arrays are the same size across all pairs so no padding or
-        size-sorting is needed.  When ``num_workers > 1`` pairs are split into
-        equal chunks and processed in parallel using ``multiprocessing`` with a
-        ``'spawn'`` start method.
+        size-sorting is needed.  It is not recommended to use multiprocessing
+        due to this reason.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_surf`` and ``pair.sim_aligned_surf``
@@ -495,6 +538,9 @@ class MoleculePairBatch:
             Number of parallel worker processes. ``1`` (default) runs
             sequentially in-process. Values greater than ``len(self.pairs)``
             are clamped to ``len(self.pairs)``.
+        use_shmap : bool
+            Whether to use JAX shard_map for parallel alignment. Default is False.
+            Performance is better when use_shmap is False on cpu.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -505,14 +551,38 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
-        if num_workers > 1: # parallel
-            n_pairs = len(self.pairs)
-            pair_data = [
-                (pair.ref_molec.surf_pos,
-                 pair.fit_molec.surf_pos,
-                 pair.ref_molec.atom_pos if trans_init else None)
-                for pair in self.pairs
-            ]
+        if use_shmap:
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
+
+        n_pairs = len(self.pairs)
+        pair_data = [
+            (pair.ref_molec.surf_pos,
+             pair.fit_molec.surf_pos,
+             pair.ref_molec.atom_pos if trans_init else None)
+            for pair in self.pairs
+        ]
+
+        if use_shmap and num_workers > 1:  # shard_map path
+            results = _align_surf_shmap(
+                pair_data, num_workers, alpha, num_repeats, lr, max_num_steps, verbose,
+            )
+            scores = np.zeros(n_pairs)
+            aligned_list = [None] * n_pairs
+            for i, (score, se3_transform, aligned_pts) in enumerate(results):
+                scores[i] = score
+                aligned_list[i] = aligned_pts
+                pair = self.pairs[i]
+                pair.transform_surf = se3_transform
+                pair.sim_aligned_surf = score
+            return scores, aligned_list
+
+        elif num_workers > 1: # parallel
             index_splits, chunk_results = _dispatch_parallel(
                 pair_data, None, _align_surf_worker, num_workers,
                 (alpha, num_repeats, lr, max_num_steps, use_jax, use_analytical, verbose),
@@ -552,14 +622,14 @@ class MoleculePairBatch:
                        use_jax: bool = True,
                        use_analytical: bool = True,
                        num_workers: int = 1,
+                       use_shmap: bool = False,
                        verbose: bool = False,
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs using ESP+surface similarity.
 
         Surface arrays are the same size across all pairs so no padding or
-        size-sorting is needed.  When ``num_workers > 1`` pairs are split into
-        equal chunks and processed in parallel using ``multiprocessing`` with a
-        ``'spawn'`` start method.
+        size-sorting is needed.  It is not recommended to use multiprocessing
+        due to this reason.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_esp`` and ``pair.sim_aligned_esp``
@@ -586,6 +656,9 @@ class MoleculePairBatch:
             Number of parallel worker processes. ``1`` (default) runs
             sequentially in-process. Values greater than ``len(self.pairs)``
             are clamped to ``len(self.pairs)``.
+        use_shmap : bool
+            Whether to use JAX shard_map for parallel alignment. Default is False.
+            Performance is better when use_shmap is False on cpu.
         verbose : bool
             Print scores per pair. Default is False.
 
@@ -596,19 +669,43 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
-        if num_workers > 1: # parallel
-            from shepherd_score.score.constants import LAM_SCALING
-            lam_scaled = float(LAM_SCALING * lam)
+        from shepherd_score.score.constants import LAM_SCALING
+        lam_scaled = float(LAM_SCALING * lam)
 
-            n_pairs = len(self.pairs)
-            pair_data = [
-                (pair.ref_molec.surf_pos,
-                 pair.fit_molec.surf_pos,
-                 pair.ref_molec.surf_esp,
-                 pair.fit_molec.surf_esp,
-                 pair.ref_molec.atom_pos if trans_init else None)
-                for pair in self.pairs
-            ]
+        if use_shmap:
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
+
+        n_pairs = len(self.pairs)
+        pair_data = [
+            (pair.ref_molec.surf_pos,
+             pair.fit_molec.surf_pos,
+             pair.ref_molec.surf_esp,
+             pair.fit_molec.surf_esp,
+             pair.ref_molec.atom_pos if trans_init else None)
+            for pair in self.pairs
+        ]
+
+        if use_shmap and num_workers > 1:  # shard_map path
+            results = _align_esp_shmap(
+                pair_data, num_workers, alpha, lam_scaled, num_repeats, lr, max_num_steps, verbose,
+            )
+            scores = np.zeros(n_pairs)
+            aligned_list = [None] * n_pairs
+            for i, (score, se3_transform, aligned_pts) in enumerate(results):
+                scores[i] = score
+                aligned_list[i] = aligned_pts
+                pair = self.pairs[i]
+                pair.transform_esp = se3_transform
+                pair.sim_aligned_esp = score
+            return scores, aligned_list
+
+        elif num_workers > 1: # parallel
             index_splits, chunk_results = _dispatch_parallel(
                 pair_data, None, _align_esp_worker, num_workers,
                 (alpha, lam_scaled, num_repeats, lr, max_num_steps,
@@ -712,6 +809,8 @@ class MoleculePairBatch:
                          lr: float = 0.1,
                          max_num_steps: int = 200,
                          num_workers: int = 1,
+                         use_shmap: bool = True,
+                         num_buckets: int = 1,
                          verbose: bool = False,
                          ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
         """Align all pairs using padded masked pharmacophore similarity via JAX.
@@ -720,9 +819,8 @@ class MoleculePairBatch:
         reuses one compiled kernel for every pair — no recompilation overhead.
 
         When ``num_workers > 1`` the pairs are split into size-sorted chunks and
-        processed in parallel using ``multiprocessing`` with a ``'spawn'`` start
-        method (safe for JAX). See ``align_with_vol`` for details on the
-        multiprocessing strategy.
+        processed in parallel. It is recommended to use ``use_shmap=True``
+        instead of ``multiprocessing`` for this setting.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_pharm`` and ``pair.sim_aligned_pharm``
@@ -747,6 +845,22 @@ class MoleculePairBatch:
             Number of parallel worker processes. ``1`` (default) runs
             sequentially in-process. Values greater than ``len(self.pairs)``
             are clamped to ``len(self.pairs)``.
+        use_shmap : bool
+            If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
+            to parallelise across virtual CPU devices in a single process.
+            Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
+            to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
+            no early stopping) instead of the ``while_loop``-based sequential
+            path.  Required on Linux HPC if num_workers > 1 where ``multiprocessing``
+            spawn can be unreliable with JAX.  Default is ``True``.
+        num_buckets : int
+            Only used when ``use_shmap=True``.  ``1`` (default) pads all
+            pairs to the global atom-count maximum and runs a single
+            shard_map call — lowest overhead for typical use.  Values > 1
+            sort pairs by ``(max(ref,fit), min(ref,fit))`` and process each
+            bucket separately with reduced per-bucket padding, which can be
+            beneficial for large (>10k) heterogeneous molecule sets.
+
         verbose : bool
             Print scores per pair.
 
@@ -789,7 +903,29 @@ class MoleculePairBatch:
                 pair.fit_molec.pharm_ancs,
             ))
 
-        if num_workers > 1: # parallel
+        if use_shmap:
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
+
+        if use_shmap and num_workers > 1:  # shard_map path
+            results = _align_pharm_shmap(
+                pair_data, num_workers, similarity, extended_points, only_extended,
+                num_repeats, lr, max_num_steps, verbose, num_buckets=num_buckets,
+            )
+            for i, (score, se3_transform, aligned_ancs, aligned_vecs) in enumerate(results):
+                scores[i] = score
+                aligned_anchors_list[i] = aligned_ancs
+                aligned_vectors_list[i] = aligned_vecs
+                pair = self.pairs[i]
+                pair.transform_pharm = se3_transform
+                pair.sim_aligned_pharm = score
+
+        elif num_workers > 1: # parallel
             ref_sizes = np.array([len(d[2]) for d in pair_data])  # ref_ancs
             fit_sizes = np.array([len(d[3]) for d in pair_data])  # fit_ancs
             # Primary key: max(ref, fit) — dominates padding; secondary: min.

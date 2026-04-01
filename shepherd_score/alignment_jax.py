@@ -14,4 +14,8 @@ from shepherd_score.alignment._jax import (   # explicit for IDE/type checkers
 )
 from shepherd_score.alignment._jax_parallel import (  # parallel (shard_map) functions
     optimize_ROCS_overlay_jax_vol_shmap,
+    optimize_ROCS_esp_overlay_jax_vol_esp_shmap,
+    optimize_ROCS_overlay_jax_surf_shmap,
+    optimize_ROCS_esp_overlay_jax_surf_esp_shmap,
+    optimize_pharm_overlay_jax_pharm_shmap,
 )
