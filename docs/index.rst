@@ -46,6 +46,12 @@ Quick Install
    theory
 
 .. toctree::
+   :caption: Performance
+   :maxdepth: 2
+
+   performance/timings
+
+.. toctree::
    :caption: Tutorials
    :maxdepth: 2
 

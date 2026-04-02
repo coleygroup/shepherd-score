@@ -62,7 +62,7 @@ The recommended entry point is
    # Bucketed: useful for >10k pairs with diverse molecule sizes
    scores, aligned = batch.align_with_vol(num_workers=4, use_shmap=True, n_buckets=8)
 
-See :doc:`../container` for details on bucketing and masking strategy.
+See :doc:`../container/molecule_pair_batch` for details on bucketing and masking strategy.
 
 Direct usage
 ------------
