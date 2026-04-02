@@ -165,6 +165,90 @@ def get_overlap_pharm_jax_vectorized(
     return jnp.sum(final_terms * matches)
 
 
+@partial(jit, static_argnames=['extended_points', 'only_extended'])
+def get_overlap_pharm_jax_vectorized_mask(
+    ptype_1: Array, ptype_2: Array,
+    anchors_1: Array, anchors_2: Array,
+    vectors_1: Array, vectors_2: Array,
+    mask_1: Array, mask_2: Array,
+    extended_points: bool = False,
+    only_extended: bool = False
+) -> Array:
+    """
+    Fully vectorized pharmacophore overlap with padding masks.
+
+    Identical to ``get_overlap_pharm_jax_vectorized`` but multiplies by a
+    padding mask so that padded entries (type=8/Dummy, coords=zeros) never
+    contribute to the overlap.
+
+    Parameters
+    ----------
+    ptype_1 : Array (N,)
+    ptype_2 : Array (M,)
+    anchors_1 : Array (N,3)
+    anchors_2 : Array (M,3)
+    vectors_1 : Array (N,3)
+    vectors_2 : Array (M,3)
+    mask_1 : Array (N,)   — 1.0 for real entries, 0.0 for padding
+    mask_2 : Array (M,)   — 1.0 for real entries, 0.0 for padding
+    extended_points : bool
+    only_extended : bool
+
+    Returns
+    -------
+    score : Array (1,)
+        Pharmacophore overlap score.
+    """
+    # 1. Precompute geometry (N, M)
+    d2_anchors, d2_ext, dot_matrix = precompute_geometry(
+        anchors_1, anchors_2, vectors_1, vectors_2, extended_points
+    )
+
+    # 2. Get pharmacophore properties
+    alphas_1, modes_1 = get_interaction_properties(ptype_1)
+
+    # Broadcast to (N, M)
+    alphas_matrix = alphas_1[:, None]
+    modes_matrix = modes_1[:, None]
+    matches = (ptype_1[:, None] == ptype_2[None, :])  # (N, M)
+
+    # 3. One-shot computation
+    prefactors = (jnp.pi / (2.0 * alphas_matrix)) ** 1.5
+
+    is_mode_0 = (modes_matrix == 0)
+    is_mode_1 = (modes_matrix == 1)
+    is_mode_2 = (modes_matrix == 2)
+
+    sim_raw = (
+        jnp.where(is_mode_0, 1.0, 0.0) +
+        jnp.where(is_mode_1, jnp.abs(dot_matrix), 0.0) +
+        jnp.where(is_mode_2, jnp.maximum(0.0, dot_matrix), 0.0)
+    )
+    vec_factor = (sim_raw + 2.0) / 3.0
+    spatial_anchor = jnp.exp(-0.5 * alphas_matrix * d2_anchors)
+
+    # 4. Extended points logic
+    if extended_points:
+        spatial_extended = jnp.exp(-0.5 * alphas_matrix * d2_ext)
+
+        use_ext_logic = is_mode_2
+
+        term_ext_part = spatial_extended
+        term_anc_part = jnp.where(only_extended, 0.0, spatial_anchor)
+        score_extended = (term_ext_part + term_anc_part) * prefactors
+
+        score_standard = spatial_anchor * vec_factor * prefactors
+
+        final_terms = jnp.where(use_ext_logic, score_extended, score_standard)
+
+    else:
+        final_terms = spatial_anchor * vec_factor * prefactors
+
+    # 5. Apply padding mask and type-match mask, then sum
+    padding_mask = mask_1[:, None] * mask_2[None, :]  # (N, M)
+    return jnp.sum(final_terms * matches * padding_mask)
+
+
 @partial(jit, static_argnames=['overlap_func', 'allow_antiparallel'])
 def _compute_ref_overlap_jax(overlap_func: Callable,
                              anchors_1: Array,

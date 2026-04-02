@@ -217,10 +217,19 @@ def compute_overlap_and_grad_pharm(
     ref_anchors: torch.Tensor,
     fit_anchors_orig: torch.Tensor,
     ref_vectors: torch.Tensor,
-    fit_vectors_orig: torch.Tensor
+    fit_vectors_orig: torch.Tensor,
+    extended_points: bool = False,
+    only_extended: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute overlap O_AB and gradients fully vectorized across all types.
+
+    When ``extended_points=True``, directional types (Acceptor, Donor, Halogen,
+    cat==1) are scored using a plain Gaussian overlap at the extended point
+    positions (anchor + normalized vector) instead of cosine weighting.  If
+    ``only_extended=True`` the anchor overlap for those types is skipped
+    entirely; otherwise both anchor (w=1) and extended overlaps are included.
+    Non-directional (cat==0) and Aromatic (cat==2) types are unaffected.
     """
     batched = R.dim() == 3
     if not batched:
@@ -265,8 +274,17 @@ def compute_overlap_and_grad_pharm(
     w_dir = (D_clamped + 2.0) / 3.0
     w_arom = (torch.abs(D_ab) + 2.0) / 3.0
 
-    w_ab = torch.where(cat_ab == 1, w_dir,
-           torch.where(cat_ab == 2, w_arom, 1.0)).to(R.dtype)
+    if extended_points:
+        # For cat==1 (Acceptor/Donor/Halogen): anchor weight is 1.0 (plain) or
+        # 0.0 (skip) depending on only_extended.  Aromatic and non-directional
+        # types keep their normal weights.
+        anchor_w_dir = 0.0 if only_extended else 1.0
+        w_ab = torch.where(cat_ab == 1,
+               torch.full_like(w_dir, anchor_w_dir),
+               torch.where(cat_ab == 2, w_arom, 1.0)).to(R.dtype)
+    else:
+        w_ab = torch.where(cat_ab == 1, w_dir,
+               torch.where(cat_ab == 2, w_arom, 1.0)).to(R.dtype)
 
     wE_ab = w_ab * E_ab
 
@@ -287,8 +305,12 @@ def compute_overlap_and_grad_pharm(
     coeff_dir = (D_ab > 0.0) & (D_ab < 1.0)
     coeff_arom = torch.sign(D_ab)
 
-    c_ab = torch.where(cat_ab == 1, coeff_dir.to(R.dtype),
-           torch.where(cat_ab == 2, coeff_arom.to(R.dtype), 0.0)).to(R.dtype)
+    if extended_points:
+        # w for cat==1 is constant (1.0 or 0.0), so no weight gradient contribution
+        c_ab = torch.where(cat_ab == 2, coeff_arom.to(R.dtype), 0.0).to(R.dtype)
+    else:
+        c_ab = torch.where(cat_ab == 1, coeff_dir.to(R.dtype),
+               torch.where(cat_ab == 2, coeff_arom.to(R.dtype), 0.0)).to(R.dtype)
 
     coeff = (1.0 / 3.0) * K_ab * E_ab * c_ab
 
@@ -296,6 +318,32 @@ def compute_overlap_and_grad_pharm(
     grad_R_weight = torch.bmm(gRw_tmp, fit_vectors_orig_n)
 
     grad_R = grad_R_spatial + grad_R_weight
+
+    if extended_points:
+        # Extended point positions: R*(anchor + vector) + t = fit_anchors_t + fit_vectors_n
+        fit_ext = fit_anchors_t + fit_vectors_n   # (B, n_fit, 3)
+        ref_ext = ref_anchors + ref_vectors_n      # (B, n_ref, 3)
+
+        # Only directional types (cat==1) contribute extended overlap
+        mask_dir = (cat_ab == 1).to(R.dtype) * mask.to(R.dtype)
+
+        dist_sq_ext = torch.cdist(fit_ext, ref_ext, p=2.0) ** 2
+        E_ext = torch.exp(-alpha_ab / 2.0 * dist_sq_ext) * mask_dir
+
+        O_AB = O_AB + (K_ab * E_ext).sum(dim=(1, 2))
+
+        alpha_K_E_ext = -alpha_ab * K_ab * E_ext
+        sum_ext_b = alpha_K_E_ext.sum(dim=2)  # (B, n_fit)
+        sum_ext_a = alpha_K_E_ext.sum(dim=1)  # (B, n_ref)
+
+        grad_t = grad_t + (sum_ext_b.unsqueeze(-1) * fit_ext).sum(dim=1) \
+                        - (sum_ext_a.unsqueeze(-1) * ref_ext).sum(dim=1)
+
+        # Rotation gradient: outer product uses fit_anchors_orig + fit_vectors_orig_n
+        fit_combined_orig = fit_anchors_orig + fit_vectors_orig_n
+        term_Z_ext = torch.bmm(alpha_K_E_ext, ref_ext)
+        delta_sum_ext = sum_ext_b.unsqueeze(-1) * fit_ext - term_Z_ext
+        grad_R = grad_R + torch.bmm(delta_sum_ext.transpose(1, 2), fit_combined_orig)
 
     if not batched:
         return O_AB[0], grad_R[0], grad_t[0]
@@ -308,7 +356,9 @@ def compute_self_overlaps_pharm(
     anchors_1: torch.Tensor,
     anchors_2: torch.Tensor,
     vectors_1: torch.Tensor,
-    vectors_2: torch.Tensor
+    vectors_2: torch.Tensor,
+    extended_points: bool = False,
+    only_extended: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Compute self-overlaps VAA and VBB vectorially.
@@ -316,8 +366,14 @@ def compute_self_overlaps_pharm(
     eye3 = torch.eye(3, device=anchors_1.device, dtype=anchors_1.dtype)
     zero = torch.zeros(3, device=anchors_1.device, dtype=anchors_1.dtype)
 
-    VAA, _, _ = compute_overlap_and_grad_pharm(eye3, zero, ptype_1, ptype_1, anchors_1, anchors_1, vectors_1, vectors_1)
-    VBB, _, _ = compute_overlap_and_grad_pharm(eye3, zero, ptype_2, ptype_2, anchors_2, anchors_2, vectors_2, vectors_2)
+    VAA, _, _ = compute_overlap_and_grad_pharm(
+        eye3, zero, ptype_1, ptype_1, anchors_1, anchors_1, vectors_1, vectors_1,
+        extended_points=extended_points, only_extended=only_extended,
+    )
+    VBB, _, _ = compute_overlap_and_grad_pharm(
+        eye3, zero, ptype_2, ptype_2, anchors_2, anchors_2, vectors_2, vectors_2,
+        extended_points=extended_points, only_extended=only_extended,
+    )
 
     return VAA, VBB
 
@@ -881,6 +937,8 @@ def compute_analytical_grad_se3(
     VBB_total: torch.Tensor,
     similarity: str = 'tanimoto',
     sigma: float = 0.5,
+    extended_points: bool = False,
+    only_extended: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     batched = se3_params.dim() == 2
 
@@ -905,7 +963,8 @@ def compute_analytical_grad_se3(
         R = _rotation_matrix_from_unit_quat(q_norm)
 
         O_AB, grad_R, grad_t = compute_overlap_and_grad_pharm(
-            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors,
+            extended_points=extended_points, only_extended=only_extended,
         )
 
         loss, scaled_grad_R, scaled_grad_t = chain_rule_fn(O_AB, grad_R, grad_t)
@@ -931,7 +990,8 @@ def compute_analytical_grad_se3(
         R = _rotation_matrix_from_unit_quat(q_norm)
 
         O_AB, grad_R, grad_t = compute_overlap_and_grad_pharm(
-            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vectors, fit_vectors,
+            extended_points=extended_points, only_extended=only_extended,
         )
 
         loss, scaled_grad_R, scaled_grad_t = chain_rule_fn(O_AB, grad_R, grad_t)

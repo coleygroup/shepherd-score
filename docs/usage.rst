@@ -71,8 +71,17 @@ conformer) and generates user-specified interaction profiles.
 MoleculePair Class
 ~~~~~~~~~~~~~~~~~~
 
-:class:`shepherd_score.container.MoleculePair` operates on ``Molecule`` objects and prepares 
+:class:`shepherd_score.container.MoleculePair` operates on ``Molecule`` objects and prepares
 them for scoring and alignment.
+
+MoleculePairBatch Class
+~~~~~~~~~~~~~~~~~~~~~~~
+
+:class:`shepherd_score.container.MoleculePairBatch` operates on a list of `MoleculePair`
+objects and enables accelerated alignment by padding all arrays to a common shape so a
+single compiled JAX kernel is reused across every pair. Supports optional multi-CPU
+parallelism.
+
 
 Extraction Example
 ------------------
@@ -146,7 +155,7 @@ similarity metrics:
 Alignment Example
 -----------------
 
-Alignment using the MoleculePair class:
+Alignment using the :class:`shepherd_score.container.MoleculePair` class:
 
 .. code-block:: python
 
@@ -170,6 +179,21 @@ Alignment using the MoleculePair class:
    transformed_fit_molec = mp.get_transformed_molecule(
        se3_transform=mp.transform_surf  # or mp.transform_esp, mp.transform_pharm
    )
+
+Acclerated alignment of multiple pairs using the :class:`shepherd_score.container.MoleculePairBatch` class:
+
+.. code-block:: python
+
+   from shepherd_score.container import MoleculePairBatch
+
+   batch = MoleculePairBatch(pairs)  # list of MoleculePair objects
+
+   # JAX-based volumetric alignment with padding
+   scores, aligned = batch.align_with_vol()
+
+   # Multi-CPU parallel via shard_map (must set XLA_FLAGS *before* importing JAX)
+   scores, aligned = batch.align_with_vol(num_workers=4, num_buckets=4, use_shmap=True)
+
 
 Evaluation Pipelines
 --------------------

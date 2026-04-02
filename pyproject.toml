@@ -65,9 +65,12 @@ docs = [
     "myst-nb>=1.0",
 ]
 jax = [
-    "jax>=0.4.20",
-    "jaxlib>=0.4.20",
-    "optax>=0.2.0",
+    "jax>=0.4.20; python_version <'3.11'",
+    "jaxlib>=0.4.20; python_version <'3.11'",
+    "optax>=0.2.0; python_version <'3.11'",
+    "jax>=0.9.0; python_version >='3.11'",
+    "jaxlib>=0.9.0; python_version >='3.11'",
+    "optax>=0.2.6; python_version >='3.11'",
     "scikit-learn>=1.3",
 ]
 docking = [

@@ -9,4 +9,5 @@ Functions for aligning molecules based on their interaction profiles.
    main
    analytical_gradients
    jax
+   jax_parallel
    utilities

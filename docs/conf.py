@@ -140,3 +140,6 @@ intersphinx_mapping = {
 
 # myst-nb settings
 nb_execution_mode = 'off'  # Don't execute notebooks during build
+
+# MyST extensions: enable dollar-sign math ($...$ and $$...$$) in .md files
+myst_enable_extensions = ["dollarmath", "amsmath"]

@@ -470,6 +470,130 @@ class TestFullAnalyticalGradient:
 
 
 # =====================================================================
+# Phase 4b: Extended Points Overlap Gradient Tests
+# =====================================================================
+
+class TestOverlapGradientExtendedPoints:
+    """Finite-difference checks for compute_overlap_and_grad_pharm with extended_points."""
+
+    def _fd_grad_t(self, R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                   ref_vecs, fit_vecs, extended_points, only_extended, eps=1e-6):
+        grad_t_fd = torch.zeros(3, dtype=torch.float64)
+        for i in range(3):
+            t_plus = t.clone()
+            t_plus[i] += eps
+            t_minus = t.clone()
+            t_minus[i] -= eps
+            O_plus, _, _ = compute_overlap_and_grad_pharm(
+                R, t_plus, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+                extended_points=extended_points, only_extended=only_extended)
+            O_minus, _, _ = compute_overlap_and_grad_pharm(
+                R, t_minus, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+                extended_points=extended_points, only_extended=only_extended)
+            grad_t_fd[i] = (O_plus - O_minus) / (2 * eps)
+        return grad_t_fd
+
+    def _fd_grad_R(self, R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                   ref_vecs, fit_vecs, extended_points, only_extended, eps=1e-6):
+        grad_R_fd = torch.zeros(3, 3, dtype=torch.float64)
+        for i in range(3):
+            for j in range(3):
+                R_plus = R.clone()
+                R_plus[i, j] += eps
+                R_minus = R.clone()
+                R_minus[i, j] -= eps
+                O_plus, _, _ = compute_overlap_and_grad_pharm(
+                    R_plus, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+                    extended_points=extended_points, only_extended=only_extended)
+                O_minus, _, _ = compute_overlap_and_grad_pharm(
+                    R_minus, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+                    extended_points=extended_points, only_extended=only_extended)
+                grad_R_fd[i, j] = (O_plus - O_minus) / (2 * eps)
+        return grad_R_fd
+
+    def test_translation_grad_extended_matches_fd(self):
+        """extended_points=True: analytical grad_t matches finite differences."""
+        # Use only directional types to exercise the extended path
+        data = _make_single_type_data(ptype_idx=0, seed=42, dtype=torch.float64)  # Acceptor
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+        q = _random_unit_quaternion(seed=10)
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, _, grad_t_a = compute_overlap_and_grad_pharm(
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+            extended_points=True, only_extended=False)
+
+        grad_t_fd = self._fd_grad_t(R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                                    ref_vecs, fit_vecs, extended_points=True, only_extended=False)
+        torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4)
+
+    def test_translation_grad_only_extended_matches_fd(self):
+        """only_extended=True: analytical grad_t matches finite differences."""
+        data = _make_single_type_data(ptype_idx=0, seed=77, dtype=torch.float64)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+        q = _random_unit_quaternion(seed=20)
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, _, grad_t_a = compute_overlap_and_grad_pharm(
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+            extended_points=True, only_extended=True)
+
+        grad_t_fd = self._fd_grad_t(R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                                    ref_vecs, fit_vecs, extended_points=True, only_extended=True)
+        torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4)
+
+    def test_rotation_grad_extended_matches_fd(self):
+        """extended_points=True: analytical grad_R matches finite differences."""
+        data = _make_single_type_data(ptype_idx=0, seed=99, dtype=torch.float64)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+        q = _random_unit_quaternion(seed=30)
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, grad_R_a, _ = compute_overlap_and_grad_pharm(
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+            extended_points=True, only_extended=False)
+
+        grad_R_fd = self._fd_grad_R(R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                                    ref_vecs, fit_vecs, extended_points=True, only_extended=False)
+        torch.testing.assert_close(grad_R_a, grad_R_fd, atol=1e-4, rtol=1e-4)
+
+    def test_rotation_grad_only_extended_matches_fd(self):
+        """only_extended=True: analytical grad_R matches finite differences."""
+        data = _make_single_type_data(ptype_idx=0, seed=111, dtype=torch.float64)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+        q = _random_unit_quaternion(seed=40)
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, grad_R_a, _ = compute_overlap_and_grad_pharm(
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+            extended_points=True, only_extended=True)
+
+        grad_R_fd = self._fd_grad_R(R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                                    ref_vecs, fit_vecs, extended_points=True, only_extended=True)
+        torch.testing.assert_close(grad_R_a, grad_R_fd, atol=1e-4, rtol=1e-4)
+
+    def test_mixed_types_extended_translation_fd(self):
+        """Mixed types with extended_points=True: grad_t vs finite differences."""
+        data = _random_pharmacophore_data(n_ref=6, n_fit=5, seed=123, dtype=torch.float64)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+        q = _random_unit_quaternion(seed=50)
+        R = _rotation_matrix_from_unit_quat(q)
+        t = torch.randn(3, dtype=torch.float64)
+
+        _, _, grad_t_a = compute_overlap_and_grad_pharm(
+            R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs,
+            extended_points=True, only_extended=False)
+
+        grad_t_fd = self._fd_grad_t(R, t, ref_pharms, fit_pharms, ref_anchors, fit_anchors,
+                                    ref_vecs, fit_vecs, extended_points=True, only_extended=False)
+        torch.testing.assert_close(grad_t_a, grad_t_fd, atol=1e-4, rtol=1e-4)
+
+
+# =====================================================================
 # Phase 5: Optimizer Integration
 # =====================================================================
 
@@ -559,20 +683,110 @@ class TestOptimizePharmOverlayAnalytical:
             assert abs(score_a.item() - score_ag.item()) < 1e-4, \
                 f"{sim}: analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
-    def test_tversky_extended_points_not_implemented(self):
-        """Verify extended_points=True still raises NotImplementedError."""
-        from shepherd_score.alignment import optimize_pharm_overlay_analytical
+    def test_extended_points_matches_autograd_single(self):
+        """extended_points=True, num_repeats=1: analytical score matches autograd."""
+        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
 
-        data = self._get_test_data()
+        data = self._get_test_data(seed=42)
         ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
 
-        with pytest.raises(NotImplementedError):
-            optimize_pharm_overlay_analytical(
+        _, _, _, score_ag = optimize_pharm_overlay(
+            ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+            ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+            ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+            similarity='tanimoto', extended_points=True, num_repeats=1,
+            lr=0.1, max_num_steps=200
+        )
+
+        _, _, _, score_a = optimize_pharm_overlay_analytical(
+            ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+            ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+            ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+            similarity='tanimoto', extended_points=True, num_repeats=1,
+            lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
+            f"extended_points=True single: analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_extended_points_matches_autograd_batched(self):
+        """extended_points=True, num_repeats=5: analytical score matches autograd."""
+        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
+
+        data = self._get_test_data(seed=55)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+
+        _, _, _, score_ag = optimize_pharm_overlay(
+            ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+            ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+            ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+            similarity='tanimoto', extended_points=True, num_repeats=5,
+            lr=0.1, max_num_steps=200
+        )
+
+        _, _, _, score_a = optimize_pharm_overlay_analytical(
+            ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+            ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+            ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+            similarity='tanimoto', extended_points=True, num_repeats=5,
+            lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
+            f"extended_points=True batched: analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_only_extended_matches_autograd(self):
+        """only_extended=True: analytical score matches autograd."""
+        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
+
+        data = self._get_test_data(seed=55)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+
+        _, _, _, score_ag = optimize_pharm_overlay(
+            ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+            ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+            ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+            similarity='tanimoto', extended_points=True, only_extended=True, num_repeats=5,
+            lr=0.1, max_num_steps=200
+        )
+
+        _, _, _, score_a = optimize_pharm_overlay_analytical(
+            ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+            ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+            ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+            similarity='tanimoto', extended_points=True, only_extended=True, num_repeats=5,
+            lr=0.1, max_num_steps=200
+        )
+
+        assert abs(score_a.item() - score_ag.item()) < 1e-4, \
+            f"only_extended=True: analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
+
+    def test_extended_tversky_matches_autograd(self):
+        """extended_points=True with tversky variants: analytical matches autograd."""
+        from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
+
+        data = self._get_test_data(seed=42)
+        ref_pharms, fit_pharms, ref_anchors, fit_anchors, ref_vecs, fit_vecs = data
+
+        for sim in ('tversky', 'tversky_ref', 'tversky_fit'):
+            _, _, _, score_ag = optimize_pharm_overlay(
                 ref_pharms=ref_pharms, fit_pharms=fit_pharms,
                 ref_anchors=ref_anchors, fit_anchors=fit_anchors,
                 ref_vectors=ref_vecs, fit_vectors=fit_vecs,
-                extended_points=True, num_repeats=1
+                similarity=sim, extended_points=True, num_repeats=5,
+                lr=0.1, max_num_steps=200
             )
+
+            _, _, _, score_a = optimize_pharm_overlay_analytical(
+                ref_pharms=ref_pharms, fit_pharms=fit_pharms,
+                ref_anchors=ref_anchors, fit_anchors=fit_anchors,
+                ref_vectors=ref_vecs, fit_vectors=fit_vecs,
+                similarity=sim, extended_points=True, num_repeats=5,
+                lr=0.1, max_num_steps=200
+            )
+
+            assert abs(score_a.item() - score_ag.item()) < 1e-4, \
+                f"{sim} extended_points: analytical {score_a.item():.4f} vs autograd {score_ag.item():.4f}"
 
 
 # =====================================================================

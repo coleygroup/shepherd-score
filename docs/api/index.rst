@@ -8,9 +8,9 @@ Core Modules
 ------------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
 
-   container
+   container/index
    conformer
    extraction
 

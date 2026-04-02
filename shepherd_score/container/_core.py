@@ -381,7 +381,7 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_ROCS_overlay_jax
+            from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_overlay_jax(
                 ref_points=jnp.array(ref_atom_pos),
                 fit_points=jnp.array(fit_atom_pos),
@@ -489,7 +489,7 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_ROCS_esp_overlay_jax
+            from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_esp_overlay_jax(
                 ref_points=jnp.array(ref_mol_pos),
                 fit_points=jnp.array(fit_mol_pos),
@@ -591,7 +591,7 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_ROCS_overlay_jax
+            from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_overlay_jax(
                 ref_points=jnp.array(self.ref_molec.surf_pos),
                 fit_points=jnp.array(self.fit_molec.surf_pos),
@@ -683,7 +683,7 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_ROCS_esp_overlay_jax
+            from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_esp_overlay_jax(
                 ref_points=jnp.array(self.ref_molec.surf_pos),
                 fit_points=jnp.array(self.fit_molec.surf_pos),
@@ -784,7 +784,7 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_esp_combo_score_overlay_jax
+            from shepherd_score.alignment_jax import optimize_esp_combo_score_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_esp_combo_score_overlay_jax(
                 ref_centers_w_H=jnp.array(self.ref_molec.mol.GetConformer().GetPositions()),
                 fit_centers_w_H=jnp.array(self.fit_molec.mol.GetConformer().GetPositions()),
@@ -920,7 +920,7 @@ class MoleculePair:
                 except ImportError:
                     raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
             import jax.numpy as jnp
-            from .alignment_jax import optimize_pharm_overlay_jax, optimize_pharm_overlay_jax_vectorized
+            from shepherd_score.alignment_jax import optimize_pharm_overlay_jax, optimize_pharm_overlay_jax_vectorized
 
             _pharm_fn = optimize_pharm_overlay_jax_vectorized if use_vectorized else optimize_pharm_overlay_jax
             aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = _pharm_fn(
@@ -1281,3 +1281,4 @@ class MoleculePair:
                                          pharm_vecs=transformed_pharm_vecs
                                          )
         return transformed_fit_molec
+
