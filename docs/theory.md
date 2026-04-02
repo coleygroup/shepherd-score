@@ -183,5 +183,15 @@ $$\nabla_{\hat{\boldsymbol{q}}} = \frac{1}{\|\hat{\boldsymbol{q}}\|}\left(\bolds
 
 If you use or adapt this work, please cite:
 
-Adams, K., Abeywardane, K., Fromer, J., & Coley, C. W. (2025). ShEPhERD: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design. *The Thirteenth International Conference on Learning Representations*. https://openreview.net/forum?id=KSLkFYHlYg
+Adams, K., Abeywardane, K., Fromer, J., & Coley, C. W. (2025). ShEPhERD: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design. In *The Thirteenth International Conference on Learning Representations*. https://openreview.net/forum?id=KSLkFYHlYg
+
+Grant, J. A. & Pickup, B. T. (1995). A Gaussian description of molecular shape. *Journal of Physical Chemistry*, *99*(11), 3503-3510. https://doi.org/10.1021/j100011a016
+
+Grant, J. A., Gallardo, M. A., & Pickup, B. T. (1996). A fast method of molecular shape comparison: A simple application of a Gaussian description of molecular shape. *Journal of Computational Chemistry*, *17*(14), 1653–1666. https://doi.org/10.1002/(SICI)1096-987X(19961115)17:14<1653::AID-JCC7>3.0.CO;2-K
+
+Grant, J. A., & Pickup, B. T. (1997). Gaussian shape methods. In W. F. van Gunsteren, P. K. Weiner, & A. J. Wilkinson (Eds.), *Computer simulations of biomolecular systems* (Vol. 3, pp. 150–176). Springer. https://doi.org/10.1007/978-94-017-1120-3_5
+
+Taminau, J., Thijs, G., & De Winter, H. (2008). Pharao: Pharmacophore alignment and optimization. *Journal of Molecular Graphics and Modelling*, *27*(2), 161–169. https://doi.org/10.1016/j.jmgm.2008.04.003
+
+Wahl, J. (2024). PheSA: An Open-Source Tool for Pharmacophore-Enhanced Shape Alignment. *Journal of Chemical Information and Modeling*, *64*(15), 5944-5953. https://doi.org/10.1021/acs.jcim.4c00516
 ```
