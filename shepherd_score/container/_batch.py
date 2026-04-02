@@ -216,7 +216,7 @@ class MoleculePairBatch:
         scores = np.zeros(n_pairs)
         aligned_list = [None] * n_pairs
 
-        if use_shmap:
+        if use_shmap and num_workers > 1:  # shard_map path (single process, multi-device)
             _jax_ver = _pkg_version("jax")
             _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
             if _jax_ver_tuple < (0, 9):
@@ -225,7 +225,6 @@ class MoleculePairBatch:
                     "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
                 )
 
-        if use_shmap and num_workers > 1:  # shard_map path (single process, multi-device)
             pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
             results = _align_vol_shmap(
                 pair_data, num_workers, num_repeats, lr, max_num_steps, verbose,
@@ -409,7 +408,7 @@ class MoleculePairBatch:
         scores = np.zeros(n_pairs)
         aligned_list = [None] * n_pairs
 
-        if use_shmap:
+        if use_shmap and num_workers > 1:  # shard_map path
             _jax_ver = _pkg_version("jax")
             _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
             if _jax_ver_tuple < (0, 9):
@@ -418,7 +417,6 @@ class MoleculePairBatch:
                     "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
                 )
 
-        if use_shmap and num_workers > 1:  # shard_map path
             pair_data = list(zip(raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list))
             results = _align_vol_esp_shmap(
                 pair_data, num_workers, lam, num_repeats, lr, max_num_steps, verbose,
@@ -598,15 +596,6 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
-        if use_shmap:
-            _jax_ver = _pkg_version("jax")
-            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
-            if _jax_ver_tuple < (0, 9):
-                raise RuntimeError(
-                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
-                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
-                )
-
         n_pairs = len(self.pairs)
         pair_data = [
             (pair.ref_molec.surf_pos,
@@ -616,6 +605,14 @@ class MoleculePairBatch:
         ]
 
         if use_shmap and num_workers > 1:  # shard_map path
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
+
             results = _align_surf_shmap(
                 pair_data, num_workers, alpha, num_repeats, lr, max_num_steps, verbose,
             )
@@ -719,15 +716,6 @@ class MoleculePairBatch:
         from shepherd_score.score.constants import LAM_SCALING
         lam_scaled = float(LAM_SCALING * lam)
 
-        if use_shmap:
-            _jax_ver = _pkg_version("jax")
-            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
-            if _jax_ver_tuple < (0, 9):
-                raise RuntimeError(
-                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
-                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
-                )
-
         n_pairs = len(self.pairs)
         pair_data = [
             (pair.ref_molec.surf_pos,
@@ -739,6 +727,14 @@ class MoleculePairBatch:
         ]
 
         if use_shmap and num_workers > 1:  # shard_map path
+            _jax_ver = _pkg_version("jax")
+            _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
+            if _jax_ver_tuple < (0, 9):
+                raise RuntimeError(
+                    f"use_shmap=True requires JAX >= 0.9.0, but found JAX {_jax_ver}. "
+                    "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
+                )
+
             results = _align_esp_shmap(
                 pair_data, num_workers, alpha, lam_scaled, num_repeats, lr, max_num_steps, verbose,
             )
@@ -948,7 +944,7 @@ class MoleculePairBatch:
                 pair.fit_molec.pharm_ancs,
             ))
 
-        if use_shmap:
+        if use_shmap and num_workers > 1:  # shard_map path
             _jax_ver = _pkg_version("jax")
             _jax_ver_tuple = tuple(int(x) for x in _jax_ver.split(".")[:2])
             if _jax_ver_tuple < (0, 9):
@@ -957,7 +953,6 @@ class MoleculePairBatch:
                     "Either upgrade JAX (which requires Python >= 3.11) or set use_shmap=False."
                 )
 
-        if use_shmap and num_workers > 1:  # shard_map path
             results = _align_pharm_shmap(
                 pair_data, num_workers, similarity, extended_points, only_extended,
                 num_repeats, lr, max_num_steps, verbose, num_buckets=num_buckets,
