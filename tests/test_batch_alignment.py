@@ -245,44 +245,51 @@ def test_masked_pharm_alignment_matches_unmasked():
     from shepherd_score.container import Molecule
 
     m = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OC(C(F)C(=O)O)CCC")
+    m2 = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OCCCC")
     m = Chem.AddHs(m)
+    m2 = Chem.AddHs(m2)
     AllChem.EmbedMolecule(m, AllChem.ETKDGv3())
+    AllChem.EmbedMolecule(m2, AllChem.ETKDGv3())
     mol = Molecule(m, pharm_multi_vector=False)
-
+    mol2 = Molecule(m2, pharm_multi_vector=False)
     pt = jnp.array(mol.pharm_types)
     ancs = jnp.array(mol.pharm_ancs)
     vecs = jnp.array(mol.pharm_vecs)
+    pt2 = jnp.array(mol2.pharm_types)
+    ancs2 = jnp.array(mol2.pharm_ancs)
+    vecs2 = jnp.array(mol2.pharm_vecs)
 
     # Unmasked
     _, _, _, score_unmasked = optimize_pharm_overlay_jax_vectorized(
-        pt, pt, ancs, ancs, vecs, vecs, num_repeats=10, max_num_steps=50
+        pt, pt2, ancs, ancs2, vecs, vecs2, num_repeats=10, max_num_steps=50
     )
 
     # Pad
-    n = mol.pharm_types.shape[0]
-    pad = n + 4
+    pad = mol.pharm_types.shape[0]
+    n2 = mol2.pharm_types.shape[0]
     DUMMY = 8
 
     pt_pad = np.full(pad, DUMMY, dtype=np.int32)
-    pt_pad[:n] = np.array(pt)
+    pt_pad[:n2] = np.array(pt2)
     ancs_pad = np.zeros((pad, 3), dtype=np.float32)
-    ancs_pad[:n] = np.array(ancs)
+    ancs_pad[:n2] = np.array(ancs2)
     vecs_pad = np.zeros((pad, 3), dtype=np.float32)
-    vecs_pad[:n] = np.array(vecs)
-    mask = np.zeros(pad, dtype=np.float32)
-    mask[:n] = 1.0
+    vecs_pad[:n2] = np.array(vecs2)
+    mask1 = np.ones(pad, dtype=np.float32)
+    mask2 = np.zeros(pad, dtype=np.float32)
+    mask2[:n2] = 1.0
 
     _, _, _, score_masked = optimize_pharm_overlay_jax_vectorized_mask(
-        jnp.array(pt_pad), jnp.array(pt_pad),
-        jnp.array(ancs_pad), jnp.array(ancs_pad),
-        jnp.array(vecs_pad), jnp.array(vecs_pad),
-        jnp.array(mask), jnp.array(mask),
+        pt, jnp.array(pt_pad),
+        ancs, jnp.array(ancs_pad),
+        vecs, jnp.array(vecs_pad),
+        mask1, mask2,
         num_repeats=10, max_num_steps=50,
         init_ref_anchors=np.array(ancs),
         init_fit_anchors=np.array(ancs),
     )
 
-    assert abs(float(score_unmasked) - float(score_masked)) < 1e-4, (
+    assert abs(float(score_unmasked) - float(score_masked)) < 1e-5, (
         f"Masked pharm alignment score {float(score_masked):.4f} differs too much "
         f"from unmasked {float(score_unmasked):.4f}"
     )
