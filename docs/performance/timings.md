@@ -43,9 +43,9 @@ Multiprocessed `MoleculePairBatch` was evaluated for >100 pairs.
 | Jax Volume | 0.30 | 2.05 | - | - |
 | PyTorch (autodiff) | 0.39 | 6.35 | - | - |
 | PyTorch (analytical) | 1.00 | 12.54 | - | - |
-| Jax Batch (1 cpus, 1 buckets) | **15.54** | **59.57** | 103.69 | 110.59 |
-| Jax Batch (1 cpus, 4 buckets) | <u>5.63</u> | <u>42.63</u> | 101.42 | 103.18 |
-| Jax Batch (1 cpus, 8 buckets) | 3.08 | 25.01 | 93.00 | 120.69 |
+| Jax Batch (1 bucket) | **15.54** | **59.57** | 103.69 | 110.59 |
+| Jax Batch (4 buckets) | <u>5.63</u> | <u>42.63</u> | 101.42 | 103.18 |
+| Jax Batch (8 buckets) | 3.08 | 25.01 | 93.00 | 120.69 |
 | Jax Batch (4 cpus, 4 buckets) | - | 41.51 | **255.56** | <u>484.05</u> |
 | Jax Batch (8 cpus, 8 buckets) | - | 31.99 | <u>225.60</u> | **506.64** |
 
@@ -56,9 +56,9 @@ Multiprocessed `MoleculePairBatch` was evaluated for >100 pairs.
 | Jax Volume+ESP | <u>6.52</u> | 1.58 | - | - |
 | PyTorch (autodiff) | 0.19 | 5.57 | - | - |
 | PyTorch (analytical) | 0.29 | 9.84 | - | - |
-| Jax Batch (1 cpus, 1 buckets) | **14.35** | **72.49** | 81.25 | 123.70 |
-| Jax Batch (1 cpus, 4 buckets) | 4.54 | 37.55 | 81.90 | 121.04 |
-| Jax Batch (1 cpus, 8 buckets) | 3.02 | 23.59 | 115.76 | 143.04 |
+| Jax Batch (1 bucket) | **14.35** | **72.49** | 81.25 | 123.70 |
+| Jax Batch (4 buckets) | 4.54 | 37.55 | 81.90 | 121.04 |
+| Jax Batch (8 buckets) | 3.02 | 23.59 | 115.76 | 143.04 |
 | Jax Batch (4 cpus, 4 buckets) | - | <u>40.92</u> | **299.10** | <u>468.43</u> |
 | Jax Batch (8 cpus, 8 buckets) | - | 26.68 | <u>212.16</u> | **506.33** |
 
@@ -70,9 +70,9 @@ Multiprocessed `MoleculePairBatch` was evaluated for >100 pairs.
 | Jax Pharmacophore (vectorized) | 3.73 | 2.00 | - | - |
 | PyTorch (autodiff) | 3.77 | 3.68 | - | - |
 | PyTorch (analytical) | <u>11.90</u> | 9.45 | - | - |
-| Jax Batch (1 cpus, 1 buckets) | **14.15** | **47.61** | 68.13 | 67.26 |
-| Jax Batch (1 cpus, 4 buckets) | 5.17 | <u>44.84</u> | 89.49 | 106.80 |
-| Jax Batch (1 cpus, 8 buckets) | 4.25 | 2.29 | 95.04 | 164.53 |
+| Jax Batch (1 bucket) | **14.15** | **47.61** | 68.13 | 67.26 |
+| Jax Batch (4 buckets) | 5.17 | <u>44.84</u> | 89.49 | 106.80 |
+| Jax Batch (8 buckets) | 4.25 | 2.29 | 95.04 | 164.53 |
 | Jax Batch (4 cpus, 4 buckets) | - | 44.08 | **294.72** | <u>492.94</u> |
 | Jax Batch (8 cpus, 8 buckets) | - | 26.46 | <u>216.67</u> | **532.53** |
 
@@ -83,7 +83,7 @@ Multiprocessed `MoleculePairBatch` was evaluated for >100 pairs.
 | Jax Surface | <u>3.72</u> | <u>4.12</u> | - | - |
 | PyTorch (autodiff) | 0.88 | 1.83 | - | - |
 | PyTorch (analytical) | 1.78 | 3.70 | - | - |
-| Jax Batch (1 cpus, 1 buckets) | **4.76** | **4.88** | **6.63** | <u>4.34</u> |
+| Jax Batch (1 bucket) | **4.76** | **4.88** | **6.63** | <u>4.34</u> |
 | Jax Batch (4 cpus, 4 buckets) | - | - | - | **6.68** |
 
 ### Surface + ESP alignment — alignments/s
@@ -93,7 +93,7 @@ Multiprocessed `MoleculePairBatch` was evaluated for >100 pairs.
 | Jax Surface+ESP | 2.65 | <u>3.80</u> | - | - |
 | PyTorch (autodiff) | 0.65 | 2.76 | - | - |
 | PyTorch (analytical) | **3.02** | **4.57** | - | - |
-| Jax Batch (1 cpus, 1 buckets) | <u>2.85</u> | 2.30 | **2.71** | - |
+| Jax Batch (1 bucket) | <u>2.85</u> | 2.30 | **2.71** | - |
 
 ## Experiment results (semi-log plot)
 
