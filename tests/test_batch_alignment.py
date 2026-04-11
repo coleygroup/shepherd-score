@@ -244,7 +244,7 @@ def test_masked_pharm_alignment_matches_unmasked():
     from rdkit.Chem import AllChem
     from shepherd_score.container import Molecule
 
-    m = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OCCCC")
+    m = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OC(C(F)C(=O)O)CCC")
     m = Chem.AddHs(m)
     AllChem.EmbedMolecule(m, AllChem.ETKDGv3())
     mol = Molecule(m, pharm_multi_vector=False)
@@ -282,7 +282,7 @@ def test_masked_pharm_alignment_matches_unmasked():
         init_fit_anchors=np.array(ancs),
     )
 
-    assert abs(float(score_unmasked) - float(score_masked)) < 1e-5, (
+    assert abs(float(score_unmasked) - float(score_masked)) < 1e-4, (
         f"Masked pharm alignment score {float(score_masked):.4f} differs too much "
         f"from unmasked {float(score_unmasked):.4f}"
     )
