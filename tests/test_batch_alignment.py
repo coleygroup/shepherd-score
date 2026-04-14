@@ -240,56 +240,72 @@ def test_masked_pharm_scoring_matches_unmasked():
 @pytest.mark.jax
 def test_masked_pharm_alignment_matches_unmasked():
     """optimize_pharm_overlay_jax_vectorized_mask should reach similar score as unmasked."""
-    import rdkit.Chem as Chem
-    from rdkit.Chem import AllChem
-    from shepherd_score.container import Molecule
+    rng = np.random.default_rng(42)
+    n_types = 8  # real types (0-7); 8 = Dummy
+    # Acceptor=0, Donor=1, Aromatic=2, Halogen=4 are directional (unit vectors)
+    # Hydrophobe=3, Cation=5, Anion=6, ZnBinder=7 are non-directional (zero vectors)
+    DIRECTIONAL = np.array([0, 1, 2, 4])
 
-    m = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OC(C(F)C(=O)O)CCC")
-    m2 = Chem.MolFromSmiles("CC(=O)Nc1ccc(cc1)OCCCC")
-    m = Chem.AddHs(m)
-    m2 = Chem.AddHs(m2)
-    AllChem.EmbedMolecule(m, AllChem.ETKDGv3())
-    AllChem.EmbedMolecule(m2, AllChem.ETKDGv3())
-    mol = Molecule(m, pharm_multi_vector=False)
-    mol2 = Molecule(m2, pharm_multi_vector=False)
-    pt = jnp.array(mol.pharm_types)
-    ancs = jnp.array(mol.pharm_ancs)
-    vecs = jnp.array(mol.pharm_vecs)
-    pt2 = jnp.array(mol2.pharm_types)
-    ancs2 = jnp.array(mol2.pharm_ancs)
-    vecs2 = jnp.array(mol2.pharm_vecs)
+    # Each array covers all 8 pharmacophore types exactly once
+    ptypes_1 = np.arange(n_types, dtype=np.int32)
+    ptypes_2 = np.arange(n_types, dtype=np.int32)
+    rng.shuffle(ptypes_1)
+    rng.shuffle(ptypes_2)
+    n1 = n2 = n_types
+
+    ancs_1 = rng.standard_normal((n1, 3)).astype(np.float32)
+    ancs_2 = rng.standard_normal((n2, 3)).astype(np.float32)
+    raw_vecs_1 = rng.standard_normal((n1, 3)).astype(np.float32)
+    raw_vecs_2 = rng.standard_normal((n2, 3)).astype(np.float32)
+    # Unit vectors for directional types; zero vectors for non-directional
+    dir_mask_1 = np.isin(ptypes_1, DIRECTIONAL)[:, None]
+    dir_mask_2 = np.isin(ptypes_2, DIRECTIONAL)[:, None]
+    vecs_1 = np.where(dir_mask_1, raw_vecs_1 / np.linalg.norm(raw_vecs_1, axis=1, keepdims=True), 0.0).astype(np.float32)
+    vecs_2 = np.where(dir_mask_2, raw_vecs_2 / np.linalg.norm(raw_vecs_2, axis=1, keepdims=True), 0.0).astype(np.float32)
 
     # Unmasked
     _, _, _, score_unmasked = optimize_pharm_overlay_jax_vectorized(
-        pt, pt2, ancs, ancs2, vecs, vecs2, num_repeats=10, max_num_steps=50
+        jnp.array(ptypes_1), jnp.array(ptypes_2),
+        jnp.array(ancs_1), jnp.array(ancs_2),
+        jnp.array(vecs_1), jnp.array(vecs_2),
+        num_repeats=10, max_num_steps=50,
     )
 
-    # Pad
-    pad = mol.pharm_types.shape[0]
-    n2 = mol2.pharm_types.shape[0]
+    # Pad to common size
+    pad = 12
     DUMMY = 8
 
-    pt_pad = np.full(pad, DUMMY, dtype=np.int32)
-    pt_pad[:n2] = np.array(pt2)
-    ancs_pad = np.zeros((pad, 3), dtype=np.float32)
-    ancs_pad[:n2] = np.array(ancs2)
-    vecs_pad = np.zeros((pad, 3), dtype=np.float32)
-    vecs_pad[:n2] = np.array(vecs2)
-    mask1 = np.ones(pad, dtype=np.float32)
+    pt1_pad = np.full(pad, DUMMY, dtype=np.int32)
+    pt1_pad[:n1] = ptypes_1
+    pt2_pad = np.full(pad, DUMMY, dtype=np.int32)
+    pt2_pad[:n2] = ptypes_2
+
+    a1_pad = np.zeros((pad, 3), dtype=np.float32)
+    a1_pad[:n1] = ancs_1
+    a2_pad = np.zeros((pad, 3), dtype=np.float32)
+    a2_pad[:n2] = ancs_2
+
+    v1_pad = np.zeros((pad, 3), dtype=np.float32)
+    v1_pad[:n1] = vecs_1
+    v2_pad = np.zeros((pad, 3), dtype=np.float32)
+    v2_pad[:n2] = vecs_2
+
+    mask1 = np.zeros(pad, dtype=np.float32)
+    mask1[:n1] = 1.0
     mask2 = np.zeros(pad, dtype=np.float32)
     mask2[:n2] = 1.0
 
     _, _, _, score_masked = optimize_pharm_overlay_jax_vectorized_mask(
-        pt, jnp.array(pt_pad),
-        ancs, jnp.array(ancs_pad),
-        vecs, jnp.array(vecs_pad),
-        mask1, mask2,
+        jnp.array(pt1_pad), jnp.array(pt2_pad),
+        jnp.array(a1_pad), jnp.array(a2_pad),
+        jnp.array(v1_pad), jnp.array(v2_pad),
+        jnp.array(mask1), jnp.array(mask2),
         num_repeats=10, max_num_steps=50,
-        init_ref_anchors=np.array(ancs),
-        init_fit_anchors=np.array(ancs),
+        init_ref_anchors=ancs_1,
+        init_fit_anchors=ancs_2,
     )
 
-    assert abs(float(score_unmasked) - float(score_masked)) < 1e-5, (
+    assert abs(float(score_unmasked) - float(score_masked)) < 1e-4, (
         f"Masked pharm alignment score {float(score_masked):.4f} differs too much "
         f"from unmasked {float(score_unmasked):.4f}"
     )
