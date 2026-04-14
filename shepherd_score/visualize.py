@@ -375,6 +375,7 @@ def chimera_from_mol(mol: Chem.Mol,
                      ev_pos = None,
                      ev_vecs = None,
                      save_dir: str = './',
+                     surf_point_size: float = 0.05,
                      verbose: bool = True,
                      ) -> None:
     """
@@ -397,7 +398,7 @@ def chimera_from_mol(mol: Chem.Mol,
         pharm_types = np.concatenate([np.zeros((len(ev_pos)), dtype=int) + 10, pharm_types], axis=0)
 
     if surf_pos is not None and surf_esp is not None:
-        surf_bild = _chimera_shape_esp_file(surf_pos, surf_esp)
+        surf_bild = _chimera_shape_esp_file(surf_pos, surf_esp, surf_point_size=surf_point_size)
         with open(save_dir_ / f'{mol_id}_x3.bild', 'w') as f:
             f.write(surf_bild)
         if verbose:
@@ -453,6 +454,7 @@ def _chimera_pharmacophore_file(pharm_types: np.ndarray, pharm_pos: np.ndarray, 
 def _chimera_shape_esp_file(surf_pos: np.ndarray,
                             surf_esp: np.ndarray,
                             norm_factor: float = 2.0,
+                            surf_point_size: float = 0.05,
                             ) -> str:
     esp = surf_esp * 4.0
     esp_pos = surf_pos
@@ -470,7 +472,7 @@ def _chimera_shape_esp_file(surf_pos: np.ndarray,
             bild += f'.transparency {0.9}\n'
         else:
             bild += f'.transparency {0.0}\n'
-        bild += f'.sphere {p[0]} {p[1]} {p[2]} 0.05\n'
+        bild += f'.sphere {p[0]} {p[1]} {p[2]} {surf_point_size}\n'
 
     return bild
 
@@ -480,6 +482,7 @@ def chimera_from_sample(generated_sample: dict,
                         save_dir: str,
                         model_type: Literal['all', 'x2', 'x3', 'x4'] = 'all',
                         esp_norm_factor: float = 2.0,
+                        surf_point_size: float = 0.05,
                         verbose: bool = True,
                         ) -> None:
     """
@@ -513,7 +516,7 @@ def chimera_from_sample(generated_sample: dict,
             pharm_types = np.zeros((len(dummy_atom_pos))) + 9
 
     if surf_pos is not None and surf_esp is not None:
-        esp_bild = _chimera_shape_esp_file(surf_pos, surf_esp, norm_factor=esp_norm_factor)
+        esp_bild = _chimera_shape_esp_file(surf_pos, surf_esp, norm_factor=esp_norm_factor, surf_point_size=surf_point_size)
         with open(path_ / f'{mol_id}_x3.bild', 'w') as f:
             f.write(esp_bild)
         if verbose:
@@ -532,6 +535,7 @@ def chimera_from_molecule(molec: Molecule,
                           mol_id: str | int,
                           save_dir: str,
                           esp_norm_factor: float = 2.0,
+                          surf_point_size: float = 0.05,
                           verbose: bool = True,
                           ) -> None:
     """
@@ -565,7 +569,7 @@ def chimera_from_molecule(molec: Molecule,
             molec.pharm_vecs = np.zeros((len(dummy_atom_pos), 3))
 
     if molec.surf_pos is not None and molec.surf_esp is not None:
-        esp_bild = _chimera_shape_esp_file(molec.surf_pos, molec.surf_esp, norm_factor=esp_norm_factor)
+        esp_bild = _chimera_shape_esp_file(molec.surf_pos, molec.surf_esp, norm_factor=esp_norm_factor, surf_point_size=surf_point_size)
         with open(path_ / f'{mol_id}_x3.bild', 'w') as f:
             f.write(esp_bild)
         if verbose:
