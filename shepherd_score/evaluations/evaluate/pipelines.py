@@ -271,19 +271,20 @@ class UnconditionalEvalPipeline:
         inputs = [(i, atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes)
                   for i, (atoms, positions) in enumerate(self.generated_mols)]
 
-        _dispatch_eval(
-            inputs=inputs,
-            eval_func=_eval_unconditional_single,
-            unpack_func=_unpack_eval_unconditional_single,
-            create_failed_result_func=_create_failed_result,
-            process_single_result=self._process_single_result,
-            num_mols=self.num_generated_mols,
-            num_workers=num_workers,
-            timeout_minutes=timeout_minutes,
-            verbose=verbose,
-            desc='Unconditional Eval',
-            mp_context=mp_context,
-        )
+        with set_thread_limits(num_processes):
+            _dispatch_eval(
+                inputs=inputs,
+                eval_func=_eval_unconditional_single,
+                unpack_func=_unpack_eval_unconditional_single,
+                create_failed_result_func=_create_failed_result,
+                process_single_result=self._process_single_result,
+                num_mols=self.num_generated_mols,
+                num_workers=num_workers,
+                timeout_minutes=timeout_minutes,
+                verbose=verbose,
+                desc='Unconditional Eval',
+                mp_context=mp_context,
+            )
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
