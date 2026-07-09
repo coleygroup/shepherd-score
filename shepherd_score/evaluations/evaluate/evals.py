@@ -69,7 +69,8 @@ class ConfEval:
                  atoms: np.ndarray,
                  positions: np.ndarray,
                  solvent: Optional[str] = None,
-                 num_processes: int = 1):
+                 num_processes: int = 1,
+                 timeout_minutes: Optional[float] = None):
         """
         Base class for evaluation of a single generated conformer.
 
@@ -86,7 +87,12 @@ class ConfEval:
         solvent : str solvent type for xtb relaxation
         num_processes : int (default = 1) number of processors to use for xtb relaxation and RDKit
             RMSD alignment.
+        timeout_minutes : float, optional
+            Per-xtb-call timeout in minutes. If exceeded, the xtb subprocess is killed and the
+            corresponding step (single point or relaxation) is treated as failed. Default is
+            ``None`` (no timeout).
         """
+        xtb_timeout = timeout_minutes * 60 if timeout_minutes is not None else None
         self.xyz_block = None
         self.mol = None
         self.smiles = None
@@ -136,7 +142,8 @@ class ConfEval:
                                                                           solvent=self.solvent,
                                                                           charge=self.charge,
                                                                           num_cores=num_processes,
-                                                                          temp_dir=TMPDIR)
+                                                                          temp_dir=TMPDIR,
+                                                                          timeout=xtb_timeout)
             self.partial_charges = np.array(self.partial_charges)
         except Exception:
             pass
@@ -151,7 +158,8 @@ class ConfEval:
                                                                 solvent=self.solvent,
                                                                 num_cores=num_processes,
                                                                 charge=self.charge,
-                                                                temp_dir=TMPDIR)
+                                                                temp_dir=TMPDIR,
+                                                                timeout=xtb_timeout)
             self.xyz_block_post_opt, self.energy_post_opt, self.partial_charges_post_opt = xtb_out
             self.partial_charges_post_opt = np.array(self.partial_charges_post_opt)
 
@@ -238,7 +246,8 @@ class ConsistencyEval(ConfEval):
                  pharm_multi_vector: Optional[bool] = None,
                  solvent: Optional[str] = None,
                  probe_radius: float = 1.2,
-                 num_processes: int = 1):
+                 num_processes: int = 1,
+                 timeout_minutes: Optional[float] = None):
         """
         Consistency evaluation class for jointly generated molecule and features.
 
@@ -282,11 +291,16 @@ class ConsistencyEval(ConfEval):
             Default is 1.2 (vdW radius of hydrogen).
         num_processes : int, optional
             Number of processors to use for xTB relaxation. Default is 1.
+        timeout_minutes : float, optional
+            Per-xtb-call timeout in minutes. If exceeded, the xtb subprocess is killed and the
+            corresponding step (single point or relaxation) is treated as failed. Default is
+            ``None`` (no timeout).
         """
         if not (isinstance(atoms, np.ndarray) or isinstance(positions, np.ndarray)):
             raise ValueError(f"Must provide `atoms` and `positions` as np.ndarrays. Instead {type(atoms)} and {type(positions)} were given.")
 
-        super().__init__(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes)
+        super().__init__(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes,
+                         timeout_minutes=timeout_minutes)
 
         self.molec = None
         self.probe_radius = probe_radius
@@ -509,6 +523,7 @@ class ConditionalEval(ConfEval):
                  priority_pharm_indices: Optional[list] = None,
                  solvent: Optional[str] = None,
                  num_processes: int = 1,
+                 timeout_minutes: Optional[float] = None,
                  ):
         """
         Evaluation pipeline for conditionally-generated molecules.
@@ -556,6 +571,10 @@ class ConditionalEval(ConfEval):
             Solvent type for xTB relaxation.
         num_processes : int, optional
             Number of processors to use for xTB relaxation. Default is 1.
+        timeout_minutes : float, optional
+            Per-xtb-call timeout in minutes. If exceeded, the xtb subprocess is killed and the
+            corresponding step (single point or relaxation) is treated as failed. Default is
+            ``None`` (no timeout).
         """
         condition = condition.lower()
         self.condition = None
@@ -573,7 +592,8 @@ class ConditionalEval(ConfEval):
         super().__init__(atoms=atoms,
                          positions=positions,
                          solvent=solvent,
-                         num_processes=num_processes)
+                         num_processes=num_processes,
+                         timeout_minutes=timeout_minutes)
 
         self.sim_surf_target = None
         self.sim_esp_target = None

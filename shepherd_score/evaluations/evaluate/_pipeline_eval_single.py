@@ -4,10 +4,8 @@ Evaluation pipeline classes for generated molecules.
 
 import os
 import logging
-import multiprocessing
-import queue as queue_lib
 import traceback
-from typing import List, Tuple, Optional, Dict, Any, Callable
+from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
 
 import itertools
@@ -28,65 +26,6 @@ if 'TMPDIR' in os.environ:
 # Configure logging for worker processes
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-
-def _eval_worker(
-    eval_func: Callable[..., Dict[str, Any]],
-    args: tuple,
-    result_queue: "multiprocessing.Queue",
-) -> None:
-    # Must be module-level (not a closure) so it is picklable by the 'spawn' context.
-    result_queue.put(eval_func(*args))
-
-
-def _run_eval_with_timeout(
-    eval_func: Callable[..., Dict[str, Any]],
-    args: tuple,
-    timeout_minutes: Optional[float],
-    create_failed_result_func: Callable[[int, str], Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    Run a per-molecule evaluation with an optional timeout.
-
-    When a timeout is set, the evaluation runs in a child process so stuck
-    workloads can be terminated.
-    """
-    if timeout_minutes is None:
-        return eval_func(*args)
-
-    i = args[0]
-    timeout_seconds = timeout_minutes * 60
-
-    ctx = multiprocessing.get_context('spawn')
-    result_queue = ctx.Queue()
-
-    proc = ctx.Process(target=_eval_worker, args=(eval_func, args, result_queue))
-    proc.start()
-
-    # Drain the queue BEFORE joining. A child that puts a result larger than the
-    # OS pipe buffer blocks in its feeder thread until the parent reads it, so
-    # joining first would deadlock (and time out) on large results.
-    try:
-        result = result_queue.get(timeout=timeout_seconds)
-    except queue_lib.Empty:
-        result = None
-
-    if result is None:
-        if proc.is_alive():
-            proc.terminate()
-            proc.join(timeout=5)
-            if proc.is_alive():
-                proc.kill()
-                proc.join()
-            error_msg = f"Evaluation timed out after {timeout_minutes} minutes"
-        else:
-            proc.join()
-            error_msg = "Evaluation process exited without returning a result"
-        logger.warning(f"Molecule {i}: {error_msg}")
-        return create_failed_result_func(i, error_msg)
-
-    proc.join()
-    return result
 
 
 def _create_failed_result(i: int, error_msg: str) -> Dict[str, Any]:
@@ -324,7 +263,8 @@ def _eval_unconditional_single(i: int,
                                atoms: np.ndarray,
                                positions: np.ndarray,
                                solvent: Optional[str],
-                               num_processes: int) -> Dict[str, Any]:
+                               num_processes: int,
+                               timeout_minutes: Optional[float] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -338,7 +278,8 @@ def _eval_unconditional_single(i: int,
         if len(atoms) == 0:
             raise ValueError("Empty molecule")
 
-        conf_eval = ConfEval(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes)
+        conf_eval = ConfEval(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes,
+                             timeout_minutes=timeout_minutes)
 
         res = {
             'i': i,
@@ -378,7 +319,8 @@ def _eval_conditional_single(i: int,
                              positions: np.ndarray,
                              solvent: Optional[str],
                              num_processes: int,
-                             priority_pharm_indices: Optional[list] = None) -> Dict[str, Any]:
+                             priority_pharm_indices: Optional[list] = None,
+                             timeout_minutes: Optional[float] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -402,6 +344,7 @@ def _eval_conditional_single(i: int,
             priority_pharm_indices=priority_pharm_indices,
             num_processes=num_processes,
             solvent=solvent,
+            timeout_minutes=timeout_minutes,
         )
 
         res = {
@@ -461,7 +404,8 @@ def _eval_consistency_single(i: int,
                              solvent: Optional[str],
                              num_processes: int,
                              random_molblock_charges: Optional[List[Tuple]] = None,
-                             random_seed: Optional[int] = None) -> Dict[str, Any]:
+                             random_seed: Optional[int] = None,
+                             timeout_minutes: Optional[float] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule for consistency and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -484,7 +428,8 @@ def _eval_consistency_single(i: int,
             pharm_multi_vector=pharm_multi_vector,
             probe_radius=probe_radius,
             solvent=solvent,
-            num_processes=num_processes
+            num_processes=num_processes,
+            timeout_minutes=timeout_minutes,
         )
 
         # Compute lower bounds if available

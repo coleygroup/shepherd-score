@@ -40,7 +40,6 @@ from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_unco
 from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_conditional_single, _create_conditional_failed_result
 from shepherd_score.evaluations.evaluate._pipeline_eval_single import _eval_consistency_single, _create_consistency_failed_result
 from shepherd_score.evaluations.evaluate._pipeline_eval_single import _compute_consistency_upper_bounds
-from shepherd_score.evaluations.evaluate._pipeline_eval_single import _run_eval_with_timeout
 
 RNG = np.random.default_rng()
 morgan_fp_gen = rdFingerprintGenerator.GetMorganGenerator(radius=3, includeChirality=True)
@@ -64,44 +63,6 @@ def _unpack_eval_consistency_single(args):
     return _eval_consistency_single(*args)
 
 
-def _run_parallel_timed_eval(
-    inputs: List[tuple],
-    eval_func: Callable[..., Dict[str, Any]],
-    create_failed_result_func: Callable[[int, str], Dict[str, Any]],
-    timeout_minutes: float,
-    num_workers: int,
-    verbose: bool,
-    desc: str,
-    process_single_result: Callable[[Dict[str, Any], int], None],
-) -> None:
-    """Evaluate molecules in parallel with a per-molecule timeout.
-
-    Worker threads each run one molecule in a killable child process (via
-    ``_run_eval_with_timeout``); results are processed on this thread as they
-    complete, so ``process_single_result`` is never called concurrently.
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def _eval_one(inp: tuple) -> Dict[str, Any]:
-        return _run_eval_with_timeout(
-            eval_func, inp, timeout_minutes, create_failed_result_func
-        )
-
-    if verbose:
-        pbar = tqdm(total=len(inputs), desc=desc)
-
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(_eval_one, inp) for inp in inputs]
-        for future in as_completed(futures):
-            res = future.result()
-            process_single_result(res, res['i'])
-            if verbose:
-                pbar.update(1)
-
-    if verbose:
-        pbar.close()
-
-
 def _clamp_num_workers(num_workers: int, num_processes: int) -> int:
     """Clamp ``num_workers`` so that ``num_workers * num_processes`` fits the available CPUs."""
     available_cpus = multiprocessing.cpu_count() or 1
@@ -118,56 +79,53 @@ def _dispatch_eval(
     process_single_result: Callable[[Dict[str, Any], int], None],
     num_mols: int,
     num_workers: int,
-    timeout_minutes: Optional[float],
+    num_processes: int,
     verbose: bool,
     desc: str,
     mp_context: Literal['spawn', 'forkserver'],
 ) -> None:
-    """Run per-molecule evaluation via the timed-parallel, pool, or sequential path.
+    """Run per-molecule evaluation via the pool or sequential path.
 
-    The path is chosen from ``timeout_minutes`` and ``num_workers``; results are
-    fed to ``process_single_result`` on the calling thread in every case.
+    The path is chosen from ``num_workers``; results are fed to
+    ``process_single_result`` on the calling thread in every case. Any
+    per-molecule timeout (``timeout_minutes``) is already baked into each
+    element of ``inputs`` and enforced inside ``eval_func`` itself (at the xtb
+    subprocess level), so it does not affect dispatch.
+
+    ``set_thread_limits(num_processes)`` is applied only to the parallel path so
+    spawned workers inherit the per-worker thread cap and avoid oversubscription.
+    The sequential path is left uncapped: it runs scoring/alignment in this
+    process (which should use all cores) while xtb already self-limits its own
+    threads internally per relaxation.
     """
-    if timeout_minutes is not None and num_workers > 1:
-        _run_parallel_timed_eval(
-            inputs=inputs,
-            eval_func=eval_func,
-            create_failed_result_func=create_failed_result_func,
-            timeout_minutes=timeout_minutes,
-            num_workers=num_workers,
-            verbose=verbose,
-            desc=desc,
-            process_single_result=process_single_result,
-        )
-    elif num_workers > 1:
-        multiprocessing.set_start_method(mp_context, force=True)
-        with multiprocessing.Pool(num_workers) as pool:
-            if verbose:
-                pbar = tqdm(total=num_mols, desc=desc)
-
-            results_iter = pool.imap_unordered(unpack_func, inputs, chunksize=1)
-            pending_results = {i: None for i in range(num_mols)}
-
-            for res in results_iter:
-                idx = res['i']
-                pending_results[idx] = res
-                process_single_result(res, idx)
+    if num_workers > 1:
+        with set_thread_limits(num_processes):
+            multiprocessing.set_start_method(mp_context, force=True)
+            with multiprocessing.Pool(num_workers) as pool:
                 if verbose:
-                    pbar.update(1)
+                    pbar = tqdm(total=num_mols, desc=desc)
 
-            if verbose:
-                pbar.close()
+                results_iter = pool.imap_unordered(unpack_func, inputs, chunksize=1)
+                pending_results = {i: None for i in range(num_mols)}
 
-            for i in range(num_mols):
-                if pending_results[i] is None:
-                    logger.warning(f"Missing result for molecule {i}, creating failed result")
-                    process_single_result(create_failed_result_func(i, "Worker result missing"), i)
+                for res in results_iter:
+                    idx = res['i']
+                    pending_results[idx] = res
+                    process_single_result(res, idx)
+                    if verbose:
+                        pbar.update(1)
+
+                if verbose:
+                    pbar.close()
+
+                for i in range(num_mols):
+                    if pending_results[i] is None:
+                        logger.warning(f"Missing result for molecule {i}, creating failed result")
+                        process_single_result(create_failed_result_func(i, "Worker result missing"), i)
     else:
         pbar = tqdm(inputs, desc=desc, total=num_mols) if verbose else inputs
         for inp in pbar:
-            res = _run_eval_with_timeout(
-                eval_func, inp, timeout_minutes, create_failed_result_func
-            )
+            res = eval_func(*inp)
             process_single_result(res, res['i'])
 
 
@@ -268,23 +226,22 @@ class UnconditionalEvalPipeline:
         """
         num_workers = _clamp_num_workers(num_workers, num_processes)
 
-        inputs = [(i, atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes)
+        inputs = [(i, atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes, timeout_minutes)
                   for i, (atoms, positions) in enumerate(self.generated_mols)]
 
-        with set_thread_limits(num_processes):
-            _dispatch_eval(
-                inputs=inputs,
-                eval_func=_eval_unconditional_single,
-                unpack_func=_unpack_eval_unconditional_single,
-                create_failed_result_func=_create_failed_result,
-                process_single_result=self._process_single_result,
-                num_mols=self.num_generated_mols,
-                num_workers=num_workers,
-                timeout_minutes=timeout_minutes,
-                verbose=verbose,
-                desc='Unconditional Eval',
-                mp_context=mp_context,
-            )
+        _dispatch_eval(
+            inputs=inputs,
+            eval_func=_eval_unconditional_single,
+            unpack_func=_unpack_eval_unconditional_single,
+            create_failed_result_func=_create_failed_result,
+            process_single_result=self._process_single_result,
+            num_mols=self.num_generated_mols,
+            num_workers=num_workers,
+            num_processes=num_processes,
+            verbose=verbose,
+            desc='Unconditional Eval',
+            mp_context=mp_context,
+        )
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
@@ -630,24 +587,23 @@ class ConditionalEvalPipeline:
         inputs = [
             (i, self.ref_molec, self.condition, self.num_surf_points, self.pharm_multi_vector,
              atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes,
-             self.priority_pharm_indices)
+             self.priority_pharm_indices, timeout_minutes)
             for i, (atoms, positions) in enumerate(self.generated_mols)
         ]
 
-        with set_thread_limits(num_processes):
-            _dispatch_eval(
-                inputs=inputs,
-                eval_func=_eval_conditional_single,
-                unpack_func=_unpack_eval_conditional_single,
-                create_failed_result_func=create_failed,
-                process_single_result=self._process_single_result,
-                num_mols=self.num_generated_mols,
-                num_workers=num_workers,
-                timeout_minutes=timeout_minutes,
-                verbose=verbose,
-                desc='Conditional Eval',
-                mp_context=mp_context,
-            )
+        _dispatch_eval(
+            inputs=inputs,
+            eval_func=_eval_conditional_single,
+            unpack_func=_unpack_eval_conditional_single,
+            create_failed_result_func=create_failed,
+            process_single_result=self._process_single_result,
+            num_mols=self.num_generated_mols,
+            num_workers=num_workers,
+            num_processes=num_processes,
+            verbose=verbose,
+            desc='Conditional Eval',
+            mp_context=mp_context,
+        )
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
@@ -1053,23 +1009,23 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                    self.generated_pharm_feats[i] if self.generated_pharm_feats is not None else None,
                    self.pharm_multi_vector, self.probe_radius, self.solvent,
                    1 if num_workers > 1 else num_processes,
-                   self.random_molblock_charges, i)  # Use i as random seed for reproducibility
+                   self.random_molblock_charges, i,  # Use i as random seed for reproducibility
+                   timeout_minutes)
                   for i, (atoms, positions) in enumerate(self.generated_mols)]
 
-        with set_thread_limits(num_processes):
-            _dispatch_eval(
-                inputs=inputs,
-                eval_func=_eval_consistency_single,
-                unpack_func=_unpack_eval_consistency_single,
-                create_failed_result_func=_create_consistency_failed_result,
-                process_single_result=self._process_single_result,
-                num_mols=self.num_generated_mols,
-                num_workers=num_workers,
-                timeout_minutes=timeout_minutes,
-                verbose=verbose,
-                desc='Consistency Eval',
-                mp_context=mp_context,
-            )
+        _dispatch_eval(
+            inputs=inputs,
+            eval_func=_eval_consistency_single,
+            unpack_func=_unpack_eval_consistency_single,
+            create_failed_result_func=_create_consistency_failed_result,
+            process_single_result=self._process_single_result,
+            num_mols=self.num_generated_mols,
+            num_workers=num_workers,
+            num_processes=num_processes,
+            verbose=verbose,
+            desc='Consistency Eval',
+            mp_context=mp_context,
+        )
 
         self.frac_valid = self.get_frac_valid()
         self.frac_valid_post_opt = self.get_frac_valid_post_opt()
