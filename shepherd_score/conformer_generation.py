@@ -308,7 +308,8 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                                 solvent: Optional[str] = None,
                                 num_cores: int = 1,
                                 charge: int = 0,
-                                temp_dir: Union[str, Path] = TMPDIR):
+                                temp_dir: Union[str, Path] = TMPDIR,
+                                timeout: Optional[float] = None):
     """
     Use external calls to GFN2-XTB (command line) to optimize a conformer geometry.
 
@@ -325,6 +326,9 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
         Molecular charge. Default is 0.
     temp_dir : str or Path, optional
         Temporary directory for I/O. Default is the system temporary directory.
+    timeout : float, optional
+        Maximum number of seconds to allow the xtb subprocess to run before it is
+        killed and ``subprocess.TimeoutExpired`` is raised. Default is ``None`` (no timeout).
 
     Returns
     -------
@@ -354,6 +358,7 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                     cwd = out_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
             else:
                 subprocess.check_call(
@@ -361,6 +366,7 @@ def optimize_conformer_with_xtb(conformer: Chem.Mol,
                     cwd = out_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
 
             xtb_coords_list, xtb_elements_list = read_multi_xyz_file(out_dir/'xtbopt.xyz')
@@ -395,7 +401,8 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                                                solvent: Optional[str] = None,
                                                num_cores: int = 1,
                                                charge: int = 0,
-                                               temp_dir: Union[str, Path] = TMPDIR):
+                                               temp_dir: Union[str, Path] = TMPDIR,
+                                               timeout: Optional[float] = None):
     """
     Use external calls to GFN2-XTB (command line) to optimize coordinates from an xyz block.
 
@@ -412,6 +419,9 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
         Molecular charge. Default is 0.
     temp_dir : str or Path, optional
         Temporary directory for I/O. Default is the system temporary directory.
+    timeout : float, optional
+        Maximum number of seconds to allow the xtb subprocess to run before it is
+        killed and ``subprocess.TimeoutExpired`` is raised. Default is ``None`` (no timeout).
 
     Returns
     -------
@@ -440,6 +450,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                     cwd = out_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
             else:
                 subprocess.check_call(
@@ -447,6 +458,7 @@ def optimize_conformer_with_xtb_from_xyz_block(xyz_block: str,
                     cwd = out_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
 
             opt_xyz_path = out_dir/'xtbopt.xyz'
@@ -483,7 +495,8 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                                                  solvent: Optional[str] = None,
                                                  num_cores: int = 1,
                                                  charge: int = 0,
-                                                 temp_dir: Union[str, Path] = TMPDIR
+                                                 temp_dir: Union[str, Path] = TMPDIR,
+                                                 timeout: Optional[float] = None
                                                  ):
     """
     Compute atomic partial charges from a single point xTB calculation of a provided conformer.
@@ -503,6 +516,9 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
         Molecular charge. Default is 0.
     temp_dir : str or Path, optional
         Temporary directory for I/O. Default is the system temporary directory.
+    timeout : float, optional
+        Maximum number of seconds to allow the xtb subprocess to run before it is
+        killed and ``subprocess.TimeoutExpired`` is raised. Default is ``None`` (no timeout).
 
     Returns
     -------
@@ -532,6 +548,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                     cwd = out_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
             else:
                 subprocess.check_call(
@@ -539,6 +556,7 @@ def charges_from_single_point_conformer_with_xtb(conformer: Chem.Mol,
                     cwd = out_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
 
             with open(out_dir/'charges', 'r') as file:
@@ -558,7 +576,8 @@ def single_point_xtb_from_xyz(xyz_block: str,
                               solvent: Optional[str] = None,
                               num_cores: int = 1,
                               charge: int = 0,
-                              temp_dir: Union[str, Path] = TMPDIR):
+                              temp_dir: Union[str, Path] = TMPDIR,
+                              timeout: Optional[float] = None):
     """
     Compute energy and atomic partial charges from a single point xTB calculation.
 
@@ -577,6 +596,9 @@ def single_point_xtb_from_xyz(xyz_block: str,
         Molecular charge. Default is 0.
     temp_dir : str or Path, optional
         Temporary directory for I/O. Default is the system temporary directory.
+    timeout : float, optional
+        Maximum number of seconds to allow the xtb subprocess to run before it is
+        killed and ``subprocess.TimeoutExpired`` is raised. Default is ``None`` (no timeout).
 
     Returns
     -------
@@ -609,6 +631,7 @@ def single_point_xtb_from_xyz(xyz_block: str,
                     encoding="utf-8",
                     errors="replace",
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
             else:
                 output = subprocess.check_output(
@@ -618,6 +641,7 @@ def single_point_xtb_from_xyz(xyz_block: str,
                     encoding="utf-8",
                     errors="replace",
                     stderr=subprocess.STDOUT,
+                    timeout=timeout,
                 )
 
             output = output.split('\n')
