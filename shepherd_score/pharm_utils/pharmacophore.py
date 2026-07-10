@@ -14,9 +14,7 @@ References:
 from __future__ import annotations
 
 import os
-from copy import deepcopy
 from dataclasses import dataclass
-import math
 from typing import Iterable, List, Optional, Tuple, Dict, Union
 
 import numpy as np
@@ -82,14 +80,13 @@ def pattern_of_smarts(s):
 __hydrophobic_patterns = list(map(pattern_of_smarts, __hydrophobic_smarts))
 
 # geometric center of a matched pattern
-def __average_match(mol, matched_pattern):
+def __average_match(conf, matched_pattern):
     avg_x = 0.0
     avg_y = 0.0
     avg_z = 0.0
     count = float(len(matched_pattern))
-    conf0 = mol.GetConformer()
     for i in matched_pattern:
-        xyz = conf0.GetAtomPosition(i)
+        xyz = conf.GetAtomPosition(i)
         avg_x += xyz.x
         avg_y += xyz.y
         avg_z += xyz.z
@@ -100,12 +97,13 @@ def __average_match(mol, matched_pattern):
 
 def __find_matches(mol, patterns, return_atom_ids: bool = False):
     res = []
+    conf = mol.GetConformer()
     for pat in patterns:
         # get all matches for that pattern
         matched = mol.GetSubstructMatches(pat)
         for m in matched:
             # get the center of each matched group
-            avg = __average_match(mol, m)
+            avg = __average_match(conf, m)
             if return_atom_ids:
                 # Derive aromaticity from the matched atoms themselves rather than the
                 # SMARTS text, so it stays correct if __hydrophobic_smarts is edited.
@@ -114,14 +112,6 @@ def __find_matches(mol, patterns, return_atom_ids: bool = False):
             else:
                 res.append(avg)
     return res
-
-def __euclid(xyz0, xyz1):
-    x0, y0, z0 = xyz0
-    x1, y1, z1 = xyz1
-    dx = x0 - x1
-    dy = y0 - y1
-    dz = z0 - z1
-    return math.sqrt(dx*dx + dy*dy + dz*dz)
 
 def __average(vecs):
     sum_x = 0.0
@@ -154,6 +144,14 @@ def _rdkit_point3d_to_tuple(point: Chem.Geometry.Point3D):
     """
     return (point.x, point.y, point.z)
 
+def _copy_point3d(point: Chem.Geometry.Point3D) -> Chem.Geometry.Point3D:
+    """
+    Independent copy of a Point3D, ~6x faster than copy.deepcopy(point) since it
+    skips the generic (memo dict, __reduce_ex__ lookup, ...) deepcopy machinery
+    for what is just 3 floats.
+    """
+    return Chem.rdGeometry.Point3D(point.x, point.y, point.z)
+
 def find_hydrophobes(mol: rdkit.Chem.rdchem.Mol,
                      cluster_hydrophobic: bool = True,
                      return_atom_ids: bool = False):
@@ -185,11 +183,14 @@ def find_hydrophobes(mol: rdkit.Chem.rdchem.Mol,
     centers = [h[0] for h in all_hydrophobes] if return_atom_ids else all_hydrophobes
     n = len(all_hydrophobes)
     idx2cluster = list(range(n))
-    for i in range(n):
-        cluster_id = idx2cluster[i]
-        for j in range(i + 1, n):
-            if __euclid(centers[i], centers[j]) <= 2.0:
-                idx2cluster[j] = cluster_id
+    if n > 1:
+        # Precompute all pairwise distances in one vectorized call
+        within_cutoff = distance.squareform(distance.pdist(np.asarray(centers))) <= 2.0
+        for i in range(n):
+            cluster_id = idx2cluster[i]
+            for j in range(i + 1, n):
+                if within_cutoff[i, j]:
+                    idx2cluster[j] = cluster_id
 
     grouped = []
     for cid in set(idx2cluster):
@@ -322,7 +323,8 @@ def _is_donator_accessible(mol: rdkit.Chem.rdchem.Mol,
         hyd_atom_ids = []
     else:
         hyd_atom_ids = [h.GetIdx() for h in hydrogens]
-    radii = np.array([PT.GetRvdw(atom.GetAtomicNum()) for i, atom in enumerate(mol.GetAtoms()) if i not in hyd_atom_ids])
+    hyd_atom_ids_set = set(hyd_atom_ids)
+    radii = np.array([PT.GetRvdw(atom.GetAtomicNum()) for i, atom in enumerate(mol.GetAtoms()) if i not in hyd_atom_ids_set])
 
     # Pharmacophore position is about 1.2A in direction of vector
     pharm_pos = np.array(pharm_pos) + 1.2*np.array(unit_vec)
@@ -412,7 +414,7 @@ def _average_vectors(vectors: List):
     avg_vec = 0
     for v in vectors:
         if avg_vec == 0:
-            avg_vec = deepcopy(v)
+            avg_vec = _copy_point3d(v)
         else:
             avg_vec += v
     avg_vec.Normalize()
@@ -470,6 +472,7 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
         _cached_factory = AllChem.BuildFeatureFactory(fdef_file)
 
     mol_feats = _cached_factory.GetFeaturesForMol(mol)
+    conf = mol.GetConformer()
 
     # Filter only these for rdkit processing, we will compute hydrophobes later
     keep = ('Aromatic', 'ZnBinder', 'Donor', 'Acceptor', 'Cation', 'Anion', 'Halogen')
@@ -486,10 +489,10 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
 
         if return_atom_ids:
             feat_atom_ids = set(feat.GetAtomIds())
-        pos = feat.GetPos()
 
-        if family.lower() == 'aromatic':
-            anchor, vec = GetAromaticFeatVects(conf = mol.GetConformer(),
+        if family == 'Aromatic':
+            pos = feat.GetPos()
+            anchor, vec = GetAromaticFeatVects(conf = conf,
                                                featAtoms = feat.GetAtomIds(),
                                                featLoc = pos,
                                                return_both = multi_vector,
@@ -498,12 +501,12 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                 anchor = anchor[0]
                 vec = vec[0]
 
-        elif family.lower() == 'donor':
+        elif family == 'Donor':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
                 # Multivector by default
-                anchor, vec, hydrogen_list = GetDonorFeatVects(conf = mol.GetConformer(),
+                anchor, vec, hydrogen_list = GetDonorFeatVects(conf = conf,
                                                                featAtoms = aids,
                                                                scale = scale,
                                                                exclude = exclude)
@@ -513,29 +516,31 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                     if vec is None:
                         avg_vec = None
                     else:
-                        avg_vec = deepcopy(vec[0])
+                        avg_vec = _copy_point3d(vec[0])
 
                 if check_access:
                     if anchor is None or avg_vec is None:
                         continue
-                    elif not _is_donator_accessible(mol = mol,
-                                                    hydrogens = hydrogen_list,
-                                                    pharm_pos = anchor if not isinstance(anchor, list) else anchor[0],
-                                                    unit_vec = avg_vec
-                                                    ):
+                    # Convert Point3D -> tuple; see _rdkit_point3d_to_tuple.
+                    anchor_pt = anchor if not isinstance(anchor, list) else anchor[0]
+                    if not _is_donator_accessible(mol = mol,
+                                                  hydrogens = hydrogen_list,
+                                                  pharm_pos = _rdkit_point3d_to_tuple(anchor_pt),
+                                                  unit_vec = _rdkit_point3d_to_tuple(avg_vec)
+                                                  ):
                         continue # don't keep this pharmacophore
 
                 # If only one vector per pharmacophore
                 if not multi_vector and anchor is not None:
                     anchor = anchor[0]
-                    vec = deepcopy(avg_vec)
+                    vec = _copy_point3d(avg_vec)
 
-        elif family.lower() == 'acceptor':
+        elif family == 'Acceptor':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
                 # Multivector by default
-                anchor, vec = GetAcceptorFeatVects(conf = mol.GetConformer(),
+                anchor, vec = GetAcceptorFeatVects(conf = conf,
                                                    featAtoms = aids,
                                                    scale = scale)
 
@@ -545,36 +550,37 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                     if vec is None:
                         avg_vec = None
                     else:
-                        avg_vec = deepcopy(vec[0])
+                        avg_vec = _copy_point3d(vec[0])
 
                 if check_access:
                     if anchor is None or avg_vec is None:
                         continue
                     numNbrs = len(featAtom.GetNeighbors())
+                    anchor_pt = anchor if not isinstance(anchor, list) else anchor[0]
                     if not _is_acceptor_accessible(mol = mol,
                                                    acceptor_atom = featAtom,
-                                                   pharm_pos = anchor if not isinstance(anchor, list) else anchor[0],
-                                                   unit_vec = avg_vec,
+                                                   pharm_pos = _rdkit_point3d_to_tuple(anchor_pt),
+                                                   unit_vec = _rdkit_point3d_to_tuple(avg_vec),
                                                    num_nbrs = numNbrs):
                         continue # don't keep this pharmacophore
 
                 # If only one vector per pharmacophore
                 if not multi_vector and anchor is not None:
                     anchor = anchor[0]
-                    vec = deepcopy(avg_vec)
+                    vec = _copy_point3d(avg_vec)
 
-        elif family.lower() == 'halogen':
+        elif family == 'Halogen':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
-                anchor, vec = GetHalogenFeatVects(conf = mol.GetConformer(),
+                anchor, vec = GetHalogenFeatVects(conf = conf,
                                                   featAtoms = aids,
                                                   scale = scale)
                 anchor = anchor[0]
                 vec = vec[0]
 
         else:
-            anchor = pos
+            anchor = feat.GetPos()
             vec = Chem.rdGeometry.Point3D(0,0,0)
 
         if anchor is not None and vec is not None:
