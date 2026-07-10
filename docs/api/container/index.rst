@@ -10,5 +10,6 @@ convenient methods for scoring and alignment.
    :maxdepth: 2
 
    molecule
+   profiles
    molecule_pair
    molecule_pair_batch

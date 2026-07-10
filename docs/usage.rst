@@ -2,7 +2,7 @@ Usage Guide
 ===========
 
 This guide covers the basic usage of shepherd-score for interaction profile extraction, 
-3D similarity scoring, and alignment.
+3D similarity scoring, alignment, and evaluation pipelines.
 
 Overview
 --------
@@ -66,21 +66,24 @@ Molecule Class
 ~~~~~~~~~~~~~~
 
 :class:`shepherd_score.container.Molecule` accepts an RDKit ``Mol`` object (with an associated 
-conformer) and generates user-specified interaction profiles.
+conformer) and generates user-specified interaction profiles. Access containers via
+``.surface`` and ``.pharmacophore``.
 
 MoleculePair Class
 ~~~~~~~~~~~~~~~~~~
 
 :class:`shepherd_score.container.MoleculePair` operates on ``Molecule`` objects and prepares
-them for scoring and alignment.
+them for scoring and alignment. Alignment results are stored per mode in
+:class:`~shepherd_score.container._core.AlignmentResult` (``transform_<mode>``,
+``sim_aligned_<mode>``).
 
 MoleculePairBatch Class
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 :class:`shepherd_score.container.MoleculePairBatch` operates on a list of `MoleculePair`
 objects and enables accelerated alignment by padding all arrays to a common shape so a
-single compiled JAX kernel is reused across every pair. Supports optional multi-CPU
-parallelism.
+single compiled JAX or PyTorch kernel is reused across every pair. Supports optional
+multi-CPU parallelism via ``use_shmap=True``.
 
 
 Extraction Example
@@ -180,7 +183,7 @@ Alignment using the :class:`shepherd_score.container.MoleculePair` class:
        se3_transform=mp.transform_surf  # or mp.transform_esp, mp.transform_pharm
    )
 
-Acclerated alignment of multiple pairs using the :class:`shepherd_score.container.MoleculePairBatch` class:
+Accelerated alignment of multiple pairs using :class:`shepherd_score.container.MoleculePairBatch`:
 
 .. code-block:: python
 
@@ -194,6 +197,16 @@ Acclerated alignment of multiple pairs using the :class:`shepherd_score.containe
    # Multi-CPU parallel via shard_map (must set XLA_FLAGS *before* importing JAX)
    scores, aligned = batch.align_with_vol(num_workers=4, num_buckets=4, use_shmap=True)
 
+Visualization
+-------------
+
+Utilize py3dmol to visualize the molecule and its interaction profiles.
+
+.. code-block:: python
+
+   from shepherd_score.visualize import draw_molecule
+
+   draw_molecule(molec)
 
 Evaluation Pipelines
 --------------------
@@ -209,8 +222,11 @@ individual basis or in a pipeline.
 
 .. note::
 
-   Evaluations can be run from any molecule's atomic numbers and positions with explicit 
-   hydrogens (i.e., straight from an xyz file).
+   Evaluations accept atomic numbers and positions with explicit hydrogens (e.g. from
+   an xyz file). Pass ``timeout_minutes`` to cap per-molecule xTB wall time in
+   ``ConfEval``, ``ConditionalEval``, and pipeline ``.evaluate()`` calls; timed-out
+   molecules are recorded as failed. xTB optimization functions in
+   :mod:`shepherd_score.conformer_generation` also accept a ``timeout`` (seconds).
 
 Example:
 

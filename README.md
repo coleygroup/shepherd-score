@@ -293,8 +293,8 @@ We implement three evaluations of generated 3D conformers. Evaluations can be do
 Full jupyter notebook tutorials/examples for evaluations are found in the [`examples`](./examples/) folder. Some minimal examples are below.
 
 ```python
-from shepherd_score.evaluations.evalutate import ConfEval
-from shepherd_score.evaluations.evalutate import UnconditionalEvalPipeline
+from shepherd_score.evaluations.evaluate import ConfEval
+from shepherd_score.evaluations.evaluate import UnconditionalEvalPipeline
 
 # ConfEval evaluates the validity of a given molecule, optimizes it with xTB,
 #   and also computes various 2D graph properties
