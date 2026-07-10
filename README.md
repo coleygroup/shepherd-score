@@ -29,7 +29,7 @@ The formulation of the interaction profile representation, scoring, alignment, a
 2. [File Structure](#file-structure)
 3. [Installation](#installation)
 4. [Requirements](#requirements)
-5. [Usage](#how-to-use)
+5. [Usage](#usage)
 6. [Scoring and Alignment Examples](#scoring-and-alignment-examples)
 7. [Evaluation Examples and Scripts](#evaluation-examples-and-scripts)
 8. [Data](#data)
@@ -53,9 +53,9 @@ Full documentation is available at [shepherd-score.readthedocs.io](https://sheph
 │   │   └── _jax_parallel.py              # JAX parallel alignment algorithms
 │   ├── alignment_jax.py                  # Backwards compatibility shim
 │   ├── evaluations/                      # Evaluation suite
-│   │   ├── pdbs/                         # PDBQT files used in *ShEPhERD* manuscript
 │   │   ├── utils/                        # Converting data types and others
-│   │   ├── docking
+│   │   ├── docking/
+│   │   │   ├── pdbs/                     # PDBQT files used in *ShEPhERD* manuscript
 │   │   │   ├── docking.py                # Docking classes
 │   │   │   └── pipelines.py              # Docking evaluation pipelines
 │   │   └── evaluate/                     # Generated conformer evaluation pipelines
@@ -124,6 +124,8 @@ open3d>=0.18
 rdkit>=2023.03
 pandas>=2.0
 scipy>=1.10
+py3Dmol
+molscrub
 ```
 
 > **Note**: If using `torch<=2.4`, ensure that `mkl==2024.0` with conda since there is a known [issue](https://github.com/pytorch/pytorch/issues/123097) that prevents importing torch.
@@ -132,20 +134,33 @@ scipy>=1.10
 Installing `shepherd-score[docking]` will automatically install the python bindings for Autodock Vina for the python interface. However, a manual installation of the executable of Autodock Vina v1.2.5 is required and can be found here: [https://vina.scripps.edu/downloads/](https://vina.scripps.edu/downloads/).
 
 ## Usage
-The package has base functions and convenience wrappers. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.
+The package has convenience wrappers and base functions. Most users should reach for the convenience wrappers below; the base functions underneath are there if you need lower-level control. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There are also Jax implementations for both scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.
 
 **Update 8/20/25**: Applicable xTB functions and evaluation pipeline evaluations are now parallelizable through the `num_workers` argument in the `.evaluate` method.
+
+### Convenience wrappers
+- `Molecule` class
+    - `shepherd_score.container.Molecule` accepts an RDKit `Mol` object (with an associated conformer) and generates its interaction profiles, exposed via two properties:
+      - `.surface` &rarr; `Surface(positions, esp, probe_radius)`
+      - `.pharmacophore` &rarr; `Pharmacophore(types, positions, vectors, atom_ids, labels)`
+    - Pass `return_atom_ids=True` and/or `priority_atoms=[...]` to `Molecule.get_pharmacophore()` to populate `.pharmacophore.atom_ids`/`.labels`, e.g. for priority-weighted pharmacophore scoring
+- `MoleculePair` class
+    - `shepherd_score.container.MoleculePair` operates on two `Molecule` objects and prepares their `Surface`/`Pharmacophore` profiles for scoring and alignment
+- `MoleculePairBatch` class
+    - `shepherd_score.container.MoleculePairBatch` operates on a list of `MoleculePair` objects and enables accelerated alignment by padding all profile arrays to a common shape so a single compiled kernel is reused across every pair. Supports optional multi-CPU parallelism.
 
 ### Base functions
 #### Conformer generation
 Useful conformer generation functions are found in the `shepherd_score.conformer_generation` module.
 
 #### Interaction profile extraction
-| Interaction profile | Function |
-| :------- | :------- |
-| shape | `shepherd_score.extract_profiles.get_molecular_surface()` |
-| electrostatics | `shepherd_score.extract_profiles.get_electrostatic_potential()` |
-| pharmacophores | `shepherd_score.extract_profiles.get_pharmacophores()` |
+| Interaction profile | Function | Returns |
+| :------- | :------- | :------- |
+| shape | `shepherd_score.extract_profiles.get_molecular_surface()` | `np.ndarray` (M,3) surface positions |
+| electrostatics | `shepherd_score.extract_profiles.get_electrostatic_potential()` | `np.ndarray` (M,) ESP per surface point |
+| pharmacophores | `shepherd_score.extract_profiles.get_pharmacophores()` | `Pharmacophore` |
+
+`shepherd_score.pharm_utils.pharmacophore.Pharmacophore` is a lightweight dataclass; it also unpacks as `types, positions, vectors = get_pharmacophores(mol)`. The surface position/ESP arrays are assembled into a matching `shepherd_score.container.profiles.Surface` dataclass by `Molecule` (above). Most users won't call these extraction functions or construct the containers directly.
 
 #### Scoring
 ```shepherd_score.score``` contains the base scoring functions with seperate modules for those dependent on PyTorch (`*.py`), NumPy (`*_np.py`), and Jax (`*_jax.py`).
@@ -156,46 +171,41 @@ Useful conformer generation functions are found in the `shepherd_score.conformer
 | electrostatics | `shepherd_score.score.electrostatic_scoring.get_overlap_esp()` |
 | pharmacophores | `shepherd_score.score.pharmacophore_scoring.get_overlap_pharm()` |
 
-### Convenience wrappers
-- `Molecule` class
-    - `shepherd_score.container.Molecule` accepts an RDKit `Mol` object (with an associated conformer) and generates user-specified interaction profiles
-- `MoleculePair` class
-    - `shepherd_score.container.MoleculePair` operates on `Molecule` objects and prepares them for scoring and alignment
-- `MoleculePairBatch` class
-    - `shepherd_score.container.MoleculePairBatch` operates on a list of `MoleculePair` objects and enables accelerated alignment by padding all arrays to a common shape so a single compiled JAX kernel is reused across every pair. Supports optional multi-CPU parallelism.
-
 
 ## Scoring and Alignment Examples
 
 Full jupyter notebook tutorials/examples for extraction, scoring, and alignments are found in the [`examples`](./examples/) folder. Some minimal examples are below.
 
 ### Extraction
-Extraction of interaction profiles.
+Extraction of interaction profiles via the `Molecule` convenience wrapper.
 
 ```python
 from shepherd_score.conformer_generation import embed_conformer_from_smiles
 from shepherd_score.conformer_generation import charges_from_single_point_conformer_with_xtb
-from shepherd_score.extract_profiles import get_atomic_vdw_radii, get_molecular_surface
-from shepherd_score.extract_profiles import get_pharmacophores, get_electrostatic_potential
-from shepherd_score.extract_profiles import get_electrostatic_potential
+from shepherd_score.container import Molecule
 
 # Embed conformer with RDKit and partial charges from xTB
 ref_mol = embed_conformer_from_smiles('Oc1ccc(CC=C)cc1', MMFF_optimize=True)
 partial_charges = charges_from_single_point_conformer_with_xtb(ref_mol)
 
-# Radii are needed for surface extraction
-radii = get_atomic_vdw_radii(ref_mol)
-# `surface` is an np.array with shape (200, 3)
-surface = get_molecular_surface(ref_mol.GetConformer().GetPositions(), radii, num_points=200)
+# `Molecule` extracts and owns all interaction profiles
+ref_molec = Molecule(
+    ref_mol,
+    # optional options otherwise .surface/.pharmacophore stay empty
+    num_surf_points=200,
+    partial_charges=partial_charges, # If None, MMFF charges
+    pharm_multi_vector=False # recommended
+    # e.g., carbonyls get one HBA vector rather than two
+)
 
-# Get electrostatic potential at each point on the surface
-# `esp`: np.array (200,)
-esp = get_electrostatic_potential(ref_mol, partial_charges, surface)
+# Surface point cloud + electrostatic potential
+surf_pos = ref_molec.surface.positions # np.array (200,3)
+esp = ref_molec.surface.esp # np.array (200,)
 
-# Pharmacophores as arrays with averaged vectors
-# pharm_types: np.array (P,)
-# pharm_{pos/vecs}: np.array (P,3)
-pharm_types, pharm_pos, pharm_vecs = get_pharmacophores(ref_mol, multi_vector=False)
+# Pharmacophores as a `Pharmacophore` container, unpacks as (types, positions, vectors)
+# ref_molec.pharmacophore.types: np.array (P,)
+# ref_molec.pharmacophore.{positions/vectors}: np.array (P,3)
+pharm = ref_molec.pharmacophore
 ```
 
 ### 3D similarity scoring
@@ -309,7 +319,7 @@ uncond_pipe = UnconditionalEvalPipeline(
 uncond_pipe.evaluate(num_workers=4)
 
 # Properties are stored as attributes and can be converted into pandas df's
-sample_df, global_series = uncond_pipe.to_pandas()
+global_series, sample_df = uncond_pipe.to_pandas()
 ```
 
 ### Scripts
