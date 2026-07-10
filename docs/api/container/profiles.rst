@@ -10,11 +10,6 @@ visualization.
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: shepherd_score.container.profiles.InteractionProfile
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 ``Pharmacophore`` is defined in :mod:`shepherd_score.pharm_utils.pharmacophore`
 and re-exported from :mod:`shepherd_score.container` for convenience. See
 :doc:`../pharmacophore` for priority-label semantics.
