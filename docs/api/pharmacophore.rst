@@ -36,8 +36,15 @@ Priority pharmacophore **array indices** (not atom indices) can be passed to
 Pharmacophore Extraction
 ------------------------
 
+.. autoclass:: shepherd_score.pharm_utils.pharmacophore.Pharmacophore
+   :members:
+   :exclude-members: types, positions, vectors, mol, atom_ids, labels
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: shepherd_score.pharm_utils.pharmacophore
    :members:
+   :exclude-members: Pharmacophore
    :undoc-members:
    :show-inheritance:
 

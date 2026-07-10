@@ -7,14 +7,44 @@ This guide covers the basic usage of shepherd-score for interaction profile extr
 Overview
 --------
 
-The package has base functions and convenience wrappers. Scoring can be done with either 
-NumPy or Torch, but alignment requires Torch. There are also JAX implementations for both 
-scoring and alignment of gaussian overlap, ESP similarity, and pharmacophore similarity.
+The package has convenience wrappers and base functions. Most users should reach for the 
+convenience wrappers below; the base functions underneath are there if you need lower-level 
+control. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There 
+are also JAX implementations for both scoring and alignment of gaussian overlap, ESP 
+similarity, and pharmacophore similarity.
 
 .. note::
 
    Applicable xTB functions and evaluation pipeline evaluations are now parallelizable 
    through the ``num_workers`` argument in the ``.evaluate`` method.
+
+Convenience Wrappers
+--------------------
+
+Molecule Class
+~~~~~~~~~~~~~~
+
+:class:`shepherd_score.container.Molecule` accepts an RDKit ``Mol`` object (with an associated 
+conformer) and generates its interaction profiles, exposed via two properties:
+
+* ``.surface`` → :class:`~shepherd_score.container.profiles.Surface` (``positions``, ``esp``, ``probe_radius``)
+* ``.pharmacophore`` → :class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore` (``types``, ``positions``, ``vectors``, ``atom_ids``, ``labels``)
+
+Pass ``return_atom_ids=True`` and/or ``priority_atoms=[...]`` to :meth:`~shepherd_score.container.Molecule.get_pharmacophore` 
+to populate ``.pharmacophore.atom_ids``/``.labels``, e.g. for priority-weighted pharmacophore scoring.
+
+MoleculePair Class
+~~~~~~~~~~~~~~~~~~
+
+:class:`shepherd_score.container.MoleculePair` operates on two :class:`~shepherd_score.container.Molecule` 
+objects and prepares their ``Surface``/``Pharmacophore`` profiles for scoring and alignment.
+
+MoleculePairBatch Class
+~~~~~~~~~~~~~~~~~~~~~~~
+
+:class:`shepherd_score.container.MoleculePairBatch` operates on a list of :class:`~shepherd_score.container.MoleculePair` 
+objects and enables accelerated alignment by padding all profile arrays to a common shape so a 
+single compiled kernel is reused across every pair. Supports optional multi-CPU parallelism.
 
 Base Functions
 --------------
@@ -29,16 +59,26 @@ Interaction Profile Extraction
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 20 40 40
 
    * - Interaction Profile
      - Function
+     - Returns
    * - Shape
      - :func:`shepherd_score.extract_profiles.get_molecular_surface`
+     - ``np.ndarray`` (M,3) surface positions
    * - Electrostatics
      - :func:`shepherd_score.extract_profiles.get_electrostatic_potential`
+     - ``np.ndarray`` (M,) ESP per surface point
    * - Pharmacophores
      - :func:`shepherd_score.extract_profiles.get_pharmacophores`
+     - :class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore`
+
+:class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore` is a lightweight dataclass; it also 
+unpacks as ``types, positions, vectors = get_pharmacophores(mol)``. The surface position/ESP arrays 
+are assembled into a matching :class:`~shepherd_score.container.profiles.Surface` dataclass by 
+:class:`~shepherd_score.container.Molecule` (above). Most users won't call these extraction functions 
+or construct the containers directly.
 
 Scoring
 ~~~~~~~
@@ -59,68 +99,46 @@ dependent on PyTorch (``*.py``), NumPy (``*_np.py``), and JAX (``*_jax.py``).
    * - Pharmacophores
      - :func:`shepherd_score.score.pharmacophore_scoring.get_overlap_pharm`
 
-Convenience Wrappers
---------------------
-
-Molecule Class
-~~~~~~~~~~~~~~
-
-:class:`shepherd_score.container.Molecule` accepts an RDKit ``Mol`` object (with an associated 
-conformer) and generates user-specified interaction profiles. Access containers via
-``.surface`` and ``.pharmacophore``.
-
-MoleculePair Class
-~~~~~~~~~~~~~~~~~~
-
-:class:`shepherd_score.container.MoleculePair` operates on ``Molecule`` objects and prepares
-them for scoring and alignment. Alignment results are stored per mode in
-:class:`~shepherd_score.container._core.AlignmentResult` (``transform_<mode>``,
-``sim_aligned_<mode>``).
-
-MoleculePairBatch Class
-~~~~~~~~~~~~~~~~~~~~~~~
-
-:class:`shepherd_score.container.MoleculePairBatch` operates on a list of `MoleculePair`
-objects and enables accelerated alignment by padding all arrays to a common shape so a
-single compiled JAX or PyTorch kernel is reused across every pair. Supports optional
-multi-CPU parallelism via ``use_shmap=True``.
-
 
 Extraction Example
 ------------------
 
-Extraction of interaction profiles:
+Extraction of interaction profiles via the :class:`~shepherd_score.container.Molecule` convenience wrapper.
 
 .. code-block:: python
 
    from shepherd_score.conformer_generation import embed_conformer_from_smiles
    from shepherd_score.conformer_generation import charges_from_single_point_conformer_with_xtb
-   from shepherd_score.extract_profiles import get_atomic_vdw_radii, get_molecular_surface
-   from shepherd_score.extract_profiles import get_pharmacophores, get_electrostatic_potential
+   from shepherd_score.container import Molecule
 
    # Embed conformer with RDKit and partial charges from xTB
    ref_mol = embed_conformer_from_smiles('Oc1ccc(CC=C)cc1', MMFF_optimize=True)
    partial_charges = charges_from_single_point_conformer_with_xtb(ref_mol)
 
-   # Radii are needed for surface extraction
-   radii = get_atomic_vdw_radii(ref_mol)
-   # `surface` is an np.array with shape (200, 3)
-   surface = get_molecular_surface(ref_mol.GetConformer().GetPositions(), radii, num_points=200)
+   # `Molecule` extracts and owns all interaction profiles
+   ref_molec = Molecule(
+       ref_mol,
+       # optional options otherwise .surface/.pharmacophore stay empty
+       num_surf_points=200,
+       partial_charges=partial_charges,  # If None, MMFF charges
+       pharm_multi_vector=False  # recommended
+       # e.g., carbonyls get one HBA vector rather than two
+   )
 
-   # Get electrostatic potential at each point on the surface
-   # `esp`: np.array (200,)
-   esp = get_electrostatic_potential(ref_mol, partial_charges, surface)
+   # Surface point cloud + electrostatic potential
+   surf_pos = ref_molec.surface.positions  # np.array (200,3)
+   esp = ref_molec.surface.esp  # np.array (200,)
 
-   # Pharmacophores as arrays with averaged vectors
-   # pharm_types: np.array (P,)
-   # pharm_{pos/vecs}: np.array (P,3)
-   pharm_types, pharm_pos, pharm_vecs = get_pharmacophores(ref_mol, multi_vector=False)
+   # Pharmacophores as a `Pharmacophore` container, unpacks as (types, positions, vectors)
+   # ref_molec.pharmacophore.types: np.array (P,)
+   # ref_molec.pharmacophore.{positions/vectors}: np.array (P,3)
+   pharm = ref_molec.pharmacophore
 
 3D Similarity Scoring Example
 -----------------------------
 
-Scoring the similarity of two different molecules using 3D surface, ESP, and pharmacophore 
-similarity metrics:
+An example of scoring the similarity of two different molecules using 3D surface, ESP, and 
+pharmacophore similarity metrics:
 
 .. code-block:: python
 
@@ -158,7 +176,7 @@ similarity metrics:
 Alignment Example
 -----------------
 
-Alignment using the :class:`shepherd_score.container.MoleculePair` class:
+Next we show alignment using the same :class:`~shepherd_score.container.MoleculePair` class.
 
 .. code-block:: python
 
@@ -183,15 +201,16 @@ Alignment using the :class:`shepherd_score.container.MoleculePair` class:
        se3_transform=mp.transform_surf  # or mp.transform_esp, mp.transform_pharm
    )
 
-Accelerated alignment of multiple pairs using :class:`shepherd_score.container.MoleculePairBatch`:
+Alignment of multiple :class:`~shepherd_score.container.MoleculePair` objects can be accelerated 
+with :class:`~shepherd_score.container.MoleculePairBatch` with JAX installed.
 
 .. code-block:: python
 
    from shepherd_score.container import MoleculePairBatch
 
-   batch = MoleculePairBatch(pairs)  # list of MoleculePair objects
+   batch = MoleculePairBatch(pairs)  # `pairs` is a list of MoleculePair objects
 
-   # JAX-based volumetric alignment with padding
+   # accelerated JAX-based volumetric alignment via padding
    scores, aligned = batch.align_with_vol()
 
    # Multi-CPU parallel via shard_map (must set XLA_FLAGS *before* importing JAX)
@@ -212,20 +231,21 @@ Evaluation Pipelines
 --------------------
 
 We implement three evaluations of generated 3D conformers. Evaluations can be done on an 
-individual basis or in a pipeline.
+individual basis or in a pipeline. Here we show the most basic use case in the unconditional setting.
 
 * **ConfEval**: Checks validity, pre-/post-xTB relaxation, calculates 2D graph properties
 * **ConsistencyEval**: Inherits from ``ConfEval`` and evaluates the consistency of the 
-  molecule's jointly generated interaction profiles with the true interaction profiles
+  molecule's jointly generated interaction profiles with the true interaction profiles using 
+  3D similarity scoring functions
 * **ConditionalEval**: Inherits from ``ConfEval`` and evaluates the 3D similarity between 
   generated molecules and the target molecule
 
 .. note::
 
-   Evaluations accept atomic numbers and positions with explicit hydrogens (e.g. from
-   an xyz file). Pass ``timeout_minutes`` to cap per-molecule xTB wall time in
-   ``ConfEval``, ``ConditionalEval``, and pipeline ``.evaluate()`` calls; timed-out
-   molecules are recorded as failed. xTB optimization functions in
+   Evaluations can be run from any molecule's atomic numbers and positions with explicit 
+   hydrogens (i.e., straight from an xyz file). Pass ``timeout_minutes`` to cap per-molecule 
+   xTB wall time in ``ConfEval``, ``ConditionalEval``, and pipeline ``.evaluate()`` calls; 
+   timed-out molecules are recorded as failed. xTB optimization functions in
    :mod:`shepherd_score.conformer_generation` also accept a ``timeout`` (seconds).
 
 Example:
@@ -248,6 +268,6 @@ Example:
    uncond_pipe.evaluate(num_workers=4)
 
    # Properties are stored as attributes and can be converted into pandas df's
-   sample_df, global_series = uncond_pipe.to_pandas()
+   global_series, sample_df = uncond_pipe.to_pandas()
 
 For more detailed examples, see the Jupyter notebooks in the ``examples/`` directory of the repository.

@@ -12,7 +12,7 @@ compatibility. Use :meth:`~shepherd_score.container._core.Molecule.get_pharmacop
 with ``return_atom_ids`` / ``priority_atoms`` for priority pharmacophore labeling.
 
 Helper functions
----------------
+----------------
 
 .. autofunction:: shepherd_score.container._core.update_mol_coordinates
 

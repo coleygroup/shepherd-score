@@ -7,6 +7,7 @@ visualization.
 
 .. autoclass:: shepherd_score.container.profiles.Surface
    :members:
+   :exclude-members: positions, esp, probe_radius
    :undoc-members:
    :show-inheritance:
 

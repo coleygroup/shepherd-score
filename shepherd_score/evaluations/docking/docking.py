@@ -1,6 +1,6 @@
 """AutoDock Vina docking evaluation pipeline.
 
-VinaSmiles class adapted from Therapeutic Data Commons (TDC) [1].
+VinaSmiles class adapted from Therapeutic Data Commons (TDC) [1]_.
 
 Requires: vina, meeko; openbabel only if protonating ligands.
 

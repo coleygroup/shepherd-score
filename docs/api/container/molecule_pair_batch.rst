@@ -116,12 +116,10 @@ Available batch alignment methods
      - Padded masked volumetric alignment via analytical gradients; uses ``torch.compile``
    * - ``align_with_surf``
      - PyTorch/JAX
-     - Delegates to each ``MoleculePair`` (surface arrays are same-sized, no padding needed)
-     - Not recommended to use ``use_shmap=True`` with this method.
+     - Delegates to each ``MoleculePair`` (surface arrays are same-sized, no padding needed). Not recommended to use ``use_shmap=True`` with this method.
    * - ``align_with_esp``
      - PyTorch/JAX
-     - Delegates to each ``MoleculePair`` (surface arrays are same-sized, no padding needed)
-     - Not recommended to use ``use_shmap=True`` with this method.
+     - Delegates to each ``MoleculePair`` (surface arrays are same-sized, no padding needed). Not recommended to use ``use_shmap=True`` with this method.
 
 For the low-level parallel kernel see :doc:`../alignment/jax_parallel`.
 For the full scoring and alignment theory see :doc:`../../theory`.

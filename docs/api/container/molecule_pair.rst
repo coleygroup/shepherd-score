@@ -10,6 +10,7 @@ Each alignment mode stores its result in an :class:`~shepherd_score.container._c
 
 .. autoclass:: shepherd_score.container._core.AlignmentResult
    :members:
+   :exclude-members: score, transform
    :undoc-members:
    :show-inheritance:
 
