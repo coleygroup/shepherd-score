@@ -535,9 +535,9 @@ def draw_molecule(molecule: Molecule,
         height=height,
         view=view,
     )
-    if molecule.pharmacophores is not None:
+    if molecule.pharmacophore is not None:
         view = draw_pharm(
-            pharmacophore=molecule.pharmacophores,
+            pharmacophore=molecule.pharmacophore,
             opacity_features=opacity_features,
             view=view,
         )
