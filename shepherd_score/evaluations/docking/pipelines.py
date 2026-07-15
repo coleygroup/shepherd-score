@@ -173,6 +173,7 @@ class DockingEvalPipeline:
                  pdb_id: str,
                  num_processes: int = 4,
                  docking_target_info_dict: Optional[Dict] = None,
+                 scorefunction: str = 'vina',
                  verbose: int = 0,
                  path_to_bin: str = ''):
         """
@@ -195,7 +196,8 @@ class DockingEvalPipeline:
                 {"1iep": {"center": (15.614, 53.380, 15.455),
                           "size": (15, 15, 15),
                           "pdbqt": "path_to_file.pdbqt"}}
-
+        scorefunction : str, optional
+            'vina' or 'ad4'. Default is 'vina'.
         verbose : int, optional
             Level of verbosity from vina.Vina (0 is silent). Default is 0.
         path_to_bin : str, optional
@@ -233,7 +235,7 @@ class DockingEvalPipeline:
         self.center = self.docking_target_info[self.pdb_id]['center']
         self.box_size = self.docking_target_info[self.pdb_id]['size']
         self.pH = pH
-        self.scorefunction = 'vina'
+        self.scorefunction = scorefunction
         self.verbose = verbose
 
         self.vina_smiles = VinaSmiles(

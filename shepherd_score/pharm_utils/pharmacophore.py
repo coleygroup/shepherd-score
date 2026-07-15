@@ -14,9 +14,8 @@ References:
 from __future__ import annotations
 
 import os
-from copy import deepcopy
-import math
-from typing import List, Tuple, Dict, Union
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Tuple, Dict, Union
 
 import numpy as np
 from scipy.spatial import distance, Delaunay
@@ -81,14 +80,13 @@ def pattern_of_smarts(s):
 __hydrophobic_patterns = list(map(pattern_of_smarts, __hydrophobic_smarts))
 
 # geometric center of a matched pattern
-def __average_match(mol, matched_pattern):
+def __average_match(conf, matched_pattern):
     avg_x = 0.0
     avg_y = 0.0
     avg_z = 0.0
     count = float(len(matched_pattern))
-    conf0 = mol.GetConformer()
     for i in matched_pattern:
-        xyz = conf0.GetAtomPosition(i)
+        xyz = conf.GetAtomPosition(i)
         avg_x += xyz.x
         avg_y += xyz.y
         avg_z += xyz.z
@@ -97,24 +95,23 @@ def __average_match(mol, matched_pattern):
               avg_z / count)
     return center
 
-def __find_matches(mol, patterns):
+def __find_matches(mol, patterns, return_atom_ids: bool = False):
     res = []
+    conf = mol.GetConformer()
     for pat in patterns:
         # get all matches for that pattern
         matched = mol.GetSubstructMatches(pat)
         for m in matched:
             # get the center of each matched group
-            avg = __average_match(mol, m)
-            res.append(avg)
+            avg = __average_match(conf, m)
+            if return_atom_ids:
+                # Derive aromaticity from the matched atoms themselves rather than the
+                # SMARTS text, so it stays correct if __hydrophobic_smarts is edited.
+                is_aromatic = all(mol.GetAtomWithIdx(i).GetIsAromatic() for i in m)
+                res.append((avg, set(m), is_aromatic))
+            else:
+                res.append(avg)
     return res
-
-def __euclid(xyz0, xyz1):
-    x0, y0, z0 = xyz0
-    x1, y1, z1 = xyz1
-    dx = x0 - x1
-    dy = y0 - y1
-    dz = z0 - z1
-    return math.sqrt(dx*dx + dy*dy + dz*dz)
 
 def __average(vecs):
     sum_x = 0.0
@@ -147,8 +144,17 @@ def _rdkit_point3d_to_tuple(point: Chem.Geometry.Point3D):
     """
     return (point.x, point.y, point.z)
 
+def _copy_point3d(point: Chem.Geometry.Point3D) -> Chem.Geometry.Point3D:
+    """
+    Independent copy of a Point3D, ~6x faster than copy.deepcopy(point) since it
+    skips the generic (memo dict, __reduce_ex__ lookup, ...) deepcopy machinery
+    for what is just 3 floats.
+    """
+    return Chem.rdGeometry.Point3D(point.x, point.y, point.z)
+
 def find_hydrophobes(mol: rdkit.Chem.rdchem.Mol,
-                     cluster_hydrophobic: bool = True):
+                     cluster_hydrophobic: bool = True,
+                     return_atom_ids: bool = False):
     """
     Find hydrophobes and cluster them.
 
@@ -156,35 +162,49 @@ def find_hydrophobes(mol: rdkit.Chem.rdchem.Mol,
     ---------
     mol : rdkit Mol object with a conformer.
     cluster_hydrophobic : bool (default=True) to cluster hydrophobic atoms if they fall within 2A.
+    return_atom_ids : bool (default=False)
+        When True, returns a list of ``(center_tuple, aromatic_atom_ids_set)`` pairs instead of
+        plain center tuples. ``aromatic_atom_ids_set`` is the union of atom indices from
+        aromatic-ring matches that ended up in the cluster; it is an empty set for clusters
+        composed entirely of non-aromatic matches.
 
     Returns
     -------
-    list of tuples containing coordinates for the locations for each hydrophobe.
+    list of tuples containing coordinates for the locations for each hydrophobe,
+    or (when ``return_atom_ids=True``) a list of ``(center, set[int])`` pairs.
     """
-    all_hydrophobes = __find_matches(mol, __hydrophobic_patterns)
+    all_hydrophobes = __find_matches(mol, __hydrophobic_patterns,
+                                     return_atom_ids=return_atom_ids)
     if not cluster_hydrophobic:
         return all_hydrophobes
-    else:
-        # regroup all hydrophobic features within 2.0A
-        grouped_hydrophobes = []
-        n = len(all_hydrophobes)
-        idx2cluster = list(range(n))
+
+    # Extract centers regardless of return_atom_ids; when True each entry is
+    # (center, atom_ids, is_aromatic), otherwise each entry is already the center tuple.
+    centers = [h[0] for h in all_hydrophobes] if return_atom_ids else all_hydrophobes
+    n = len(all_hydrophobes)
+    idx2cluster = list(range(n))
+    if n > 1:
+        # Precompute all pairwise distances in one vectorized call
+        within_cutoff = distance.squareform(distance.pdist(np.asarray(centers))) <= 2.0
         for i in range(n):
-            h_i = all_hydrophobes[i]
             cluster_id = idx2cluster[i]
-            for j in range(i+1, n):
-                h_j = all_hydrophobes[j]
-                if __euclid(h_i, h_j) <= 2.0: # Angstrom
-                    # same cluster
+            for j in range(i + 1, n):
+                if within_cutoff[i, j]:
                     idx2cluster[j] = cluster_id
-        cluster_ids = set(idx2cluster)
-        for cid in cluster_ids:
-            group = []
-            for i, h in enumerate(all_hydrophobes):
-                if idx2cluster[i] == cid:
-                    group.append(h)
-            grouped_hydrophobes.append(__average(group))
-        return grouped_hydrophobes
+
+    grouped = []
+    for cid in set(idx2cluster):
+        group_centers = []
+        aromatic_ids = set()
+        for i, h in enumerate(all_hydrophobes):
+            if idx2cluster[i] != cid:
+                continue
+            group_centers.append(centers[i])
+            if return_atom_ids and h[2]:  # h[2] is is_aromatic
+                aromatic_ids |= h[1]
+        avg = __average(group_centers)
+        grouped.append((avg, aromatic_ids) if return_atom_ids else avg)
+    return grouped
 
 ### End Tsuda Lab code
 
@@ -303,7 +323,8 @@ def _is_donator_accessible(mol: rdkit.Chem.rdchem.Mol,
         hyd_atom_ids = []
     else:
         hyd_atom_ids = [h.GetIdx() for h in hydrogens]
-    radii = np.array([PT.GetRvdw(atom.GetAtomicNum()) for i, atom in enumerate(mol.GetAtoms()) if i not in hyd_atom_ids])
+    hyd_atom_ids_set = set(hyd_atom_ids)
+    radii = np.array([PT.GetRvdw(atom.GetAtomicNum()) for i, atom in enumerate(mol.GetAtoms()) if i not in hyd_atom_ids_set])
 
     # Pharmacophore position is about 1.2A in direction of vector
     pharm_pos = np.array(pharm_pos) + 1.2*np.array(unit_vec)
@@ -393,7 +414,7 @@ def _average_vectors(vectors: List):
     avg_vec = 0
     for v in vectors:
         if avg_vec == 0:
-            avg_vec = deepcopy(v)
+            avg_vec = _copy_point3d(v)
         else:
             avg_vec += v
     avg_vec.Normalize()
@@ -409,7 +430,8 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                             multi_vector: bool = True,
                             exclude: List[int] = [],
                             check_access: bool = False,
-                            scale: float = 1.0
+                            scale: float = 1.0,
+                            return_atom_ids: bool = False,
                             ) -> Dict:
     """
     Get the positions of pharmacophore anchors and their associated unit vectors.
@@ -428,12 +450,18 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
         Check if HBD/HBA are accessible to the molecular surface. Default is ``False``.
     scale : float, optional
         Length of the vector in Angstroms. Default is 1.0.
+    return_atom_ids : bool, optional
+        When ``True``, each family sub-dict also contains an ``'A'`` key holding a list of
+        atom-id sets (one set per emitted pharmacophore, aligned with ``'P'``). For
+        hydrophobes, only aromatic-ring-derived clusters carry non-empty sets; aliphatic
+        clusters have empty sets. Default is ``False``.
 
     Returns
     -------
     dict
         Dictionary with format ``{'FeatureName': {'P': [(anchor coord), ...],
-        'V': [(rel. vec), ...]}}``.
+        'V': [(rel. vec), ...]}}``.  When ``return_atom_ids=True``, each entry also has
+        ``'A': [set_of_int, ...]`` aligned with ``'P'``.
     """
     global _cached_factory
     pharmacophores = {}
@@ -444,6 +472,7 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
         _cached_factory = AllChem.BuildFeatureFactory(fdef_file)
 
     mol_feats = _cached_factory.GetFeaturesForMol(mol)
+    conf = mol.GetConformer()
 
     # Filter only these for rdkit processing, we will compute hydrophobes later
     keep = ('Aromatic', 'ZnBinder', 'Donor', 'Acceptor', 'Cation', 'Anion', 'Halogen')
@@ -454,14 +483,16 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
         if family not in keep:
           continue
         if family not in pharmacophores:
-            pharmacophores[family] = {}
-            pharmacophores[family]['P'] = []
-            pharmacophores[family]['V'] = []
+            pharmacophores[family] = {'P': [], 'V': []}
+            if return_atom_ids:
+                pharmacophores[family]['A'] = []
 
-        pos = feat.GetPos() # positions of pharmacophore anchor
+        if return_atom_ids:
+            feat_atom_ids = set(feat.GetAtomIds())
 
-        if family.lower() == 'aromatic':
-            anchor, vec = GetAromaticFeatVects(conf = mol.GetConformer(),
+        if family == 'Aromatic':
+            pos = feat.GetPos()
+            anchor, vec = GetAromaticFeatVects(conf = conf,
                                                featAtoms = feat.GetAtomIds(),
                                                featLoc = pos,
                                                return_both = multi_vector,
@@ -470,12 +501,12 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                 anchor = anchor[0]
                 vec = vec[0]
 
-        elif family.lower() == 'donor':
+        elif family == 'Donor':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
                 # Multivector by default
-                anchor, vec, hydrogen_list = GetDonorFeatVects(conf = mol.GetConformer(),
+                anchor, vec, hydrogen_list = GetDonorFeatVects(conf = conf,
                                                                featAtoms = aids,
                                                                scale = scale,
                                                                exclude = exclude)
@@ -485,29 +516,31 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                     if vec is None:
                         avg_vec = None
                     else:
-                        avg_vec = deepcopy(vec[0])
+                        avg_vec = _copy_point3d(vec[0])
 
                 if check_access:
                     if anchor is None or avg_vec is None:
                         continue
-                    elif not _is_donator_accessible(mol = mol,
-                                                    hydrogens = hydrogen_list,
-                                                    pharm_pos = anchor if not isinstance(anchor, list) else anchor[0],
-                                                    unit_vec = avg_vec
-                                                    ):
+                    # Convert Point3D -> tuple; see _rdkit_point3d_to_tuple.
+                    anchor_pt = anchor if not isinstance(anchor, list) else anchor[0]
+                    if not _is_donator_accessible(mol = mol,
+                                                  hydrogens = hydrogen_list,
+                                                  pharm_pos = _rdkit_point3d_to_tuple(anchor_pt),
+                                                  unit_vec = _rdkit_point3d_to_tuple(avg_vec)
+                                                  ):
                         continue # don't keep this pharmacophore
 
                 # If only one vector per pharmacophore
                 if not multi_vector and anchor is not None:
                     anchor = anchor[0]
-                    vec = deepcopy(avg_vec)
+                    vec = _copy_point3d(avg_vec)
 
-        elif family.lower() == 'acceptor':
+        elif family == 'Acceptor':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
                 # Multivector by default
-                anchor, vec = GetAcceptorFeatVects(conf = mol.GetConformer(),
+                anchor, vec = GetAcceptorFeatVects(conf = conf,
                                                    featAtoms = aids,
                                                    scale = scale)
 
@@ -517,61 +550,245 @@ def get_pharmacophores_dict(mol: rdkit.Chem.rdchem.Mol,
                     if vec is None:
                         avg_vec = None
                     else:
-                        avg_vec = deepcopy(vec[0])
+                        avg_vec = _copy_point3d(vec[0])
 
                 if check_access:
                     if anchor is None or avg_vec is None:
                         continue
                     numNbrs = len(featAtom.GetNeighbors())
+                    anchor_pt = anchor if not isinstance(anchor, list) else anchor[0]
                     if not _is_acceptor_accessible(mol = mol,
                                                    acceptor_atom = featAtom,
-                                                   pharm_pos = anchor if not isinstance(anchor, list) else anchor[0],
-                                                   unit_vec = avg_vec,
+                                                   pharm_pos = _rdkit_point3d_to_tuple(anchor_pt),
+                                                   unit_vec = _rdkit_point3d_to_tuple(avg_vec),
                                                    num_nbrs = numNbrs):
                         continue # don't keep this pharmacophore
 
                 # If only one vector per pharmacophore
                 if not multi_vector and anchor is not None:
                     anchor = anchor[0]
-                    vec = deepcopy(avg_vec)
+                    vec = _copy_point3d(avg_vec)
 
-        elif family.lower() == 'halogen':
+        elif family == 'Halogen':
             aids = feat.GetAtomIds()
             if len(aids) == 1:
                 featAtom = mol.GetAtomWithIdx(aids[0])
-                anchor, vec = GetHalogenFeatVects(conf = mol.GetConformer(),
+                anchor, vec = GetHalogenFeatVects(conf = conf,
                                                   featAtoms = aids,
                                                   scale = scale)
                 anchor = anchor[0]
                 vec = vec[0]
 
         else:
-            anchor = pos
+            anchor = feat.GetPos()
             vec = Chem.rdGeometry.Point3D(0,0,0)
 
         if anchor is not None and vec is not None:
-            pass
             if isinstance(anchor, list):
                 pharmacophores[family]['P'].extend(_rdkit_point3d_to_tuple(x) for x in anchor)
                 pharmacophores[family]['V'].extend(_rdkit_point3d_to_tuple(x) for x in vec)
+                if return_atom_ids:
+                    pharmacophores[family]['A'].extend(feat_atom_ids for _ in anchor)
             else:
                 pharmacophores[family]['P'].append(_rdkit_point3d_to_tuple(anchor))
                 pharmacophores[family]['V'].append(_rdkit_point3d_to_tuple(vec))
+                if return_atom_ids:
+                    pharmacophores[family]['A'].append(feat_atom_ids)
 
     # Hydrophobe processing
-    hydrophobes = find_hydrophobes(mol=mol, cluster_hydrophobic=True)
-    pharmacophores['Hydrophobe'] = {}
-    pharmacophores['Hydrophobe']['P'] = hydrophobes
-    pharmacophores['Hydrophobe']['V'] = [(0,0,0) for _ in range(len(hydrophobes))]
+    hydrophobes_raw = find_hydrophobes(mol=mol, cluster_hydrophobic=True,
+                                       return_atom_ids=return_atom_ids)
+    if return_atom_ids:
+        hydrophobe_centers = [entry[0] for entry in hydrophobes_raw]
+        hydrophobe_atom_ids = [entry[1] for entry in hydrophobes_raw]
+    else:
+        hydrophobe_centers = hydrophobes_raw
+        hydrophobe_atom_ids = None
+    pharmacophores['Hydrophobe'] = {
+        'P': hydrophobe_centers,
+        'V': [(0, 0, 0)] * len(hydrophobe_centers),
+    }
+    if return_atom_ids:
+        pharmacophores['Hydrophobe']['A'] = hydrophobe_atom_ids
     return pharmacophores
+
+
+_RING_PRIORITY_TYPE_INDICES = frozenset({
+    P_TYPES.index('Aromatic'),
+    P_TYPES.index('Hydrophobe'),
+})
+
+
+def _heavy_atoms_in_ring(mol: rdkit.Chem.rdchem.Mol, ring: Tuple[int, ...]) -> set[int]:
+    return {i for i in ring if mol.GetAtomWithIdx(i).GetAtomicNum() > 1}
+
+
+def _max_priority_atoms_in_shared_rings(ring_heavy_sets: List[set],
+                                        atom_ids: set[int],
+                                        priority_atoms: set[int]) -> int:
+    """
+    Return the maximum number of priority atoms found in any single ring that
+    overlaps ``atom_ids``.
+
+    ``ring_heavy_sets`` is the list of per-ring heavy-atom sets, precomputed once
+    per molecule (see :func:`priority_pharm_labels`) so that ring info is not
+    rebuilt for every pharmacophore.
+    """
+    if not atom_ids or not priority_atoms:
+        return 0
+    best = 0
+    for heavy in ring_heavy_sets:
+        if not (heavy & atom_ids):
+            continue
+        best = max(best, len(heavy & priority_atoms))
+    return best
+
+
+def priority_pharm_labels(mol: rdkit.Chem.rdchem.Mol,
+                          atom_ids_per_pharm: List[set],
+                          pharm_types: np.ndarray,
+                          priority_atoms: Iterable[int],
+                          min_ring_priority_atoms: int = 3) -> np.ndarray:
+    """
+    Compute a 0/1 priority label for each pharmacophore.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Molecule used to resolve ring membership for aromatic/hydrophobe labels.
+    atom_ids_per_pharm : list of sets
+        One set of atom indices per pharmacophore, aligned with the X/P/V arrays.
+    pharm_types : np.ndarray
+        Pharmacophore type indices aligned with ``atom_ids_per_pharm`` (same order
+        as ``P_TYPES``).
+    priority_atoms : iterable of int
+        Atom indices considered "priority".
+    min_ring_priority_atoms : int, optional
+        Minimum number of heavy ring atoms that must also be in ``priority_atoms``
+        before an aromatic or aromatic-derived hydrophobe is labeled 1. Use ``1`` to
+        treat any single priority atom in the ring as sufficient. Default is ``3``.
+
+    Returns
+    -------
+    np.ndarray, shape (N,), dtype int64
+        1 where the pharmacophore is priority, else 0. Non-ring pharmacophores use
+        simple atom-id intersection. Aromatic and aromatic-derived hydrophobe
+        pharmacophores additionally require at least ``min_ring_priority_atoms`` heavy
+        atoms from a shared ring to appear in ``priority_atoms``.
+    """
+    priority = {int(a) for a in priority_atoms}
+    ring_heavy_sets: Optional[List[set]] = None
+    labels = []
+    for aids, pharm_type in zip(atom_ids_per_pharm, pharm_types):
+        if not aids or priority.isdisjoint(aids):
+            labels.append(0)
+            continue
+        if int(pharm_type) in _RING_PRIORITY_TYPE_INDICES:
+            if ring_heavy_sets is None:
+                ring_heavy_sets = [_heavy_atoms_in_ring(mol, ring)
+                                   for ring in mol.GetRingInfo().AtomRings()]
+            ring_priority_count = _max_priority_atoms_in_shared_rings(
+                ring_heavy_sets, aids, priority)
+            labels.append(1 if ring_priority_count >= min_ring_priority_atoms else 0)
+        else:
+            labels.append(1)
+    return np.array(labels, dtype=np.int64)
+
+
+@dataclass(eq=False)
+class Pharmacophore:
+    """
+    Container for the pharmacophores extracted from a molecule.
+
+    For backwards compatibility with the original 3-tuple return of
+    :func:`get_pharmacophores`, instances unpack and index as ``(types, positions,
+    vectors)``::
+
+        X, P, V = get_pharmacophores(mol)   # still works
+
+    Named attributes (``.types``, ``.positions``, ``.vectors``) are also available.
+    When built with ``return_atom_ids=True``, the per-pharmacophore atom-id sets are
+    retained on ``.atom_ids`` and priority labels can be computed lazily — for any
+    number of priority-atom sets or thresholds — without re-extracting pharmacophores.
+
+    Attributes
+    ----------
+    types : np.ndarray
+        Pharmacophore type indices (``P_TYPES`` order), shape (N,).
+    positions : np.ndarray
+        Anchor positions, shape (N, 3).
+    vectors : np.ndarray
+        Relative unit vectors, shape (N, 3).
+    mol : rdkit.Chem.Mol or None
+        Source molecule, needed for ring-aware :meth:`priority_labels`.
+    atom_ids : list of set or None
+        Per-pharmacophore atom-id sets aligned with ``types``; ``None`` unless the
+        container was built with ``return_atom_ids=True``.
+    labels : np.ndarray or None
+        Priority labels aligned with ``types``, populated when ``get_pharmacophores``
+        is called with ``priority_atoms``; ``None`` otherwise.
+    """
+    types: np.ndarray
+    positions: np.ndarray
+    vectors: np.ndarray
+    mol: Optional[rdkit.Chem.rdchem.Mol] = None
+    atom_ids: Optional[List[set]] = None
+    labels: Optional[np.ndarray] = None
+
+    def _as_tuple(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return (self.types, self.positions, self.vectors)
+
+    def __iter__(self):
+        return iter(self._as_tuple())
+
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, idx):
+        return self._as_tuple()[idx]
+
+    def priority_labels(self,
+                        priority_atoms: Iterable[int],
+                        min_ring_priority_atoms: int = 3) -> np.ndarray:
+        """
+        Compute a 0/1 priority label per pharmacophore against ``priority_atoms``.
+
+        Requires the container to have been built with ``return_atom_ids=True``.
+        See :func:`priority_pharm_labels` for the labeling semantics.
+
+        Parameters
+        ----------
+        priority_atoms : iterable of int
+            Atom indices considered "priority".
+        min_ring_priority_atoms : int, optional
+            Minimum heavy ring atoms in ``priority_atoms`` before an aromatic or
+            aromatic-derived hydrophobe is labeled 1. Default is ``3``.
+
+        Returns
+        -------
+        np.ndarray, shape (N,), dtype int64
+        """
+        if self.atom_ids is None:
+            raise ValueError(
+                "priority_labels requires per-pharmacophore atom ids; rebuild with "
+                "get_pharmacophores(..., return_atom_ids=True)."
+            )
+        return priority_pharm_labels(self.mol,
+                                     self.atom_ids,
+                                     self.types,
+                                     priority_atoms,
+                                     min_ring_priority_atoms=min_ring_priority_atoms)
 
 
 def get_pharmacophores(mol: rdkit.Chem.rdchem.Mol,
                        multi_vector: bool = True,
                        exclude: List[int] = [],
                        check_access: bool = False,
-                       scale: float = 1.0
-                       ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                       scale: float = 1.0,
+                       return_atom_ids: bool = False,
+                       priority_atoms: Optional[Iterable[int]] = None,
+                       min_ring_priority_atoms: int = 3,
+                       ) -> Pharmacophore:
     """
     Get the identity, anchor positions, and relative unit vectors for each pharmacophore.
 
@@ -599,26 +816,50 @@ def get_pharmacophores(mol: rdkit.Chem.rdchem.Mol,
         Check if HBD/HBA are accessible to the molecular surface. Default is ``False``.
     scale : float, optional
         Length of a pharmacophore vector in Angstroms. Default is 1.0.
+    return_atom_ids : bool, optional
+        When ``True``, the returned :class:`Pharmacophore` retains the per-pharmacophore
+        atom-id sets on ``.atom_ids``, enabling lazy priority labeling via
+        :meth:`Pharmacophore.priority_labels`. Implied by ``priority_atoms``.
+        Default is ``False``.
+    priority_atoms : iterable of int, optional
+        Atom indices considered "priority". When provided, priority labels are computed
+        in this single call and stored on ``.labels`` of the returned container (atom
+        ids are retained automatically). See :meth:`Pharmacophore.priority_labels` for
+        the labeling semantics. Default is ``None``.
+    min_ring_priority_atoms : int, optional
+        Only used when ``priority_atoms`` is provided. Minimum heavy ring atoms in
+        ``priority_atoms`` before an aromatic or aromatic-derived hydrophobe is labeled
+        1. Set to ``1`` to label any pharmacophore whose ring shares a single priority
+        atom. Default is ``3``.
 
     Returns
     -------
-    X : np.ndarray
-        Identity of pharmacophore corresponding to the indexing order, shape (N,).
-    P : np.ndarray
-        Anchor positions of each pharmacophore, shape (N, 3).
-    V : np.ndarray
-        Unit vectors in a relative position to the anchor positions, shape (N, 3).
-        Adding P and V results in the position of the vector's extended point.
+    Pharmacophore
+        Container that unpacks as the original ``(X, P, V)`` 3-tuple for backwards
+        compatibility, where:
+
+        - ``X`` (``.types``): pharmacophore type indices (``P_TYPES`` order), shape (N,).
+        - ``P`` (``.positions``): anchor positions, shape (N, 3).
+        - ``V`` (``.vectors``): relative unit vectors, shape (N, 3); adding P and V
+          gives the extended point.
+
+        When ``return_atom_ids=True`` (or ``priority_atoms`` is given), ``.atom_ids``
+        holds per-pharmacophore atom-id sets and ``.priority_labels(priority_atoms, ...)``
+        computes 0/1 priority labels. When ``priority_atoms`` is given, ``.labels`` is
+        also populated in this call.
     """
+    return_atom_ids = return_atom_ids or (priority_atoms is not None)
     pharmacophores_dict = get_pharmacophores_dict(mol=mol,
                                                   multi_vector=multi_vector,
                                                   check_access=check_access,
                                                   scale=scale,
-                                                  exclude=exclude)
+                                                  exclude=exclude,
+                                                  return_atom_ids=return_atom_ids)
     N = sum(len(pharmacophores_dict[family]['P']) for family in pharmacophores_dict)
     X = np.empty((N,), dtype=np.int64)
     P = np.empty((N, 3), dtype=np.float64)
     V = np.empty((N, 3), dtype=np.float64)
+    atom_ids_per_pharm: Optional[List[set]] = [] if return_atom_ids else None
     start_idx = 0
     for family in pharmacophores_dict:
         this_len = len(pharmacophores_dict[family]['P'])
@@ -628,8 +869,14 @@ def get_pharmacophores(mol: rdkit.Chem.rdchem.Mol,
         X[start_idx:end_idx] = P_TYPES.index(family)
         P[start_idx:end_idx, :] = pharmacophores_dict[family]['P']
         V[start_idx:end_idx, :] = pharmacophores_dict[family]['V']
+        if return_atom_ids:
+            atom_ids_per_pharm.extend(pharmacophores_dict[family]['A'])
         start_idx = end_idx
 
-    return X, P, V
-
-
+    pharm = Pharmacophore(types=X, positions=P, vectors=V,
+                           mol=mol if return_atom_ids else None,
+                           atom_ids=atom_ids_per_pharm)
+    if priority_atoms is not None:
+        pharm.labels = pharm.priority_labels(
+            priority_atoms, min_ring_priority_atoms=min_ring_priority_atoms)
+    return pharm

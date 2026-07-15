@@ -263,7 +263,8 @@ def _eval_unconditional_single(i: int,
                                atoms: np.ndarray,
                                positions: np.ndarray,
                                solvent: Optional[str],
-                               num_processes: int) -> Dict[str, Any]:
+                               num_processes: int,
+                               timeout_minutes: Optional[float] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -277,7 +278,8 @@ def _eval_unconditional_single(i: int,
         if len(atoms) == 0:
             raise ValueError("Empty molecule")
 
-        conf_eval = ConfEval(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes)
+        conf_eval = ConfEval(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes,
+                             timeout_minutes=timeout_minutes)
 
         res = {
             'i': i,
@@ -317,7 +319,8 @@ def _eval_conditional_single(i: int,
                              positions: np.ndarray,
                              solvent: Optional[str],
                              num_processes: int,
-                             priority_pharm_indices: Optional[list] = None) -> Dict[str, Any]:
+                             priority_pharm_indices: Optional[list] = None,
+                             timeout_minutes: Optional[float] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -341,6 +344,7 @@ def _eval_conditional_single(i: int,
             priority_pharm_indices=priority_pharm_indices,
             num_processes=num_processes,
             solvent=solvent,
+            timeout_minutes=timeout_minutes,
         )
 
         res = {
@@ -400,7 +404,8 @@ def _eval_consistency_single(i: int,
                              solvent: Optional[str],
                              num_processes: int,
                              random_molblock_charges: Optional[List[Tuple]] = None,
-                             random_seed: Optional[int] = None) -> Dict[str, Any]:
+                             random_seed: Optional[int] = None,
+                             timeout_minutes: Optional[float] = None) -> Dict[str, Any]:
     """
     Evaluate a single molecule for consistency and preserve necessary attributes for the pipeline while avoiding
     pickling issues.
@@ -423,7 +428,8 @@ def _eval_consistency_single(i: int,
             pharm_multi_vector=pharm_multi_vector,
             probe_radius=probe_radius,
             solvent=solvent,
-            num_processes=num_processes
+            num_processes=num_processes,
+            timeout_minutes=timeout_minutes,
         )
 
         # Compute lower bounds if available

@@ -4,22 +4,32 @@ Tests for MoleculePairBatch and masked JAX alignment functions.
 import numpy as np
 import pytest
 
-pytest.importorskip("jax")
+from .utils import _configure_jax_platform
 
-import jax.numpy as jnp
+# Configure JAX platform before import to avoid GPU initialization errors, matching the
+# convention used by the other jax-marked test modules (e.g. test_alignment.py).
+JAX_AVAILABLE = True
+try:
+    _configure_jax_platform()
 
-from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_overlap_jax_mask
-from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, get_overlap_esp_jax_mask
-from shepherd_score.alignment._jax import optimize_ROCS_overlay_jax, optimize_ROCS_overlay_jax_mask
-from shepherd_score.alignment._jax import optimize_ROCS_esp_overlay_jax, optimize_ROCS_esp_overlay_jax_mask
-from shepherd_score.score.pharmacophore_scoring_jax import (
-    get_overlap_pharm_jax_vectorized,
-    get_overlap_pharm_jax_vectorized_mask,
-)
-from shepherd_score.alignment._jax import (
-    optimize_pharm_overlay_jax_vectorized,
-    optimize_pharm_overlay_jax_vectorized_mask,
-)
+    import jax.numpy as jnp
+
+    from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax, get_overlap_jax_mask
+    from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax, get_overlap_esp_jax_mask
+    from shepherd_score.alignment._jax import optimize_ROCS_overlay_jax, optimize_ROCS_overlay_jax_mask
+    from shepherd_score.alignment._jax import optimize_ROCS_esp_overlay_jax, optimize_ROCS_esp_overlay_jax_mask
+    from shepherd_score.score.pharmacophore_scoring_jax import (
+        get_overlap_pharm_jax_vectorized,
+        get_overlap_pharm_jax_vectorized_mask,
+    )
+    from shepherd_score.alignment._jax import (
+        optimize_pharm_overlay_jax_vectorized,
+        optimize_pharm_overlay_jax_vectorized_mask,
+    )
+except ImportError:
+    JAX_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX is not installed")
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """AutoDock Vina docking evaluation pipeline.
 
-VinaSmiles class adapted from Therapeutic Data Commons (TDC) [1].
+VinaSmiles class adapted from Therapeutic Data Commons (TDC) [1]_.
 
 Requires: vina, meeko; openbabel only if protonating ligands.
 
@@ -379,7 +379,7 @@ class VinaBase:
             )
             self.state = 'optimized'
             if output_file is not None:
-                self.v.write_pose(output_file, overwrite=True)
+                self.v.write_pose(str(output_file), overwrite=True)
 
             if output_file is None:
                 _used_temp_file = True
@@ -392,7 +392,7 @@ class VinaBase:
                 else:
                     _dir_path = './'
                 temp_output_file = str(Path(_dir_path) / _file_name)
-                self.v.write_pose(temp_output_file, overwrite=True)
+                self.v.write_pose(str(temp_output_file), overwrite=True)
 
             if output_file is None:
                 output_file = temp_output_file
@@ -422,9 +422,9 @@ class VinaBase:
             print("Cannot save pose in state None. Run docking or optimization first.")
             return
         if self.state == 'docked':
-            self.v.write_poses(output_file, n_poses=n_poses, overwrite=True)
+            self.v.write_poses(str(output_file), n_poses=n_poses, overwrite=True)
         elif self.state == 'optimized':
-            self.v.write_pose(output_file, overwrite=True)
+            self.v.write_pose(str(output_file), overwrite=True)
 
 
 class VinaSmiles(VinaBase):
@@ -519,7 +519,7 @@ class VinaSmiles(VinaBase):
         if not return_best_protomer:
             ligand = self.load_ligand_from_smiles(ligand_smiles, protonate=protonate, return_all=False)
             total_energy, _, docked_mol = self.dock_ligand(
-                ligand=ligand,
+                ligand=ligand[0],
                 output_file=output_file,
                 exhaustiveness=exhaustiveness,
                 n_poses=n_poses,

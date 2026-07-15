@@ -101,7 +101,7 @@ napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_preprocess_types = False
 napoleon_type_aliases = None
-napoleon_attr_annotations = True
+napoleon_attr_annotations = False
 
 # Autodoc settings
 autodoc_default_options = {

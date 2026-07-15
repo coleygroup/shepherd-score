@@ -2,9 +2,9 @@
 Molecule class to hold molecule geometries and extract interaction profiles.
 MoleculePair class facilitates alignment with interaction profiles.
 """
-from typing import Union, List, Optional, Tuple
+from typing import Union, List, Optional, Tuple, Iterable
 from copy import deepcopy
-import sys
+from dataclasses import dataclass, field
 
 import numpy as np
 import rdkit.Chem as Chem
@@ -18,12 +18,58 @@ from shepherd_score.score.gaussian_overlap_np import get_overlap_np
 from shepherd_score.score.gaussian_overlap import get_overlap
 from shepherd_score.score.electrostatic_scoring import get_overlap_esp
 from shepherd_score.score.electrostatic_scoring_np import get_overlap_esp_np
-from shepherd_score.pharm_utils.pharmacophore import get_pharmacophores
+from shepherd_score.pharm_utils.pharmacophore import get_pharmacophores, Pharmacophore
 from shepherd_score.score.pharmacophore_scoring_np import get_overlap_pharm_np
 from shepherd_score.score.pharmacophore_scoring import _SIM_TYPE, get_overlap_pharm
 from shepherd_score.alignment import optimize_ROCS_overlay, optimize_ROCS_overlay_analytical, optimize_ROCS_esp_overlay, optimize_ROCS_esp_overlay_analytical, optimize_esp_combo_score_overlay
 from shepherd_score.alignment import optimize_pharm_overlay, optimize_pharm_overlay_analytical
 from shepherd_score.alignment.utils.se3_np import apply_SE3_transform_np, apply_SO3_transform_np
+from shepherd_score.container.profiles import Surface
+
+
+# Alignment modes tracked by MoleculePair (one AlignmentResult each).
+_ALIGN_KEYS = (
+    'vol', 'vol_noH', 'surf', 'esp',
+    'vol_esp', 'vol_esp_noH', 'esp_combo', 'pharm',
+)
+
+
+def _require_jax():
+    """
+    Import and return ``jax.numpy``, raising a clear error if JAX is unavailable.
+    """
+    try:
+        import jax.numpy as jnp
+    except ImportError:
+        raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
+    return jnp
+
+
+@dataclass
+class AlignmentResult:
+    """
+    Result of a single alignment mode: the optimal similarity score and SE(3) transform.
+
+    Attributes
+    ----------
+    score : np.ndarray or None
+        Optimally aligned similarity score. ``None`` until an alignment is run.
+    transform : np.ndarray
+        SE(3) transformation matrix, shape (4, 4). Defaults to the identity.
+    """
+    score: Optional[np.ndarray] = None
+    transform: np.ndarray = field(default_factory=lambda: np.eye(4))
+
+
+def _alignment_property(key: str, field_name: str) -> property:
+    """Build a property delegating to ``self._alignments[key].<field_name>``."""
+    def getter(self):
+        return getattr(self._alignments[key], field_name)
+
+    def setter(self, value) -> None:
+        setattr(self._alignments[key], field_name, value)
+
+    return property(getter, setter)
 
 
 def update_mol_coordinates(mol: Chem.Mol, coordinates: Union[List, np.ndarray]) -> Chem.Mol:
@@ -94,14 +140,14 @@ class Molecule:
         electrostatics : Optional[np.ndarray]
             Electrostatic potential if they were previously generated. Shape: (M,).
         pharm_multi_vector : Optional[bool]
-            If ``None``, don't generate pharmacophores, else generate
-            pharmacophores with/without (``True``/``False``) multi-vectors.
+            If ``None``, don't generate pharmacophore, else generate
+            pharmacophore with/without (``True``/``False``) multi-vectors.
         pharm_types : Optional[np.ndarray]
-            Types of pharmacophores. Shape: (P,).
+            Types of pharmacophore. Shape: (P,).
         pharm_ancs : Optional[np.ndarray]
-            Anchor positions of pharmacophores. Shape: (P,3).
+            Anchor positions of pharmacophore. Shape: (P,3).
         pharm_vecs : Optional[np.ndarray]
-            Unit vectors relative to anchor positions of pharmacophores. Shape: (P,3).
+            Unit vectors relative to anchor positions of pharmacophore. Shape: (P,3).
         """
         self.mol = mol
         self.atom_pos = Chem.RemoveHs(mol).GetConformer().GetPositions()
@@ -120,18 +166,19 @@ class Molecule:
             self.partial_charges = self.get_partial_charges()
         self.radii = get_atomic_vdw_radii(mol)
 
+        self._surface = Surface(
+            positions=None,
+            esp=None,
+            probe_radius=probe_radius if probe_radius is not None else 1.2,
+        )
         if surface_points is None:
-            self.probe_radius = probe_radius if probe_radius is not None else 1.2
             if isinstance(num_surf_points, int):
                 self.surf_pos = self.get_pc()
             elif isinstance(density, float):
                 self.surf_pos = self.get_pc(use_density=True)
-            else: # if None then don't generate a point cloud
-                self.surf_pos = None
-                self.surf_esp = None
+            # else: no point cloud (surf_pos/surf_esp stay None)
         else:
             self.surf_pos = surface_points
-            self.probe_radius = probe_radius if probe_radius is not None else 1.2
 
         if self.surf_pos is not None and self.partial_charges is not None:
             if not isinstance(electrostatics, np.ndarray):
@@ -144,9 +191,11 @@ class Molecule:
 
         self.pharm_multi_vector = pharm_multi_vector
         if isinstance(pharm_types, np.ndarray) and isinstance(pharm_ancs, np.ndarray) and isinstance(pharm_vecs, np.ndarray):
-            self.pharm_types, self.pharm_ancs, self.pharm_vecs = pharm_types, pharm_ancs, pharm_vecs
+            self._pharmacophore = Pharmacophore(types=pharm_types,
+                                                  positions=pharm_ancs,
+                                                  vectors=pharm_vecs)
         else:
-            self.pharm_types, self.pharm_ancs, self.pharm_vecs = None, None, None
+            self._pharmacophore = None
             if self.pharm_multi_vector is not None:
                 self.get_pharmacophore(
                     multi_vector=self.pharm_multi_vector,
@@ -156,13 +205,124 @@ class Molecule:
                 )
 
 
+    # Interaction-profile accessors (backwards-compatible with the loose
+    # ``surf_pos``/``surf_esp``/``probe_radius`` and ``pharm_*`` attributes)
+    @property
+    def surface(self) -> Surface:
+        """The :class:`Surface` holding surface positions, ESP, and probe radius."""
+        return self._surface
+
+    @property
+    def surf_pos(self) -> Optional[np.ndarray]:
+        return self._surface.positions
+
+    @surf_pos.setter
+    def surf_pos(self, value: Optional[np.ndarray]) -> None:
+        self._surface.positions = value
+
+    @property
+    def surf_esp(self) -> Optional[np.ndarray]:
+        return self._surface.esp
+
+    @surf_esp.setter
+    def surf_esp(self, value: Optional[np.ndarray]) -> None:
+        self._surface.esp = value
+
+    @property
+    def probe_radius(self) -> float:
+        return self._surface.probe_radius
+
+    @probe_radius.setter
+    def probe_radius(self, value: float) -> None:
+        self._surface.probe_radius = value
+
+    @property
+    def pharmacophore(self) -> Optional[Pharmacophore]:
+        """The :class:`Pharmacophore` container, or ``None`` if not generated."""
+        return self._pharmacophore
+
+    def _ensure_pharm_container(self) -> Pharmacophore:
+        """Lazily create an empty :class:`Pharmacophore` so setters can populate it."""
+        if self._pharmacophore is None:
+            self._pharmacophore = Pharmacophore(types=None, positions=None, vectors=None)
+        return self._pharmacophore
+
+    @property
+    def pharm_types(self) -> Optional[np.ndarray]:
+        return None if self._pharmacophore is None else self._pharmacophore.types
+
+    @pharm_types.setter
+    def pharm_types(self, value: Optional[np.ndarray]) -> None:
+        self._ensure_pharm_container().types = value
+
+    @property
+    def pharm_ancs(self) -> Optional[np.ndarray]:
+        return None if self._pharmacophore is None else self._pharmacophore.positions
+
+    @pharm_ancs.setter
+    def pharm_ancs(self, value: Optional[np.ndarray]) -> None:
+        self._ensure_pharm_container().positions = value
+
+    @property
+    def pharm_vecs(self) -> Optional[np.ndarray]:
+        return None if self._pharmacophore is None else self._pharmacophore.vectors
+
+    @pharm_vecs.setter
+    def pharm_vecs(self, value: Optional[np.ndarray]) -> None:
+        self._ensure_pharm_container().vectors = value
+
+
     def get_partial_charges(self) -> np.ndarray:
         """
         Get the partial charges on each atom using MMFF.
         """
-        molec_props = Chem.AllChem.MMFFGetMoleculeProperties(self.mol)
-        charges = np.array([molec_props.GetMMFFPartialCharge(i) for i, _ in enumerate(self.mol.GetAtoms())])
+        mol_copy = deepcopy(self.mol)
+        molec_props = Chem.AllChem.MMFFGetMoleculeProperties(mol_copy)
+        charges = np.array([molec_props.GetMMFFPartialCharge(i) for i, _ in enumerate(mol_copy.GetAtoms())])
         return charges.astype(np.float32)
+
+
+    def get_positions(self, no_H: bool = True) -> np.ndarray:
+        """
+        Get atom coordinates with or without hydrogens.
+
+        Parameters
+        ----------
+        no_H : bool, optional
+            If ``True`` (default) return the cached heavy-atom coordinates (``atom_pos``).
+            If ``False`` return all-atom coordinates from the conformer (including H).
+
+        Returns
+        -------
+        np.ndarray
+            Atom coordinates. Shape: (N, 3).
+        """
+        if no_H:
+            return self.atom_pos
+        return self.mol.GetConformer().GetPositions()
+
+
+    def get_charges(self, no_H: bool = True) -> np.ndarray:
+        """
+        Get partial charges with or without hydrogens.
+
+        This slices the already-computed ``partial_charges``; it does not recompute them
+        (see :meth:`get_partial_charges` for MMFF computation).
+
+        Parameters
+        ----------
+        no_H : bool, optional
+            If ``True`` (default) return charges for heavy atoms only.
+            If ``False`` return charges for all atoms (including H).
+
+        Returns
+        -------
+        np.ndarray
+            Partial charges. Shape: (N,).
+        """
+        if no_H:
+            return self.partial_charges[self._nonH_atoms_idx]
+        return self.partial_charges
 
 
     def get_pc(self, use_density=False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -216,14 +376,48 @@ class Molecule:
                           multi_vector: bool = True,
                           exclude: List[int] = [],
                           check_access: bool = False,
-                          scale: float = 1):
-        """ Get the pharmacophores of the molecule. """
-        self.pharm_types, self.pharm_ancs, self.pharm_vecs = get_pharmacophores(
+                          scale: float = 1,
+                          return_atom_ids: bool = False,
+                          priority_atoms: Optional[Iterable[int]] = None,
+                          min_ring_priority_atoms: int = 3):
+        """
+        Get the pharmacophore of the molecule.
+
+        Stores the full :class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore`
+        container on ``self`` (accessible via :attr:`pharmacophore`). The
+        ``pharm_types``/``pharm_ancs``/``pharm_vecs`` properties delegate to it, so
+        existing usage is unchanged.
+
+        Parameters
+        ----------
+        multi_vector : bool, optional
+            Whether to represent pharmacophore with multiple vectors. Default ``True``.
+        exclude : list, optional
+            Hydrogen indices to not include as a HBD. Default ``[]``.
+        check_access : bool, optional
+            Check if HBD/HBA are accessible to the molecular surface. Default ``False``.
+        scale : float, optional
+            Length of a pharmacophore vector in Angstroms. Default 1.
+        return_atom_ids : bool, optional
+            Retain per-pharmacophore atom-id sets on ``self.pharmacophore.atom_ids``,
+            enabling ``self.pharmacophore.priority_labels(...)``. Default ``False``.
+        priority_atoms : iterable of int, optional
+            When provided, priority labels are computed and stored on
+            ``self.pharmacophore.labels``. Default ``None``.
+        min_ring_priority_atoms : int, optional
+            Only used when ``priority_atoms`` is provided. See
+            :func:`~shepherd_score.pharm_utils.pharmacophore.get_pharmacophore`.
+            Default 3.
+        """
+        self._pharmacophore = get_pharmacophores(
             self.mol,
             multi_vector=multi_vector,
             exclude=exclude,
             check_access=check_access,
-            scale=scale
+            scale=scale,
+            return_atom_ids=return_atom_ids,
+            priority_atoms=priority_atoms,
+            min_ring_priority_atoms=min_ring_priority_atoms,
         )
 
 
@@ -246,9 +440,9 @@ class MoleculePair:
         - Surface
         - Surface with electrostatic potential weighting
         - ShaEP scoring (esp-combo)
-        - Pharmacophores (with various settings for using extended points rather than vectors)
+        - Pharmacophore (with various settings for using extended points rather than vectors)
 
-        Similarly, you can score with surface, Surf+ESP, and pharmacophores
+        Similarly, you can score with surface, Surf+ESP, and pharmacophore
 
         Parameters
         ----------
@@ -297,29 +491,22 @@ class MoleculePair:
             self.ref_molec.center_to(self.ref_molec.atom_pos.mean(0))
             self.fit_molec.center_to(self.fit_molec.atom_pos.mean(0))
 
-        self.transform_vol = np.eye(4)
-        self.sim_aligned_vol = None
+        # One AlignmentResult per mode (score defaults to None, transform to identity).
+        # transform_<mode>/sim_aligned_<mode> are properties delegating to this dict.
+        self._alignments = {key: AlignmentResult() for key in _ALIGN_KEYS}
 
-        self.transform_vol_noH = np.eye(4)
-        self.sim_aligned_vol_noH = None
 
-        self.transform_surf = np.eye(4)
-        self.sim_aligned_surf = None
+    def _to_tensor(self, arr: np.ndarray) -> torch.Tensor:
+        """Convert a numpy array to a float32 tensor on this pair's device."""
+        return torch.from_numpy(arr).to(torch.float32).to(self.device)
 
-        self.transform_esp = np.eye(4)
-        self.sim_aligned_esp = None
-
-        self.transform_vol_esp = np.eye(4)
-        self.sim_aligned_vol_esp = None
-
-        self.transform_vol_esp_noH = np.eye(4)
-        self.sim_aligned_vol_esp_noH = None
-
-        self.transform_esp_combo = np.eye(4)
-        self.sim_aligned_esp_combo = None
-
-        self.transform_pharm = np.eye(4)
-        self.sim_aligned_pharm = None
+    # Alignment-result accessors (backwards-compatible with the loose
+    # ``transform_*`` / ``sim_aligned_*`` attributes). One property pair
+    # per mode in _ALIGN_KEYS, generated via _alignment_property().
+    for _key in _ALIGN_KEYS:
+        locals()[f'transform_{_key}'] = _alignment_property(_key, 'transform')
+        locals()[f'sim_aligned_{_key}'] = _alignment_property(_key, 'score')
+    del _key
 
 
     def align_with_vol(self,
@@ -366,21 +553,10 @@ class MoleculePair:
         aligned_fit_points : np.ndarray
             Coordinates of transformed atoms. Shape: (N, 3).
         """
-        if no_H:
-            ref_atom_pos = self.ref_molec.atom_pos
-            fit_atom_pos = self.fit_molec.atom_pos
-        else:
-            ref_atom_pos = self.ref_molec.mol.GetConformer().GetPositions()
-            # ref_atom_pos -= ref_atom_pos.mean(0)
-            fit_atom_pos = self.fit_molec.mol.GetConformer().GetPositions()
-            # fit_atom_pos -= fit_atom_pos.mean(0)
+        ref_atom_pos = self.ref_molec.get_positions(no_H)
+        fit_atom_pos = self.fit_molec.get_positions(no_H)
         if use_jax: # Use Jax optimization implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_overlay_jax(
                 ref_points=jnp.array(ref_atom_pos),
@@ -399,11 +575,11 @@ class MoleculePair:
             # PyTorch
             _vol_fn = optimize_ROCS_overlay_analytical if use_analytical else optimize_ROCS_overlay
             aligned_fit_points, se3_transform, score = _vol_fn(
-                ref_points=torch.from_numpy(ref_atom_pos).to(torch.float32).to(self.device),
-                fit_points=torch.from_numpy(fit_atom_pos).to(torch.float32).to(self.device),
+                ref_points=self._to_tensor(ref_atom_pos),
+                fit_points=self._to_tensor(fit_atom_pos),
                 alpha=0.81,
                 num_repeats=num_repeats,
-                trans_centers = torch.from_numpy(self.ref_molec.atom_pos).to(torch.float32).to(self.device) if trans_init else None,
+                trans_centers = self._to_tensor(self.ref_molec.atom_pos) if trans_init else None,
                 lr=lr,
                 max_num_steps=max_num_steps,
                 verbose=verbose
@@ -469,26 +645,13 @@ class MoleculePair:
         aligned_fit_points : np.ndarray
             Coordinates of transformed atoms. Shape: (N, 3).
         """
-        if no_H:
-            ref_mol_partial_charges = self.ref_molec.partial_charges[self.ref_molec._nonH_atoms_idx]
-            fit_mol_partial_charges = self.fit_molec.partial_charges[self.fit_molec._nonH_atoms_idx]
-            ref_mol_pos = self.ref_molec.atom_pos
-            fit_mol_pos = self.fit_molec.atom_pos
-        else:
-            ref_mol_partial_charges = self.ref_molec.partial_charges
-            fit_mol_partial_charges = self.fit_molec.partial_charges
-            ref_mol_pos = self.ref_molec.mol.GetConformer().GetPositions()
-            # ref_mol_pos -= ref_mol_pos.mean(0) # move COM to origin
-            fit_mol_pos = self.fit_molec.mol.GetConformer().GetPositions()
-            # fit_mol_pos -= fit_mol_pos.mean(0)
+        ref_mol_partial_charges = self.ref_molec.get_charges(no_H)
+        fit_mol_partial_charges = self.fit_molec.get_charges(no_H)
+        ref_mol_pos = self.ref_molec.get_positions(no_H)
+        fit_mol_pos = self.fit_molec.get_positions(no_H)
 
         if use_jax: # Use Jax optimization implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_esp_overlay_jax(
                 ref_points=jnp.array(ref_mol_pos),
@@ -510,14 +673,14 @@ class MoleculePair:
         else: # Use Torch implementation
             _esp_fn = optimize_ROCS_esp_overlay_analytical if use_analytical else optimize_ROCS_esp_overlay
             aligned_fit_points, se3_transform, score = _esp_fn(
-                ref_points=torch.from_numpy(ref_mol_pos).to(torch.float32).to(self.device),
-                fit_points=torch.from_numpy(fit_mol_pos).to(torch.float32).to(self.device),
-                ref_charges=torch.from_numpy(ref_mol_partial_charges).to(torch.float32).to(self.device),
-                fit_charges=torch.from_numpy(fit_mol_partial_charges).to(torch.float32).to(self.device),
+                ref_points=self._to_tensor(ref_mol_pos),
+                fit_points=self._to_tensor(fit_mol_pos),
+                ref_charges=self._to_tensor(ref_mol_partial_charges),
+                fit_charges=self._to_tensor(fit_mol_partial_charges),
                 alpha=0.81,
                 lam=lam,
                 num_repeats=num_repeats,
-                trans_centers = torch.from_numpy(self.ref_molec.atom_pos).to(torch.float32).to(self.device) if trans_init else None,
+                trans_centers = self._to_tensor(self.ref_molec.atom_pos) if trans_init else None,
                 lr=lr,
                 max_num_steps=max_num_steps,
                 verbose=verbose
@@ -585,12 +748,7 @@ class MoleculePair:
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
         if use_jax: # Use Jax optimization implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.alignment_jax import optimize_ROCS_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_overlay_jax(
                 ref_points=jnp.array(self.ref_molec.surf_pos),
@@ -609,11 +767,11 @@ class MoleculePair:
             # Torch
             _surf_fn = optimize_ROCS_overlay_analytical if use_analytical else optimize_ROCS_overlay
             aligned_fit_points, se3_transform, score = _surf_fn(
-                ref_points=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
-                fit_points=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
+                ref_points=self._to_tensor(self.ref_molec.surf_pos),
+                fit_points=self._to_tensor(self.fit_molec.surf_pos),
                 alpha=alpha,
                 num_repeats=num_repeats,
-                trans_centers = torch.from_numpy(self.ref_molec.atom_pos).to(torch.float32).to(self.device) if trans_init else None,
+                trans_centers = self._to_tensor(self.ref_molec.atom_pos) if trans_init else None,
                 lr=lr,
                 max_num_steps=max_num_steps,
                 verbose=verbose
@@ -677,12 +835,7 @@ class MoleculePair:
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
         if use_jax: # Use Jax optimization implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.alignment_jax import optimize_ROCS_esp_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_ROCS_esp_overlay_jax(
                 ref_points=jnp.array(self.ref_molec.surf_pos),
@@ -703,14 +856,14 @@ class MoleculePair:
         else: # Use Torch implementation
             _esp_fn = optimize_ROCS_esp_overlay_analytical if use_analytical else optimize_ROCS_esp_overlay
             aligned_fit_points, se3_transform, score = _esp_fn(
-                ref_points=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
-                fit_points=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
-                ref_charges=torch.from_numpy(self.ref_molec.surf_esp).to(torch.float32).to(self.device),
-                fit_charges=torch.from_numpy(self.fit_molec.surf_esp).to(torch.float32).to(self.device),
+                ref_points=self._to_tensor(self.ref_molec.surf_pos),
+                fit_points=self._to_tensor(self.fit_molec.surf_pos),
+                ref_charges=self._to_tensor(self.ref_molec.surf_esp),
+                fit_charges=self._to_tensor(self.fit_molec.surf_esp),
                 alpha=alpha,
                 lam=lam_scaled,
                 num_repeats=num_repeats,
-                trans_centers = torch.from_numpy(self.ref_molec.atom_pos).to(torch.float32).to(self.device) if trans_init else None,
+                trans_centers = self._to_tensor(self.ref_molec.atom_pos) if trans_init else None,
                 lr=lr,
                 max_num_steps=max_num_steps,
                 verbose=verbose
@@ -778,12 +931,7 @@ class MoleculePair:
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
         if use_jax: # Use Jax optimization implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.alignment_jax import optimize_esp_combo_score_overlay_jax
             aligned_fit_points, se3_transform, score = optimize_esp_combo_score_overlay_jax(
                 ref_centers_w_H=jnp.array(self.ref_molec.mol.GetConformer().GetPositions()),
@@ -813,31 +961,31 @@ class MoleculePair:
             return np.array(aligned_fit_points)
         else:
             if alpha == 0.81:
-                ref_centers = torch.from_numpy(self.ref_molec.atom_pos).to(torch.float32).to(self.device)
-                fit_centers = torch.from_numpy(self.fit_molec.atom_pos).to(torch.float32).to(self.device)
+                ref_centers = self._to_tensor(self.ref_molec.atom_pos)
+                fit_centers = self._to_tensor(self.fit_molec.atom_pos)
             else:
-                ref_centers = torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device)
-                fit_centers = torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device)
+                ref_centers = self._to_tensor(self.ref_molec.surf_pos)
+                fit_centers = self._to_tensor(self.fit_molec.surf_pos)
 
             aligned_fit_points, se3_transform, score = optimize_esp_combo_score_overlay(
-                ref_centers_w_H=torch.from_numpy(self.ref_molec.mol.GetConformer().GetPositions()).to(torch.float32).to(self.device),
-                fit_centers_w_H=torch.from_numpy(self.fit_molec.mol.GetConformer().GetPositions()).to(torch.float32).to(self.device),
+                ref_centers_w_H=self._to_tensor(self.ref_molec.mol.GetConformer().GetPositions()),
+                fit_centers_w_H=self._to_tensor(self.fit_molec.mol.GetConformer().GetPositions()),
                 ref_centers=ref_centers,
                 fit_centers=fit_centers,
-                ref_points=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
-                fit_points=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
-                ref_partial_charges=torch.from_numpy(self.ref_molec.partial_charges).to(torch.float32).to(self.device),
-                fit_partial_charges=torch.from_numpy(self.fit_molec.partial_charges).to(torch.float32).to(self.device),
-                ref_surf_esp=torch.from_numpy(self.ref_molec.surf_esp).to(torch.float32).to(self.device),
-                fit_surf_esp=torch.from_numpy(self.fit_molec.surf_esp).to(torch.float32).to(self.device),
-                ref_radii=torch.from_numpy(self.ref_molec.radii).to(torch.float32).to(self.device),
-                fit_radii=torch.from_numpy(self.fit_molec.radii).to(torch.float32).to(self.device),
+                ref_points=self._to_tensor(self.ref_molec.surf_pos),
+                fit_points=self._to_tensor(self.fit_molec.surf_pos),
+                ref_partial_charges=self._to_tensor(self.ref_molec.partial_charges),
+                fit_partial_charges=self._to_tensor(self.fit_molec.partial_charges),
+                ref_surf_esp=self._to_tensor(self.ref_molec.surf_esp),
+                fit_surf_esp=self._to_tensor(self.fit_molec.surf_esp),
+                ref_radii=self._to_tensor(self.ref_molec.radii),
+                fit_radii=self._to_tensor(self.fit_molec.radii),
                 alpha=alpha,
                 lam=lam,
                 probe_radius=probe_radius,
                 esp_weight=esp_weight,
                 num_repeats=num_repeats,
-                trans_centers = torch.from_numpy(self.ref_molec.atom_pos).to(torch.float32).to(self.device) if trans_init else None,
+                trans_centers = self._to_tensor(self.ref_molec.atom_pos) if trans_init else None,
                 lr=lr,
                 max_num_steps=max_num_steps,
                 verbose=verbose
@@ -909,17 +1057,12 @@ class MoleculePair:
         -------
         tuple
             aligned_fit_anchors : np.ndarray
-                Aligned coordinates of pharmacophores positions. Shape: (P, 3).
+                Aligned coordinates of pharmacophore positions. Shape: (P, 3).
             aligned_fit_vectors : np.ndarray
                 Aligned coordinates of pharmacophore vectors. Shape: (P, 3).
         """
         if use_jax:
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.alignment_jax import optimize_pharm_overlay_jax, optimize_pharm_overlay_jax_vectorized
 
             _pharm_fn = optimize_pharm_overlay_jax_vectorized if use_vectorized else optimize_pharm_overlay_jax
@@ -946,17 +1089,17 @@ class MoleculePair:
         # PyTorch
         _pharm_fn = optimize_pharm_overlay_analytical if use_analytical else optimize_pharm_overlay
         aligned_fit_anchors, aligned_fit_vectors, se3_transform, score = _pharm_fn(
-            ref_pharms=torch.from_numpy(self.ref_molec.pharm_types).to(torch.float32).to(self.device),
-            fit_pharms=torch.from_numpy(self.fit_molec.pharm_types).to(torch.float32).to(self.device),
-            ref_anchors=torch.from_numpy(self.ref_molec.pharm_ancs).to(torch.float32).to(self.device),
-            fit_anchors=torch.from_numpy(self.fit_molec.pharm_ancs).to(torch.float32).to(self.device),
-            ref_vectors=torch.from_numpy(self.ref_molec.pharm_vecs).to(torch.float32).to(self.device),
-            fit_vectors=torch.from_numpy(self.fit_molec.pharm_vecs).to(torch.float32).to(self.device),
+            ref_pharms=self._to_tensor(self.ref_molec.pharm_types),
+            fit_pharms=self._to_tensor(self.fit_molec.pharm_types),
+            ref_anchors=self._to_tensor(self.ref_molec.pharm_ancs),
+            fit_anchors=self._to_tensor(self.fit_molec.pharm_ancs),
+            ref_vectors=self._to_tensor(self.ref_molec.pharm_vecs),
+            fit_vectors=self._to_tensor(self.fit_molec.pharm_vecs),
             similarity=similarity,
             extended_points=extended_points,
             only_extended=only_extended,
             num_repeats=num_repeats,
-            trans_centers=torch.from_numpy(self.ref_molec.pharm_ancs).to(torch.float32).to(self.device) if trans_init else None,
+            trans_centers=self._to_tensor(self.ref_molec.pharm_ancs) if trans_init else None,
             lr=lr,
             max_num_steps=max_num_steps,
             verbose=verbose
@@ -998,12 +1141,7 @@ class MoleculePair:
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
         if use == 'jax' or use == 'jnp': # Use Jax optimization implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.score.gaussian_overlap_jax import get_overlap_jax
             score = get_overlap_jax(
                 centers_1=jnp.array(self.ref_molec.surf_pos),
@@ -1014,8 +1152,8 @@ class MoleculePair:
         elif use == 'torch' or use == 'pytorch':
             # Torch
             score = get_overlap(
-                centers_1=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
-                centers_2=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
+                centers_1=self._to_tensor(self.ref_molec.surf_pos),
+                centers_2=self._to_tensor(self.fit_molec.surf_pos),
                 alpha=alpha,
             )
             return score.cpu().numpy()
@@ -1066,12 +1204,7 @@ class MoleculePair:
         if self.num_surf_points is None:
             raise ValueError('The Molecule objects were initialized with no surface points so this method cannot be used.')
         if use in ('jax', 'jnp'): # Use Jax implementation
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.score.electrostatic_scoring_jax import get_overlap_esp_jax
             score = get_overlap_esp_jax(
                 centers_1=jnp.array(self.ref_molec.surf_pos),
@@ -1084,10 +1217,10 @@ class MoleculePair:
             return np.array(score)
         elif use in ('torch', 'pytorch'): # Use Torch implementation
             score = get_overlap_esp(
-                centers_1=torch.from_numpy(self.ref_molec.surf_pos).to(torch.float32).to(self.device),
-                centers_2=torch.from_numpy(self.fit_molec.surf_pos).to(torch.float32).to(self.device),
-                charges_1=torch.from_numpy(self.ref_molec.surf_esp).to(torch.float32).to(self.device),
-                charges_2=torch.from_numpy(self.fit_molec.surf_esp).to(torch.float32).to(self.device),
+                centers_1=self._to_tensor(self.ref_molec.surf_pos),
+                centers_2=self._to_tensor(self.fit_molec.surf_pos),
+                charges_1=self._to_tensor(self.ref_molec.surf_esp),
+                charges_2=self._to_tensor(self.fit_molec.surf_esp),
                 alpha=alpha,
                 lam=lam_scaled,
             )
@@ -1147,12 +1280,12 @@ class MoleculePair:
         elif use in ('torch', 'pytorch'):
             # PyTorch
             score = get_overlap_pharm(
-                ptype_1=torch.from_numpy(self.ref_molec.pharm_types).to(torch.float32).to(self.device),
-                ptype_2=torch.from_numpy(self.fit_molec.pharm_types).to(torch.float32).to(self.device),
-                anchors_1=torch.from_numpy(self.ref_molec.pharm_ancs).to(torch.float32).to(self.device),
-                anchors_2=torch.from_numpy(self.fit_molec.pharm_ancs).to(torch.float32).to(self.device),
-                vectors_1=torch.from_numpy(self.ref_molec.pharm_vecs).to(torch.float32).to(self.device),
-                vectors_2=torch.from_numpy(self.fit_molec.pharm_vecs).to(torch.float32).to(self.device),
+                ptype_1=self._to_tensor(self.ref_molec.pharm_types),
+                ptype_2=self._to_tensor(self.fit_molec.pharm_types),
+                anchors_1=self._to_tensor(self.ref_molec.pharm_ancs),
+                anchors_2=self._to_tensor(self.fit_molec.pharm_ancs),
+                vectors_1=self._to_tensor(self.ref_molec.pharm_vecs),
+                vectors_2=self._to_tensor(self.fit_molec.pharm_vecs),
                 similarity=similarity,
                 extended_points=extended_points,
                 only_extended=only_extended
@@ -1172,12 +1305,7 @@ class MoleculePair:
             )
             return score
         elif use in ('jax', 'jnp'):
-            if 'jax' not in sys.modules or 'jax.numpy' not in sys.modules:
-                try:
-                    import jax.numpy as jnp
-                except ImportError:
-                    raise ImportError('jax.numpy and torch is required for this function. Install Jax or just use Torch.')
-            import jax.numpy as jnp
+            jnp = _require_jax()
             from shepherd_score.score.pharmacophore_scoring_jax import get_overlap_pharm_jax
 
             score = get_overlap_pharm_jax(
