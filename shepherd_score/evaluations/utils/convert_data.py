@@ -2,7 +2,7 @@
 Helper functions to convert different data types.
 """
 
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Optional
 from pathlib import Path
 
 import numpy as np
@@ -176,7 +176,8 @@ def extract_mol_from_xyz_block(xyz_block: str,
 
 
 def get_mol_from_atom_pos(atoms: np.ndarray,
-                          positions: np.ndarray
+                          positions: np.ndarray,
+                          expected_charge: Optional[int] = None,
                           ) -> Tuple[Union[Chem.Mol, None], int, str]:
     """
     Try to get a RDKit mol object from atom and coordinate arrays.
@@ -186,6 +187,8 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
     atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M) one-hot
         encoding.
     positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
+    expected_charge : int, optional
+        Formal charge to try before the legacy charge sequence.
 
     Returns
     -------
@@ -200,7 +203,11 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
         atomic_nums = atoms
     xyz_block = write_xyz_file(atomic_nums, positions)
 
-    for charge in [0, 1, -1, 2, -2]:
+    charge_order = [0, 1, -1, 2, -2]
+    charges = charge_order if expected_charge is None else list(
+        dict.fromkeys([int(expected_charge), *charge_order])
+    )
+    for charge in charges:
         try:
             mol = extract_mol_from_xyz_block(xyz_block=xyz_block, charge=charge)
         except Exception:
