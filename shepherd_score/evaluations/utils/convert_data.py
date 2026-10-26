@@ -11,6 +11,9 @@ from rdkit import Chem
 import rdkit.Chem.rdDetermineBonds
 import pandas as pd
 
+# Cap to prevent extremely long search for DetermineBonds
+DETERMINE_BONDS_MAX_ITERATIONS = 100_000
+
 
 def write_xyz_file(atomic_numbers: np.ndarray,
                    positions: np.ndarray,
@@ -145,7 +148,9 @@ def extract_mol_from_xyz_block(xyz_block: str,
         return None
 
     try:
-        rdkit.Chem.rdDetermineBonds.DetermineBonds(mol, charge=charge, embedChiral=True)
+        rdkit.Chem.rdDetermineBonds.DetermineBonds(
+            mol, charge=charge, embedChiral=True, maxIterations=DETERMINE_BONDS_MAX_ITERATIONS
+        )
     except Exception as e:
         if verbose:
             print(e)
