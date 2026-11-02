@@ -2,7 +2,7 @@
 
 The AoS layout (``A[k, n, :]``) and fp64 accumulation in cpu.py keep LLVM from vectorizing
 the inner O(N*M) loop. These kernels take coordinates SoA (``A[k, :, n]``, contiguous in n)
-and accumulate fp32, so with an SVML-enabled numba (``numba<=0.59`` + ``icc_rt``,
+and accumulate fp32, so with an SVML-enabled numba (``numba<0.62`` + ``icc_rt``,
 ``config.USING_SVML``) the inner loop vectorizes and SVML supplies the vector ``exp``. Used
 only by the fused CPU driver (cpu_fused.py) when SVML is present. The rotation and dQ tail
 stay fp64 per pose; only the inner n-loop is fp32. Math mirrors cpu.py op for op.
@@ -12,6 +12,9 @@ from __future__ import annotations
 import math
 import numpy as np
 from numba import njit, prange
+from ._svml import enable_svml
+
+enable_svml()   # before any kernel compiles; pip's icc_rt needs the explicit load
 
 _K_PI = math.pi ** 1.5
 

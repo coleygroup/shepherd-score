@@ -13,8 +13,11 @@ import math
 import numpy as np
 import torch
 from numba import njit, prange
+from ._svml import enable_svml
 
 from ...score.constants import COULOMB_SCALING, LAM_SCALING
+
+enable_svml()   # before any kernel compiles; pip's icc_rt needs the explicit load
 
 _K_PI = math.pi ** 1.5
 

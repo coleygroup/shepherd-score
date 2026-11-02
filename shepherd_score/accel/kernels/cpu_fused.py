@@ -14,8 +14,11 @@ import math
 
 import numpy as np
 from numba import njit, prange
+from ._svml import enable_svml
 
 from .._stats import record as _record_steps
+
+enable_svml()   # before any kernel compiles; pip's icc_rt needs the explicit load
 
 # Adam constants as float32, matching what torch computes in float32 from the double literals.
 _B1 = np.float32(0.9)
@@ -43,9 +46,10 @@ def _warn_if_no_svml():
         import warnings
         warnings.warn(
             "CPU alignment is running WITHOUT numba SVML "
-            "(USING_SVML=False; numba>=0.61 dropped it), so the overlap kernels are unvectorized "
-            "and ~3-6x slower than they should be. For full CPU speed, build the conda "
-            "environment.yml (numba<=0.59 + icc_rt). Suppress via warnings filters.",
+            "(USING_SVML=False; numba>=0.62 dropped it), so the overlap kernels are unvectorized "
+            "and ~3-6x slower than they should be. For full CPU speed, pip install "
+            "'shepherd-score[cpu]' (numba<0.62 + icc_rt) or build the conda environment.yml. "
+            "Suppress via warnings filters.",
             RuntimeWarning, stacklevel=3)
 
 # njit tails

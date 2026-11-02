@@ -263,8 +263,8 @@ class MoleculePairBatch:
             import numba  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "backend='numba' needs the 'numba' package (pip install "
-                "'shepherd-score[cpu]').") from exc
+                "backend='numba' needs the 'numba' package, a core dependency "
+                "of shepherd-score; reinstall it (pip install numba).") from exc
         cpu = torch.device("cpu")
         for p in self.pairs:
             p.device = cpu
