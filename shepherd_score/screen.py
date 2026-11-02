@@ -1661,7 +1661,9 @@ def _mgpu_pool(ndev, threads):
     try:
         for r in range(ndev):
             q, conn, p = start_worker(ctx, _mgpu_pool_worker, (r, threads), daemon=True)
-            pool["job_qs"].append(q); pool["conns"].append(conn); pool["procs"].append(p)
+            pool["job_qs"].append(q)
+            pool["conns"].append(conn)
+            pool["procs"].append(p)
     except BaseException:
         _stop_mgpu_pool(pool)                        # the workers that did start
         raise
