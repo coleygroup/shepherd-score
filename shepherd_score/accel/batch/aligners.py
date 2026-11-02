@@ -89,10 +89,11 @@ def _batch_upload(pairs, attr, src_fn, dtype, device, *, key_fn=None):
     # Warm wrong-device path. Only a copy onto CUDA may be non-blocking: the kernels that read
     # it queue behind it on the stream. A copy off the GPU must block, since the numba kernels
     # read host memory directly and would race a copy still in flight.
+    nb = device.type == "cuda"
     for p in pairs:
         t = getattr(p, attr)
         if t.device != device:
-            setattr(p, attr, t.to(device, non_blocking=device.type == "cuda"))
+            setattr(p, attr, t.to(device, non_blocking=nb))
 
 # the generic aligner
 

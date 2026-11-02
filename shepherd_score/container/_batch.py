@@ -234,7 +234,8 @@ class MoleculePairBatch:
                 f"unknown backend {backend!r}; use 'triton', 'numba', 'jax' or 'torch'")
 
         # Scores from MoleculePair attributes
-        scores = np.array([float(getattr(p, spec.score_attr)) for p in self.pairs])
+        score_attr = spec.score_attr
+        scores = np.array([float(getattr(p, score_attr)) for p in self.pairs])
         n = len(self.pairs)
 
         if spec.pharm_style:
