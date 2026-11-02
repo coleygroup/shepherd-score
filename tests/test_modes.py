@@ -134,10 +134,12 @@ def test_tversky_name_and_weights_agree():
 
 
 def test_tversky_matches_sigma_form_when_weights_sum_to_one():
-    a, b = torch.randn(9, 3), torch.randn(7, 3) + 0.3
+    g = torch.Generator().manual_seed(0)
+    a, b = torch.randn(9, 3, generator=g), torch.randn(7, 3, generator=g) + 0.3
     AB, AA, BB = VAB_2nd_order(a, b, 0.81), VAB_2nd_order(a, a, 0.81), VAB_2nd_order(b, b, 0.81)
     for sigma in (0.95, 0.5, 0.05):
-        assert torch.isclose(similarity_from_overlaps(AB, AA, BB, (sigma, 1 - sigma)),
+        # tversky_func clamps at 1 (asymmetric weights can exceed it); the weights form does not.
+        assert torch.isclose(similarity_from_overlaps(AB, AA, BB, (sigma, 1 - sigma)).clamp_max(1.0),
                              tversky_func(AB, AA, BB, sigma))
 
 

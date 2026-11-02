@@ -320,7 +320,8 @@ def test_molecule_pair_batch_align_with_pharm():
     pairs = [_make_mol_pair_with_pharm(ref_smi, fit_smi) for ref_smi, fit_smi in smiles_pairs]
     batch = MoleculePairBatch(pairs)
 
-    scores, ancs_list, vecs_list = batch.align_with_pharm(num_repeats=10, max_num_steps=50)
+    scores, ancs_list, vecs_list = batch.align_with_pharm(num_repeats=10, max_num_steps=50,
+                                                          return_aligned=True)
 
     assert len(ancs_list) == len(pairs), "Should return one anchors array per pair"
     assert len(vecs_list) == len(pairs), "Should return one vectors array per pair"
