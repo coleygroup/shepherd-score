@@ -90,6 +90,10 @@ def _batch_upload(pairs, attr, src_fn, dtype, device, *, key_fn=None):
     # it queue behind it on the stream. A copy off the GPU must block, since the numba kernels
     # read host memory directly and would race a copy still in flight.
     nb = device.type == "cuda"
+    # A bare "cuda" never equals a tensor's "cuda:0", so every pair would re-run a no-op .to()
+    # on every call; compare against the indexed current device instead.
+    if nb and device.index is None:
+        device = torch.device("cuda", torch.cuda.current_device())
     for p in pairs:
         t = getattr(p, attr)
         if t.device != device:
