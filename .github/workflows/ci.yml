@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
         test-type: [core]
         include:
           # Add JAX tests for Python 3.10, 3.11, and 3.12 (JAX has better support)
@@ -56,11 +56,11 @@ jobs:
 
       - name: Run tests (core)
         if: matrix.test-type == 'core'
-        run: uv run pytest tests/ -v --tb=short -m "not jax"
+        run: uv run --no-project pytest tests/ -v --tb=short -m "not jax"
 
       - name: Run tests (with JAX)
         if: matrix.test-type == 'jax'
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run --no-project pytest tests/ -v --tb=short
 
   lint:
     name: Lint Checks

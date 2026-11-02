@@ -7,7 +7,7 @@ name = "shepherd-score"
 dynamic = ["version"]
 description = "3D scoring functions used for evaluation of ShEPhERD"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Abeywardane", email = "kento@mit.edu"}
@@ -26,7 +26,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -34,8 +33,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
-    "rdkit>=2023.03,<2025.09.3; python_version == '3.9'",
-    "rdkit>=2023.03; python_version >= '3.10'",
+    "rdkit>=2023.03",
     "torch>=1.12",
     "open3d>=0.18",
     "py3Dmol",
@@ -44,7 +42,7 @@ dependencies = [
     "scipy>=1.10",
     "molscrub",
     "tqdm",
-    "numba",            # default CPU backend for the batched aligners (see environment.yml for the SVML build)
+    "numba",            # default CPU backend for the batched aligners; see [cpu] for the SVML build
     "threadpoolctl",    # caps BLAS/OpenMP threads in the multi-GPU worker processes
 ]
 
@@ -67,8 +65,11 @@ docs = [
     "sphinx-copybutton>=0.5",
     "myst-nb>=1.0",
 ]
-cpu = [                 # kept for compatibility; numba is a core dependency
-    "numba",
+# SVML-vectorized CPU kernels: llvmlite stopped building in SVML at numba 0.62. icc_rt is
+# Intel's runtime; shepherd_score/accel/kernels/_svml.py loads it from the pip install (Linux).
+cpu = [
+    "numba>=0.59,<0.62",
+    "icc_rt; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 # GPU kernels need a CUDA build of torch (>= 2.6, for torch.cuda.graph(capture_error_mode=...))
 # and Triton >= 3.6 (for @triton.autotune(cache_results=...)).
@@ -87,11 +88,11 @@ jax = [
 ]
 docking = [
     "meeko",
+    "gemmi",            # imported by meeko, which declares no dependencies on PyPI
     "vina>=1.2.5",
     "openbabel",
     "prolif>=2.0.3",
-    "biopython>=1.84,<1.86; python_version == '3.9'",
-    "biopython>=1.84; python_version >= '3.10'",
+    "biopython>=1.84",
 ]
 all = [
     "shepherd-score[dev,docs,cpu,gpu,jax,docking]",
@@ -122,7 +123,7 @@ exclude = ["tests*", "examples*", "scripts*", "docs*", ".github*"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 exclude = [
     ".git",
     ".mypy_cache",

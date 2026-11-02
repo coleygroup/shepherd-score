@@ -1,25 +1,27 @@
 # Conda environment for shepherd-score with the SVML-enabled numba build used by the CPU kernels.
-# SVML needs numba <= 0.59 + icc_rt from the `numba` channel (later numba dropped it); without
-# SVML the CPU kernels still run, several times slower, and warn once.
-# Check:  python -c "import numba.core.config as c; print(c.USING_SVML)"
+# SVML needs numba < 0.62 (numba 0.62 dropped it). numba, llvmlite and icc_rt come from pip:
+# conda-forge's llvmlite lost SVML at 0.44 (numba 0.61), and the PyPI wheels still have it, so
+# pip is the only way to get SVML together with NumPy 2.2. shepherd_score loads pip's icc_rt
+# itself (no LD_LIBRARY_PATH). Without SVML the CPU kernels still run, several times slower,
+# and warn once.
+# Check:  python -c "import shepherd_score.accel.kernels.cpu, numba; print(numba.config.USING_SVML)"
 # GPU (Triton) kernels are not in this env: install a CUDA build of torch plus
 # `pip install "shepherd-score[gpu]"` on top.
 name: shepherd_score
 channels:
-  - numba
   - conda-forge
 dependencies:
   - python=3.10
-  - numba=0.59.1        # last numba with the SVML-patched LLVM
-  - llvmlite=0.42       # pinned by numba 0.59; SVML-built
-  - icc_rt              # numba channel: provides libsvml + enables SVML in llvmlite
-  - numpy=1.26          # numba 0.59 caps numpy < 1.27
+  - numpy=2.2           # numba 0.61 caps numpy < 2.3
   - pytorch=*=*cpu*     # CPU build; add a CUDA torch via pip for the GPU (triton) path
   - rdkit               # conformer generation
   - scipy>=1.10
   - pandas>=2.0
   - xtb                 # xTB partial charges / ESP
+  - vina=1.2.7          # docking; conda-forge (1.2.5 needs libboost 1.82, which clashes with NumPy-2 rdkit)
   - pip:
+    - numba==0.61.2     # last SVML-built numba; pulls the SVML-built llvmlite 0.44 wheel
+    - icc_rt            # Intel SVML runtime (libsvml), loaded by shepherd_score/accel/kernels/_svml.py
     - open3d>=0.18      # mesh surface generation
     - py3Dmol>=2.1.0
     - molscrub
@@ -27,4 +29,4 @@ dependencies:
     - threadpoolctl     # runtime MKL/OMP cap for the multi-GPU workers
     - pytest            # the suite runs off pytest.ini (no --cov, so pytest-cov is optional)
     - meeko             # docking
-    - vina==1.2.5       # docking
+    - gemmi             # imported by meeko, which declares no dependencies on PyPI
