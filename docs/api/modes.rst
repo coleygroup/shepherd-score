@@ -31,11 +31,9 @@ ratio), and list the inputs the pose moves in ``points`` and ``vectors``.
 Numba/Triton modes are registered separately in
 ``shepherd_score/accel/_modes.py``.
 
-Registered names are the keys of :data:`shepherd_score.modes.MODES`: ``vol``,
-``vol_avoid``, ``vol_esp``, ``surf``, ``surf_esp``, ``vol_and_surf_esp``,
-``pharm``, ``vol_color``, ``vol_pharm``, ``vol_lipo``, ``vol_mr``,
-``vol_fukui`` and ``vol_atomtype``. ``esp`` and ``esp_combo`` are aliases for
-``surf_esp`` and ``vol_and_surf_esp``.
+Registered names are the keys of :data:`shepherd_score.modes.MODES`. See
+:doc:`../modes` for what each one compares, what it needs and which backends
+run it.
 
 Modes
 -----

@@ -1,12 +1,5 @@
 # Alignment throughput
 
-These measurements are from the paper's archived campaign, plan
-`41cafa25cc59eadadd365825e62681d184685a89ed35d3dad2c4b6228bcd67db`, using FSS
-`47e2b119cb57` for inherited CPU measurements and `0bf841680552` for the updated
-GPU measurements. See the [paper archive](https://github.com/Nate-Somers/Shepherd-Score-Paper/blob/main/results/published.zip)
-and its assembled `table6_throughput_wide.csv` for full precision and measurement IDs.
-Later commits have not been re-measured.
-
 GPU: NVIDIA L40S. CPU: one AMD EPYC 9474F core with Numba/SVML.
 Each rate uses one timed run after one untimed warm-up. Molecular preparation,
 index construction, and pairwise batch assembly are outside these timers.

@@ -12,18 +12,28 @@ Triton::
 
 Other extras are ``jax``, ``docking``, ``dev`` and ``docs``. Python and
 dependency versions are set in ``pyproject.toml``. Older PyPI releases do not
-include the batched alignment and screening APIs described here.
+include the screening APIs described here.
 
 CPU benchmark environment
 -------------------------
 
-``environment.yml`` defines the conda environment used for the published CPU
-timings, which use Intel SVML. Check whether Numba loaded it::
+``environment.yml`` defines a conda environment with Intel SVML (NumPy 2.2,
+Numba 0.61.2 from pip, since conda-forge's llvmlite builds dropped SVML at
+0.44). The published CPU timings used Numba 0.59.1. Check whether Numba loaded SVML::
 
-   python -c "import numba.core.config as c; print(c.USING_SVML)"
+   python -c "import shepherd_score.accel.kernels.cpu, numba; print(numba.config.USING_SVML)"
 
 Without SVML the kernels still run, but more slowly, and results can differ
 within floating-point tolerance.
+
+To get SVML without conda, install the ``cpu`` extra, which pins
+``numba<0.62`` (llvmlite dropped SVML at 0.62) and adds Intel's ``icc_rt``
+runtime on x86-64 Linux. ``shepherd_score`` loads SVML from ``icc_rt`` itself
+before compiling its CPU kernels, so no ``LD_LIBRARY_PATH`` change is needed::
+
+   pip install "shepherd-score[cpu]"
+
+Set ``NUMBA_DISABLE_INTEL_SVML=1`` to opt out.
 
 External executables
 --------------------

@@ -39,10 +39,11 @@ See :doc:`installation` for optional backends and external executables.
    :maxdepth: 2
 
    installation
+   modes
    usage
+   theory
    accelerated_api
    scoring_mode_skills
-   theory
 
 .. toctree::
    :caption: Performance
