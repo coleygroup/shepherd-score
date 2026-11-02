@@ -43,7 +43,7 @@ Every registered mode has an ``align_with_<mode>`` method, and
   50 / 200 / 0.1 on JAX and PyTorch.
 - ``similarity`` selects Tanimoto or Tversky normalization, as on
   ``MoleculePair``. Tversky results go to the ``<mode>_tversky`` slots.
-- ``return_aligned`` (default ``True``) returns the aligned fit coordinates.
+- ``return_aligned`` (default ``False``) also returns the aligned fit coordinates.
 - ``num_workers`` shards the pairs across single-threaded worker processes on
   Numba. Each shard stops early on its own, so results can differ slightly
   from a single process.

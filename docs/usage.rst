@@ -64,7 +64,7 @@ Aligning many pairs
 ``backend="triton"`` on GPU. The default picks Triton when CUDA is available.
 ``backend="jax"`` and ``backend="torch"`` run the reference optimizers.
 Results are written to each pair as with ``MoleculePair.align_with_<mode>``.
-Pass ``return_aligned=False`` to skip building the aligned coordinates.
+Pass ``return_aligned=True`` to also get the aligned coordinates.
 
 Scoring modes
 -------------

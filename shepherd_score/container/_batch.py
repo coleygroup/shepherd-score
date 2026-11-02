@@ -139,7 +139,7 @@ class MoleculePairBatch:
         ``<mode>_tversky`` mode and stores results in the ``<mode>_tversky`` slots; its scores
         are not clipped to [0, 1].
     return_aligned : bool
-        Also return the aligned fit coordinates (default True); ``None`` entries when False.
+        Also return the aligned fit coordinates (default False); ``None`` entries when False.
     verbose : bool
         Print per-pair progress on the JAX and per-pair paths; ignored by triton/numba.
 
@@ -182,7 +182,7 @@ class MoleculePairBatch:
     def _align_mode(self, mode: str, *, backend: Optional[str] = None,
                     num_repeats: Optional[int] = None, lr: Optional[float] = None,
                     max_num_steps: Optional[int] = None, trans_init: bool = False,
-                    num_workers: int = 1, verbose: bool = False, return_aligned: bool = True,
+                    num_workers: int = 1, verbose: bool = False, return_aligned: bool = False,
                     **params):
         """Align all pairs under the accel registry mode ``mode`` (an ``accel/_modes.py`` name,
         e.g. ``'vol'`` or ``'vol_tversky'``) and store the results in its slots.
@@ -435,7 +435,7 @@ class MoleculePairBatch:
                        verbose: bool = False,
                        backend: Optional[str] = None,
                        alpha: float = 0.81,
-                       return_aligned: bool = True,
+                       return_aligned: bool = False,
                        similarity: Similarity = 'tanimoto',
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs by volumetric similarity.
@@ -614,7 +614,7 @@ class MoleculePairBatch:
                            verbose: bool = False,
                            backend: Optional[str] = None,
                            alpha: float = 0.81,
-                           return_aligned: bool = True,
+                           return_aligned: bool = False,
                            similarity: Similarity = 'tanimoto',
                            ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs by volumetric ESP similarity.
@@ -792,7 +792,7 @@ class MoleculePairBatch:
                         use_shmap: bool = False,
                         verbose: bool = False,
                         backend: Optional[str] = None,
-                        return_aligned: bool = True,
+                        return_aligned: bool = False,
                         similarity: Similarity = 'tanimoto',
                         ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs by surface similarity.
@@ -904,7 +904,7 @@ class MoleculePairBatch:
                        use_shmap: bool = False,
                        verbose: bool = False,
                        backend: Optional[str] = None,
-                       return_aligned: bool = True,
+                       return_aligned: bool = False,
                        similarity: Similarity = 'tanimoto',
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Align all pairs by ESP+surface similarity (formerly ``align_with_esp``, which is kept
@@ -1019,7 +1019,7 @@ class MoleculePairBatch:
                          num_buckets: int = 1,
                          verbose: bool = False,
                          backend: Optional[str] = None,
-                         return_aligned: bool = True,
+                         return_aligned: bool = False,
                          ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
         """Align all pairs by pharmacophore similarity.
 
@@ -1224,7 +1224,7 @@ class MoleculePairBatch:
                                     max_num_steps: int = None,
                                     verbose: bool = False,
                                     backend: Optional[str] = None,
-                                    return_aligned: bool = True,
+                                    return_aligned: bool = False,
                                     similarity: Similarity = 'tanimoto',
                                     num_workers: int = 1,
                                     ) -> Tuple[np.ndarray, List[np.ndarray]]:
@@ -1253,7 +1253,7 @@ class MoleculePairBatch:
                              max_num_steps: int = None,
                              verbose: bool = False,
                              backend: Optional[str] = None,
-                             return_aligned: bool = True,
+                             return_aligned: bool = False,
                              similarity: Similarity = 'tanimoto',
                              num_workers: int = 1,
                              ) -> Tuple[np.ndarray, List[np.ndarray]]:
@@ -1276,7 +1276,7 @@ class MoleculePairBatch:
                             max_num_steps: int = None,
                             verbose: bool = False,
                             backend: Optional[str] = None,
-                            return_aligned: bool = True,
+                            return_aligned: bool = False,
                             similarity: Similarity = 'tanimoto',
                             trans_init: bool = False,
                             num_workers: int = 1,
@@ -1295,7 +1295,7 @@ class MoleculePairBatch:
     def align_with_vol_mr(self, mr_weight: float = 0.5, alpha: float = 0.81, lam: float = 0.1,
                           num_repeats: int = None, lr: Optional[float] = None,
                           max_num_steps: int = None, verbose: bool = False,
-                          backend: Optional[str] = None, return_aligned: bool = True,
+                          backend: Optional[str] = None, return_aligned: bool = False,
                           trans_init: bool = False, num_workers: int = 1):
         """Shape + Crippen molar-refractivity field (``vol_mr`` slots)."""
         return self._align_mode(
@@ -1306,7 +1306,7 @@ class MoleculePairBatch:
     def align_with_vol_fukui(self, fukui_weight: float = 0.5, alpha: float = 0.81,
                              lam: float = 0.1, num_repeats: int = None, lr: Optional[float] = None,
                              max_num_steps: int = None, verbose: bool = False,
-                             backend: Optional[str] = None, return_aligned: bool = True,
+                             backend: Optional[str] = None, return_aligned: bool = False,
                              trans_init: bool = False, num_workers: int = 1):
         """Shape + condensed-Fukui dual-descriptor field (``vol_fukui`` slots)."""
         return self._align_mode(
@@ -1319,7 +1319,7 @@ class MoleculePairBatch:
                              avoid_min_dist: float = 2.0, alpha: float = 0.81,
                              num_repeats: int = None, lr: Optional[float] = None,
                              max_num_steps: int = None, verbose: bool = False,
-                             backend: Optional[str] = None, return_aligned: bool = True,
+                             backend: Optional[str] = None, return_aligned: bool = False,
                              trans_init: bool = False, num_workers: int = 1):
         """Shape Tanimoto minus a linear hard-sphere excluded-volume penalty (``vol_avoid``
         slots).
@@ -1337,7 +1337,7 @@ class MoleculePairBatch:
     def align_with_vol_atomtype(self, atomtype_weight: float = 0.5, alpha: float = 0.81,
                                 num_repeats: int = None, lr: Optional[float] = None,
                                 max_num_steps: int = None, verbose: bool = False,
-                                backend: Optional[str] = None, return_aligned: bool = True,
+                                backend: Optional[str] = None, return_aligned: bool = False,
                                 trans_init: bool = False, num_workers: int = 1):
         """Shape + element-identity overlap (``vol_atomtype`` slots)."""
         return self._align_mode(
@@ -1349,7 +1349,7 @@ class MoleculePairBatch:
     def align_with_vol_pharm(self, color_weight: float = 0.5, alpha: float = 0.81,
                              num_repeats: int = None, lr: Optional[float] = None,
                              max_num_steps: int = None, verbose: bool = False,
-                             backend: Optional[str] = None, return_aligned: bool = True,
+                             backend: Optional[str] = None, return_aligned: bool = False,
                              trans_init: bool = False, num_workers: int = 1):
         """Shape + directional pharmacophore, i.e. ``vol_color`` with vector weighting
         (``vol_pharm`` slots)."""

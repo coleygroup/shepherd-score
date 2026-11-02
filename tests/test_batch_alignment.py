@@ -153,7 +153,8 @@ def test_molecule_pair_batch_align_with_vol():
     pairs = [_make_mol_pair(ref_smi, fit_smi) for ref_smi, fit_smi in smiles_pairs]
     batch = MoleculePairBatch(pairs)
 
-    scores, aligned_list = batch.align_with_vol(no_H=True, num_repeats=10, max_num_steps=50)
+    scores, aligned_list = batch.align_with_vol(no_H=True, num_repeats=10, max_num_steps=50,
+                                                return_aligned=True)
 
     assert len(aligned_list) == len(pairs), "Should return one array per pair"
     assert scores.shape == (len(pairs),), "scores array should have one entry per pair"
@@ -446,7 +447,7 @@ def test_molecule_pair_batch_align_with_vol_esp():
     pairs = [_make_mol_pair(ref_smi, fit_smi) for ref_smi, fit_smi in smiles_pairs]
     batch = MoleculePairBatch(pairs)
 
-    scores, aligned_list = batch.align_with_vol_esp(lam=0.1, no_H=True,
+    scores, aligned_list = batch.align_with_vol_esp(lam=0.1, no_H=True, return_aligned=True,
                                                      num_repeats=10, max_num_steps=50)
 
     assert len(aligned_list) == len(pairs), "Should return one array per pair"

@@ -113,7 +113,7 @@ scores, aligned = MoleculePairBatch([pair]).align_with_vol(backend="numba")
 `MoleculePair.align` returns the result without storing it;
 `align_with_<mode>` stores the score and transform on the pair.
 `MoleculePairBatch` writes to the same slots on each pair and returns the
-scores and, unless `return_aligned=False`, the aligned coordinates. A mode can
+scores and, with `return_aligned=True`, the aligned coordinates. A mode can
 also be passed as a `shepherd_score.modes.Mode` instance; see
 [modes](api/modes.rst).
 

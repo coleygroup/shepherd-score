@@ -178,7 +178,8 @@ def test_vol_avoid_reference_path_alpha_and_aligned(monkeypatch):
     batch = _batch()
     cloud = batch.pairs[0].ref_molec.atom_pos + 30.0
     scores, aligned = batch.align_with_vol_avoid(cloud, alpha=0.6, backend='torch',
-                                                 num_repeats=2, max_num_steps=3)
+                                                 num_repeats=2, max_num_steps=3,
+                                                 return_aligned=True)
     (mode, kw), = calls
     assert mode == 'vol_avoid' and kw['alpha'] == 0.6
     assert aligned[0].shape == batch.pairs[0].fit_molec.atom_pos.shape

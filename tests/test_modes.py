@@ -204,7 +204,8 @@ def test_batch_align_dispatches_similarity():
 def test_batch_similarity_runs_the_tversky_driver():
     batch = MoleculePairBatch([make_pair(0, 1), make_pair(2, 3)])
     assert not hasattr(batch, 'align_with_vol_tversky')
-    scores, aligned = batch.align_with_vol(backend='numba', similarity=(0.7, 0.3))
+    scores, aligned = batch.align_with_vol(backend='numba', similarity=(0.7, 0.3),
+                                           return_aligned=True)
     assert all(a is not None for a in aligned)
     ref, _ = batch._align_mode('vol_tversky', backend='numba', tversky_alpha=0.7, tversky_beta=0.3)
     assert np.allclose(scores, ref, atol=1e-6)
