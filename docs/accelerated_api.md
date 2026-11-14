@@ -194,6 +194,32 @@ The first call includes pool startup, so exclude it from steady-state timing.
 Guard scripts that start GPU workers with `if __name__ == "__main__":`, since
 those workers are spawned. The CPU pool needs a platform that supports fork.
 
+### CPU threads
+
+On the numba backend, the kernels use one thread per CPU the process may run on.
+On a shared node, cap that with `cpu_threads`:
+
+```python
+batch = MoleculePairBatch(pairs, cpu_threads=8)
+hits = screen(query, store, mode="vol_color_avoid", backend="numba", cpu_threads=8, ...)
+```
+
+The cap covers the numba kernels and torch's intra-op pool for the duration of
+each call, then restores the previous counts. It can be raised or lowered per
+call up to numba's thread pool, which is sized when numba is first imported:
+from `NUMBA_NUM_THREADS`, or else from the process's CPU affinity. Launching
+under `taskset -c 0-7`, `--cpus-per-task=8` or `--cpuset-cpus` therefore caps
+the pool too. A time quota (`CPUQuota`, Docker `--cpus`) does not change what
+the process sees, so the pool stays at the full CPU count and gets throttled.
+
+With `ndev > 1` use `worker_threads`. With `num_workers > 1` each worker is
+single-threaded, so `cpu_threads` is rejected there.
+
+Logical CPUs count hardware threads: two per core on SMT machines. The kernels
+are arithmetic-bound, so a second thread on the same core adds little. In one
+measurement it was about 10% faster, against about 1.8× for a second physical
+core.
+
 ## Reproducible GPU launch configurations
 
 Triton picks kernel launch configurations by timing candidates, and the

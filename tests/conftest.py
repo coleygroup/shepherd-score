@@ -1,9 +1,22 @@
 """Cap the numba thread pool before any test imports numba.
 
-The test batches are a handful of pairs, so a ``parallel=True`` kernel spends its time waking
-threads rather than computing; on a busy many-core node a call over every core is ~250x slower
-than over a few. Export ``NUMBA_NUM_THREADS`` to override.
+The test batches are a handful of pairs, so a ``parallel=True`` kernel over every core spends its
+time waking threads rather than computing; on a busy many-core node a call over every core is
+~250x slower than over a few. The default is the CPUs this process may run on (its affinity
+mask, as numba itself counts them), clamped to 2..8: small CI runners and laptops are not
+oversubscribed, and the floor of 2 keeps the thread-cap tests in ``test_cpu_threads.py`` running
+on a 1-CPU machine (2 threads on 1 CPU just take turns). On an idle 32-core node the full suite
+took 2:22 at 8 threads and 9:06 at 2. Export ``NUMBA_NUM_THREADS`` to override.
 """
 import os
 
-os.environ.setdefault("NUMBA_NUM_THREADS", "2")
+
+def _default_threads(cap: int = 8, floor: int = 2) -> int:
+    try:
+        n = len(os.sched_getaffinity(0))
+    except AttributeError:                       # not on Linux
+        n = os.cpu_count() or 1
+    return max(floor, min(cap, n))
+
+
+os.environ.setdefault("NUMBA_NUM_THREADS", str(_default_threads()))

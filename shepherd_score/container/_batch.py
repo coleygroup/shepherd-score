@@ -143,11 +143,21 @@ class MoleculePairBatch:
     verbose : bool
         Print per-pair progress on the JAX and per-pair paths; ignored by triton/numba.
 
+    The constructor takes ``cpu_threads`` (int, optional): cap the CPU threads every
+    ``align_with_*`` call uses (the numba kernels, and torch on the ``"torch"`` backend), then
+    restore the previous counts. ``None`` (default) leaves them alone, which on ``numba`` means
+    one thread per CPU the process may use. It cannot exceed numba's thread pool, which is
+    sized at import from ``NUMBA_NUM_THREADS`` or the CPU affinity (``taskset``, SLURM). Not
+    combinable with ``num_workers > 1``, whose workers are single-threaded. JAX/XLA threads are
+    not affected.
+
     Each method returns ``(scores, aligned)``, or ``(scores, anchors, vectors)`` for ``pharm``.
     """
 
-    def __init__(self, pairs: List[MoleculePair]):
+    def __init__(self, pairs: List[MoleculePair], cpu_threads: Optional[int] = None):
+        from shepherd_score.accel._threads import check_cpu_threads
         self.pairs = pairs
+        self.cpu_threads = check_cpu_threads(cpu_threads)
 
     def align(self, mode: str, similarity: Similarity = 'tanimoto', **kwargs):
         """Align all pairs under the named ``mode``, as ``MoleculePair.align`` names them.
@@ -192,13 +202,28 @@ class MoleculePairBatch:
         keywords are as in the class docstring. ``backend="jax"`` here always runs each pair's
         ``MoleculePair.align``; the padded JAX paths live in the ``align_with_*`` methods.
         """
-        from shepherd_score.accel._modes import SPECS, canonical, uses_avoid
+        from shepherd_score.accel._modes import SPECS, canonical
+        from shepherd_score.accel._threads import check_cpu_threads, cpu_threads
 
         name = canonical(mode)
         if name not in SPECS:
             raise ValueError(f'No batched implementation of {mode!r}.')
         spec = SPECS[name]
         backend = _resolve_backend(backend)
+        threads = check_cpu_threads(getattr(self, 'cpu_threads', None))
+        if threads is not None and num_workers > 1:
+            raise ValueError("cpu_threads and num_workers > 1 cannot be combined: each worker is "
+                             "single-threaded, so num_workers already sets the CPU count")
+        with cpu_threads(threads):
+            return self._align_mode_body(name, spec, backend, num_repeats=num_repeats, lr=lr,
+                                         max_num_steps=max_num_steps, trans_init=trans_init,
+                                         num_workers=num_workers, verbose=verbose,
+                                         return_aligned=return_aligned, **params)
+
+    def _align_mode_body(self, name, spec, backend, *, num_repeats, lr, max_num_steps,
+                         trans_init, num_workers, verbose, return_aligned, **params):
+        """:meth:`_align_mode` after name/backend resolution, inside the thread cap."""
+        from shepherd_score.accel._modes import uses_avoid
 
         if uses_avoid(name):
             self._attach_avoid_points(params.pop('avoid_points', None), name)

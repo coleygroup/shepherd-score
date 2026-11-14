@@ -75,7 +75,8 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
            top_k: int = 1000, ndev: Optional[int] = None,
            worker_threads: Optional[int] = None,
            scores_out: Optional[np.ndarray] = None, alpha: Optional[float] = None,
-           progress: bool = False, **align_kwargs) -> List["Hit"]:
+           progress: bool = False, cpu_threads: Optional[int] = None,
+           **align_kwargs) -> List["Hit"]:
     """Align every molecule in ``store`` to ``query`` and return the best ``top_k`` hits.
 
     The library is streamed from disk one shard at a time, so memory use does not grow
@@ -110,6 +111,12 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
     worker_threads : int, optional
         CPU threads per GPU worker when ``ndev > 1``. Defaults to the available cores
         divided by ``ndev``.
+    cpu_threads : int, optional
+        Cap the CPU threads this (single-process) screen uses: the numba kernels and torch's
+        intra-op pool, restored afterwards. ``None`` (default) leaves them alone, which on the
+        ``numba`` backend means one thread per CPU the process may use. It cannot exceed
+        numba's thread pool, sized at import from ``NUMBA_NUM_THREADS`` or the CPU affinity
+        (``taskset``, SLURM). With ``ndev > 1`` use ``worker_threads`` instead.
     scores_out : np.ndarray, optional
         A preallocated ``(len(store),)`` array (e.g. an ``np.memmap``) that receives every
         library molecule's score in store order, not just the top ``top_k``. Not
@@ -144,7 +151,7 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
     return screen_many([query], store, mode, backend=backend, do_center=do_center,
                        top_k=top_k, ndev=ndev, worker_threads=worker_threads,
                        scores_out=scores_out, alpha=alpha,
-                       progress=progress, **align_kwargs)[0]
+                       progress=progress, cpu_threads=cpu_threads, **align_kwargs)[0]
 
 
 def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp", *,
@@ -152,7 +159,8 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
                 top_k: int = 1000, ndev: Optional[int] = None,
                 worker_threads: Optional[int] = None,
                 scores_out=None, alpha: Optional[float] = None,
-                progress: bool = False, **align_kwargs) -> List[List["Hit"]]:
+                progress: bool = False, cpu_threads: Optional[int] = None,
+                **align_kwargs) -> List[List["Hit"]]:
     """Screen several queries against ``store`` in one pass over the library.
 
     Equivalent to calling :func:`screen` once per query, but each shard is read from disk
@@ -174,6 +182,11 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
         ``out[j]`` holds the hits for ``queries[j]``, best first.
     """
     import torch
+    from shepherd_score.accel._threads import check_cpu_threads, cpu_threads as _cpu_threads
+    cpu_threads = check_cpu_threads(cpu_threads)
+    if cpu_threads is not None and ndev is not None and ndev > 1:
+        raise ValueError("cpu_threads caps a single-process screen; with ndev > 1 set "
+                         "worker_threads (CPU threads per GPU worker) instead")
     queries = list(queries)
     mode = _canon_mode(mode)                      # accept legacy esp / esp_combo everywhere below
     align_kwargs = _resolve_screen(store, mode, alpha, align_kwargs)
@@ -247,9 +260,10 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
     else:
         qs_ref = qs
         batch_kw = None
-    heaps = _run_shards_inproc(store, range(store.num_shards), qs_ref, mode, device, top_k,
-                               batch_kw, align_kwargs, backend, fast, center_profiles, so,
-                               progress, len(store), query_avoid=q_avoid)
+    with _cpu_threads(cpu_threads):
+        heaps = _run_shards_inproc(store, range(store.num_shards), qs_ref, mode, device, top_k,
+                                   batch_kw, align_kwargs, backend, fast, center_profiles, so,
+                                   progress, len(store), query_avoid=q_avoid)
     return [h.sorted() for h in heaps]
 
 
