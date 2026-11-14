@@ -17,7 +17,7 @@ import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from shepherd_score.evaluations.utils.convert_data import get_smiles_from_atom_pos
+from shepherd_score.evaluations.utils.convert_data import get_smiles_from_atom_pos, ChargeSpec
 
 from shepherd_score.evaluations.docking.docking import VinaSmiles
 from shepherd_score.evaluations.docking.targets import docking_target_info
@@ -788,7 +788,8 @@ def run_docking_evaluation(atoms: List[np.ndarray],
                            verbose: bool = True,
                            num_workers: int = 1,
                            *,
-                           mp_context: Literal['spawn', 'forkserver'] = 'spawn'
+                           mp_context: Literal['spawn', 'forkserver'] = 'spawn',
+                           expected_charge: ChargeSpec = None,
                            ) -> DockingEvalPipeline:
     """
     Run docking evaluation with an exhaustiveness of 32.
@@ -828,6 +829,11 @@ def run_docking_evaluation(atoms: List[np.ndarray],
         Number of parallel worker processes. Default is 1.
     mp_context : str, optional
         Context for multiprocessing. One of 'spawn' or 'forkserver'. Default is 'spawn'.
+    expected_charge : int or sequence of int, optional
+        If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+        If an int, this formal charge is tried first, followed by the default charge
+        sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+        sequence entirely and only those charges are tried, in order.
 
     Returns
     -------
@@ -843,7 +849,8 @@ def run_docking_evaluation(atoms: List[np.ndarray],
 
     smiles_list = []
     for sample in zip(atoms, positions):
-        smiles_list.append(get_smiles_from_atom_pos(atoms=sample[0], positions=sample[1]))
+        smiles_list.append(get_smiles_from_atom_pos(atoms=sample[0], positions=sample[1],
+                                                    expected_charge=expected_charge))
 
     docking_pipe.evaluate(smiles_list, exhaustiveness=exhaustiveness, n_poses=n_poses,
                           protonate=protonate, save_poses_dir_path=save_poses_dir_path,

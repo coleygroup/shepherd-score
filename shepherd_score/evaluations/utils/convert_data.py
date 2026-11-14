@@ -2,7 +2,7 @@
 Helper functions to convert different data types.
 """
 
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Optional, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +10,9 @@ import rdkit
 from rdkit import Chem
 import rdkit.Chem.rdDetermineBonds
 import pandas as pd
+
+# Cap to prevent extremely long search for DetermineBonds
+DETERMINE_BONDS_MAX_ITERATIONS = 100_000
 
 
 def write_xyz_file(atomic_numbers: np.ndarray,
@@ -145,7 +148,9 @@ def extract_mol_from_xyz_block(xyz_block: str,
         return None
 
     try:
-        rdkit.Chem.rdDetermineBonds.DetermineBonds(mol, charge=charge, embedChiral=True)
+        rdkit.Chem.rdDetermineBonds.DetermineBonds(
+            mol, charge=charge, embedChiral=True, maxIterations=DETERMINE_BONDS_MAX_ITERATIONS
+        )
     except Exception as e:
         if verbose:
             print(e)
@@ -175,8 +180,44 @@ def extract_mol_from_xyz_block(xyz_block: str,
     return mol
 
 
+DEFAULT_CHARGE_ORDER = (0, 1, -1, 2, -2)
+
+ChargeSpec = Optional[Union[int, Sequence[int]]]
+
+
+def _as_int(charge) -> int:
+    if int(charge) != charge:
+        raise ValueError(f'Charges must be integers; got {charge!r}')
+    return int(charge)
+
+
+def normalize_expected_charge(expected_charge: ChargeSpec) -> Union[int, List[int], None]:
+    """
+    Validate ``expected_charge`` and convert it to None, an int, or a deduplicated list of ints.
+    """
+    if expected_charge is None:
+        return None
+    if np.ndim(expected_charge) == 0:
+        return _as_int(expected_charge)
+    charges = list(dict.fromkeys(_as_int(c) for c in expected_charge))
+    if not charges:
+        raise ValueError('expected_charge must contain at least one charge.')
+    return charges
+
+
+def _resolve_charge_order(expected_charge: ChargeSpec) -> List[int]:
+    """Ordered list of overall charges to try when reconstructing a molecule."""
+    expected_charge = normalize_expected_charge(expected_charge)
+    if expected_charge is None:
+        return list(DEFAULT_CHARGE_ORDER)
+    if isinstance(expected_charge, int):
+        return list(dict.fromkeys([expected_charge, *DEFAULT_CHARGE_ORDER]))
+    return expected_charge
+
+
 def get_mol_from_atom_pos(atoms: np.ndarray,
-                          positions: np.ndarray
+                          positions: np.ndarray,
+                          expected_charge: ChargeSpec = None,
                           ) -> Tuple[Union[Chem.Mol, None], int, str]:
     """
     Try to get a RDKit mol object from atom and coordinate arrays.
@@ -186,12 +227,18 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
     atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M) one-hot
         encoding.
     positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
+    expected_charge : int or sequence of int, optional
+        If an int, this formal charge is tried first, followed by the default charge
+        sequence ``DEFAULT_CHARGE_ORDER = (0, 1, -1, 2, -2)``. If a sequence of ints (e.g., ``[3, -3, 0]``), it
+        replaces the default sequence entirely and only those charges are tried, in order.
+        If None (default), the default sequence is used.
 
     Returns
     -------
     Tuple
         mol : Chem.Mol or None
-        charge : int overall charge of molecule
+        charge : int overall charge of molecule. If no charge succeeds, the first charge
+            that was tried.
         xyz_block : str
     """
     if len(atoms.shape) == 2:
@@ -200,7 +247,8 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
         atomic_nums = atoms
     xyz_block = write_xyz_file(atomic_nums, positions)
 
-    for charge in [0, 1, -1, 2, -2]:
+    charges = _resolve_charge_order(expected_charge)
+    for charge in charges:
         try:
             mol = extract_mol_from_xyz_block(xyz_block=xyz_block, charge=charge)
         except Exception:
@@ -209,12 +257,13 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
         if mol is not None:
             break
     else:
-        charge = 0
+        charge = charges[0]
     return mol, charge, xyz_block
 
 
 def get_smiles_from_atom_pos(atoms: np.ndarray,
-                             positions: np.ndarray
+                             positions: np.ndarray,
+                             expected_charge: ChargeSpec = None,
                              ) -> Union[str, None]:
     """
     Try to get a SMILES string from atom and coordinate arrays.
@@ -224,12 +273,14 @@ def get_smiles_from_atom_pos(atoms: np.ndarray,
     atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M) one-hot
         encoding.
     positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
+    expected_charge : int or sequence of int, optional
+        Charges to try when reconstructing the molecule; see ``get_mol_from_atom_pos``.
 
     Returns
     -------
     SMILES str or None
     """
-    mol, _, _ = get_mol_from_atom_pos(atoms=atoms, positions=positions)
+    mol, _, _ = get_mol_from_atom_pos(atoms=atoms, positions=positions, expected_charge=expected_charge)
     smiles = None
     if mol is not None:
         smiles = Chem.MolToSmiles(Chem.RemoveHs(mol))
