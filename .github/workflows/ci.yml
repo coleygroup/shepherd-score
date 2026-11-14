@@ -34,6 +34,12 @@ jobs:
         with:
           fetch-depth: 0  # Full history required for setuptools_scm version detection
 
+      - name: Install Open3D system libraries
+        # The open3d wheel links libEGL, libGL, libX11, libudev and libusb; the runner lacks EGL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libx11-6 libudev1 libusb-1.0-0
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
