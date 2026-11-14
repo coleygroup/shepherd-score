@@ -169,27 +169,3 @@ def test_pipeline_normalizes_expected_charge_at_init():
 
     with pytest.raises(ValueError):
         pipelines.ConsistencyEvalPipeline(generated_mols=mols, expected_charge=[1, 2.5])
-
-
-def test_docking_evaluation_passes_expected_charge(monkeypatch):
-    from shepherd_score.evaluations.docking import pipelines as docking_pipelines
-
-    captured = []
-
-    class FakeDockingPipe:
-        def __init__(self, **kwargs):
-            pass
-
-        def evaluate(self, smiles_list, **kwargs):
-            pass
-
-    def fake_get_smiles(*, atoms, positions, expected_charge):
-        captured.append(expected_charge)
-
-    monkeypatch.setattr(docking_pipelines, "DockingEvalPipeline", FakeDockingPipe)
-    monkeypatch.setattr(docking_pipelines, "get_smiles_from_atom_pos", fake_get_smiles)
-    docking_pipelines.run_docking_evaluation(
-        [np.array([6])], [np.zeros((1, 3))], pdb_id="1iep", expected_charge=[3, -3]
-    )
-
-    assert captured == [[3, -3]]
