@@ -14,8 +14,6 @@ from ._graphed import _GraphedFineBase, run_graphed, graph_cap
 from ...score.analytical_gradients import _rotation_matrix_from_unit_quat
 from . import terms as T
 
-torch.backends.cuda.matmul.allow_tf32 = True
-
 #: Padded per-pair tensors of one channel: ``ref`` (B, N_pad, ...), ``fit`` (B, M_pad, ...) or
 #: ``None`` for a pair-level channel, and int32 real counts (``m_real`` ``None`` likewise).
 Batch = namedtuple("Batch", "ref fit n_real m_real")
