@@ -18,7 +18,12 @@ from rdkit import Chem, RDConfig
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.DataStructs import TanimotoSimilarity
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos # noqa: F401
+from shepherd_score.evaluations.utils.convert_data import (
+    extract_mol_from_xyz_block, # noqa: F401
+    get_mol_from_atom_pos, # noqa: F401
+    ChargeSpec,
+    normalize_expected_charge,
+)
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 
@@ -137,7 +142,7 @@ class UnconditionalEvalPipeline:
     def __init__(self,
                  generated_mols: List[Tuple[np.ndarray, np.ndarray]],
                  solvent: Optional[str] = None,
-                 expected_charge: Optional[int] = None,
+                 expected_charge: ChargeSpec = None,
                  ):
         """
         Evaluation pipeline for a list of unconditionally generated molecules.
@@ -149,8 +154,11 @@ class UnconditionalEvalPipeline:
             and corresponding positions (N, 3).
         solvent : str, optional
             Implicit solvent model to use for xtb relaxation.
-        expected_charge : int, optional
-            Formal charge to try first when reconstructing the molecule.
+        expected_charge : int or sequence of int, optional
+            If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+            If an int, this formal charge is tried first, followed by the default charge
+            sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+            sequence entirely and only those charges are tried, in order.
         """
         self.generated_mols = generated_mols
         self.smiles = [None] * len(generated_mols)
@@ -160,7 +168,7 @@ class UnconditionalEvalPipeline:
         self.num_generated_mols = len(generated_mols)
 
         self.solvent = solvent
-        self.expected_charge = expected_charge
+        self.expected_charge = normalize_expected_charge(expected_charge)
 
         self.num_valid = 0
         self.num_valid_post_opt = 0
@@ -431,7 +439,7 @@ class ConditionalEvalPipeline:
                  pharm_multi_vector: Optional[bool] = None,
                  solvent: Optional[str] = None,
                  priority_pharm_indices: Optional[list] = None,
-                 expected_charge: Optional[int] = None,
+                 expected_charge: ChargeSpec = None,
                  ):
         """
         Initialize attributes for conditional evaluation pipeline.
@@ -467,14 +475,17 @@ class ConditionalEvalPipeline:
             (``sims_pharm_nonpriority_target_relax_optimal``). Requires
             ``condition`` to be ``'pharm'`` or ``'all'`` and
             ``pharm_multi_vector`` to be a bool.
-        expected_charge : int, optional
-            Formal charge to try first when reconstructing generated molecules.
+        expected_charge : int or sequence of int, optional
+            If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+            If an int, this formal charge is tried first, followed by the default charge
+            sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+            sequence entirely and only those charges are tried, in order.
         """
         self.generated_mols = generated_mols
         self.num_generated_mols = len(self.generated_mols)
         self.solvent = solvent
         self.priority_pharm_indices = priority_pharm_indices
-        self.expected_charge = expected_charge
+        self.expected_charge = normalize_expected_charge(expected_charge)
 
         self.pharm_multi_vector = pharm_multi_vector
         self.condition = condition
@@ -890,7 +901,7 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                  pharm_multi_vector: Optional[bool] = None,
                  solvent: Optional[str] = None,
                  random_molblock_charges: Optional[List[Tuple]] = None,
-                 expected_charge: Optional[int] = None,
+                 expected_charge: ChargeSpec = None,
                  ):
         """
         Initialize attributes for consistency evaluation pipeline.
@@ -925,8 +936,11 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         random_molblock_charges : List[Tuple], optional
             Contains molblock_charges to randomly select from, and align with
             (re-)generated sample.
-        expected_charge : int, optional
-            Formal charge to try first when reconstructing the molecule.
+        expected_charge : int or sequence of int, optional
+            If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+            If an int, this formal charge is tried first, followed by the default charge
+            sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+            sequence entirely and only those charges are tried, in order.
         """
         # Initialize parent class (UnconditionalEvalPipeline)
         super().__init__(generated_mols=generated_mols, solvent=solvent,

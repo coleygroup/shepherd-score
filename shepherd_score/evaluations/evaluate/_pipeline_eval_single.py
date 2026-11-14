@@ -6,6 +6,8 @@ import os
 import logging
 import traceback
 from typing import List, Tuple, Optional, Dict, Any
+
+from shepherd_score.evaluations.utils.convert_data import ChargeSpec
 from pathlib import Path
 
 import itertools
@@ -265,7 +267,7 @@ def _eval_unconditional_single(i: int,
                                solvent: Optional[str],
                                num_processes: int,
                                timeout_minutes: Optional[float] = None,
-                               expected_charge: Optional[int] = None,
+                               expected_charge: ChargeSpec = None,
                                ) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
@@ -323,7 +325,7 @@ def _eval_conditional_single(i: int,
                              num_processes: int,
                              priority_pharm_indices: Optional[list] = None,
                              timeout_minutes: Optional[float] = None,
-                             expected_charge: Optional[int] = None,
+                             expected_charge: ChargeSpec = None,
                              ) -> Dict[str, Any]:
     """
     Evaluate a single molecule and preserve necessary attributes for the pipeline while avoiding
@@ -411,7 +413,7 @@ def _eval_consistency_single(i: int,
                              random_molblock_charges: Optional[List[Tuple]] = None,
                              random_seed: Optional[int] = None,
                              timeout_minutes: Optional[float] = None,
-                             expected_charge: Optional[int] = None,
+                             expected_charge: ChargeSpec = None,
                              ) -> Dict[str, Any]:
     """
     Evaluate a single molecule for consistency and preserve necessary attributes for the pipeline while avoiding
