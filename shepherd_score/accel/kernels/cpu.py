@@ -116,17 +116,26 @@ def overlap_score_grad_se3_batch(A, B, q, t, *, alpha: float = 0.81,
 
 
 @njit(parallel=True, fastmath=True, cache=True)
-def _avoid_grad_kernel(A, B, q, t, Nr, Mr, min_dist, need_grad):
+def _avoid_grad_kernel(A, B, q, t, Nr, Mr, min_dist, need_grad, a_div):
     """Linear hard-sphere avoid penalty value + SE(3) gradient, one pose per prange iteration.
 
     A is the fixed avoid cloud in the ref frame (not transformed), B the fit cloud transformed
-    by (q, t); same quaternion->R build and dR/dq tail as ``_overlap_grad_kernel``.
-    ``A_pen = sum_a sum_b relu((d0 - ||A_a - B'_b||) / d0)``; the force on B'_b is
-    ``sum_a (1/(d0 d)) (A_a - B'_b)`` for ``0 < d < d0`` (the d~0 point is skipped, matching
-    torch.cdist's zero gradient at coincidence). Returns V (K,), dQ (K,4), dT (K,3), fp64.
+    by (q, t); same quaternion->R build as ``_overlap_grad_kernel`` (q is unit: seeds are
+    normalised and the Adam step renormalises). ``A_pen = sum_a sum_b relu((d0 - ||A_a - B'_b||)
+    / d0)``; the force on B'_b is ``sum_a (1/(d0 d)) (A_a - B'_b)`` for ``0 < d < d0`` (the d~0
+    point is skipped, matching torch.cdist's zero gradient at coincidence). Pose k reads avoid
+    row ``k // a_div`` (and its count ``Nr[k // a_div]``), so a pair's seeds share one cloud.
+    Returns V (K,), dQ (K,4), dT (K,3), fp64.
+
+    Scratch-free: avoid points are the outer loop. Each one within reach of the posed fit is
+    moved once into the fit's body frame, ``a' = R^T (a - t)`` (``||a - (R b0 + t)|| =
+    ||a' - b0||``), and swept over the raw fit atoms. Forces are accumulated in the body frame
+    as ``F = sum f`` and the moment ``G = sum f b0^T``; the gradient is linear in both, so
+    ``dT = R F`` and ``dQ`` contracts ``R G`` with dR/dq once per pose (exact).
     """
-    K = A.shape[0]
+    K = B.shape[0]
     inv_d0 = 1.0 / min_dist
+    d02 = min_dist * min_dist
     V = np.zeros(K, dtype=np.float64)
     dQ = np.zeros((K, 4), dtype=np.float64)
     dT = np.zeros((K, 3), dtype=np.float64)
@@ -136,56 +145,92 @@ def _avoid_grad_kernel(A, B, q, t, Nr, Mr, min_dist, need_grad):
         r00 = 1.0 - 2.0 * (qj * qj + qk_ * qk_); r01 = 2.0 * (qi * qj - qk_ * qr); r02 = 2.0 * (qi * qk_ + qj * qr)
         r10 = 2.0 * (qi * qj + qk_ * qr); r11 = 1.0 - 2.0 * (qi * qi + qk_ * qk_); r12 = 2.0 * (qj * qk_ - qi * qr)
         r20 = 2.0 * (qi * qk_ - qj * qr); r21 = 2.0 * (qj * qk_ + qi * qr); r22 = 1.0 - 2.0 * (qi * qi + qj * qj)
-        n_real = Nr[k]; m_real = Mr[k]
-        Vacc = 0.0
-        dTx = 0.0; dTy = 0.0; dTz = 0.0
-        dQw = 0.0; dQx = 0.0; dQy = 0.0; dQz = 0.0
+        ka = k // a_div
+        n_real = Nr[ka]; m_real = Mr[k]
+        # Bounding sphere of the fit, in its body frame (the radius is rotation-invariant) and
+        # posed to the ref frame for the cull: an avoid point farther than radius + d0 from
+        # the center is beyond d0 of every fit atom, so it adds neither value nor gradient.
+        ux = 0.0; uy = 0.0; uz = 0.0
         for m in range(m_real):
-            bx0 = B[k, m, 0]; by0 = B[k, m, 1]; bz0 = B[k, m, 2]
-            bx = r00 * bx0 + r01 * by0 + r02 * bz0 + tx
-            by = r10 * bx0 + r11 * by0 + r12 * bz0 + ty
-            bz = r20 * bx0 + r21 * by0 + r22 * bz0 + tz
-            fxj = 0.0; fyj = 0.0; fzj = 0.0
-            for n in range(n_real):
-                dx = A[k, n, 0] - bx; dy = A[k, n, 1] - by; dz = A[k, n, 2] - bz
+            ux += B[k, m, 0]; uy += B[k, m, 1]; uz += B[k, m, 2]
+        inv_m = 1.0 / max(m_real, 1)
+        ux *= inv_m; uy *= inv_m; uz *= inv_m
+        rad2 = 0.0
+        for m in range(m_real):
+            ex = B[k, m, 0] - ux; ey = B[k, m, 1] - uy; ez = B[k, m, 2] - uz
+            rad2 = max(rad2, ex * ex + ey * ey + ez * ez)
+        cx = r00 * ux + r01 * uy + r02 * uz + tx
+        cy = r10 * ux + r11 * uy + r12 * uz + ty
+        cz = r20 * ux + r21 * uy + r22 * uz + tz
+        reach = math.sqrt(rad2) + min_dist + 1e-3
+        reach2 = reach * reach
+        Vacc = 0.0
+        Fx = 0.0; Fy = 0.0; Fz = 0.0
+        Gxx = 0.0; Gxy = 0.0; Gxz = 0.0
+        Gyx = 0.0; Gyy = 0.0; Gyz = 0.0
+        Gzx = 0.0; Gzy = 0.0; Gzz = 0.0
+        for n in range(n_real if m_real > 0 else 0):
+            wx = A[ka, n, 0] - tx; wy = A[ka, n, 1] - ty; wz = A[ka, n, 2] - tz
+            gx = A[ka, n, 0] - cx; gy = A[ka, n, 1] - cy; gz = A[ka, n, 2] - cz
+            if gx * gx + gy * gy + gz * gz >= reach2:
+                continue
+            ax = r00 * wx + r10 * wy + r20 * wz           # a' = R^T (a - t)
+            ay = r01 * wx + r11 * wy + r21 * wz
+            az = r02 * wx + r12 * wy + r22 * wz
+            for m in range(m_real):
+                bx0 = B[k, m, 0]; by0 = B[k, m, 1]; bz0 = B[k, m, 2]
+                dx = ax - bx0; dy = ay - by0; dz = az - bz0
                 r2 = dx * dx + dy * dy + dz * dz
+                if r2 >= d02:                    # outside the shell: skip the sqrt
+                    continue
                 d = math.sqrt(r2)
-                if d < min_dist:
-                    Vacc += (min_dist - d) * inv_d0
-                    if need_grad and d > 1e-8:
-                        c = inv_d0 / d       # (1/d0)/d ; f += c*dx == +dA_pen/dB' (fit-avoid coord)
-                        fxj += c * dx; fyj += c * dy; fzj += c * dz
-            if need_grad:
-                dTx += fxj; dTy += fyj; dTz += fzj
-                # dA_pen/dq, body-frame coords (bx0,by0,bz0); identical tail to the shape kernel
-                dQw += fxj * (-2.0 * qk_ * by0 + 2.0 * qj * bz0) + fyj * (2.0 * qk_ * bx0 - 2.0 * qi * bz0) + fzj * (-2.0 * qj * bx0 + 2.0 * qi * by0)
-                dQx += fxj * (2.0 * qj * by0 + 2.0 * qk_ * bz0) + fyj * (2.0 * qj * bx0 - 4.0 * qi * by0 - 2.0 * qr * bz0) + fzj * (2.0 * qk_ * bx0 + 2.0 * qr * by0 - 4.0 * qi * bz0)
-                dQy += fxj * (-4.0 * qj * bx0 + 2.0 * qi * by0 + 2.0 * qr * bz0) + fyj * (2.0 * qi * bx0 + 2.0 * qk_ * bz0) + fzj * (-2.0 * qr * bx0 + 2.0 * qk_ * by0 - 4.0 * qj * bz0)
-                dQz += fxj * (-4.0 * qk_ * bx0 - 2.0 * qr * by0 + 2.0 * qi * bz0) + fyj * (2.0 * qr * bx0 - 4.0 * qk_ * by0 + 2.0 * qj * bz0) + fzj * (2.0 * qi * bx0 + 2.0 * qj * by0)
+                Vacc += (min_dist - d) * inv_d0
+                if need_grad and d > 1e-8:
+                    c = inv_d0 / d       # (1/d0)/d ; f += c*dx == +dA_pen/dB' (body frame)
+                    fx = c * dx; fy = c * dy; fz = c * dz
+                    Fx += fx; Fy += fy; Fz += fz
+                    Gxx += fx * bx0; Gxy += fx * by0; Gxz += fx * bz0
+                    Gyx += fy * bx0; Gyy += fy * by0; Gyz += fy * bz0
+                    Gzx += fz * bx0; Gzy += fz * by0; Gzz += fz * bz0
         V[k] = Vacc
-        dT[k, 0] = dTx; dT[k, 1] = dTy; dT[k, 2] = dTz
-        dQ[k, 0] = dQw; dQ[k, 1] = dQx; dQ[k, 2] = dQy; dQ[k, 3] = dQz
+        if need_grad:
+            # ref-frame force sum and moment: F_w = R F, G_w = R G (rows x, y, z)
+            dT[k, 0] = r00 * Fx + r01 * Fy + r02 * Fz
+            dT[k, 1] = r10 * Fx + r11 * Fy + r12 * Fz
+            dT[k, 2] = r20 * Fx + r21 * Fy + r22 * Fz
+            hxx = r00 * Gxx + r01 * Gyx + r02 * Gzx; hxy = r00 * Gxy + r01 * Gyy + r02 * Gzy; hxz = r00 * Gxz + r01 * Gyz + r02 * Gzz
+            hyx = r10 * Gxx + r11 * Gyx + r12 * Gzx; hyy = r10 * Gxy + r11 * Gyy + r12 * Gzy; hyz = r10 * Gxz + r11 * Gyz + r12 * Gzz
+            hzx = r20 * Gxx + r21 * Gyx + r22 * Gzx; hzy = r20 * Gxy + r21 * Gyy + r22 * Gzy; hzz = r20 * Gxz + r21 * Gyz + r22 * Gzz
+            # dA_pen/dq = sum_ij H_ij dR_ij/dq; the per-atom tail of the shape kernel, summed
+            dQ[k, 0] = 2.0 * (-qk_ * hxy + qj * hxz + qk_ * hyx - qi * hyz - qj * hzx + qi * hzy)
+            dQ[k, 1] = 2.0 * (qj * hxy + qk_ * hxz + qj * hyx - 2.0 * qi * hyy - qr * hyz + qk_ * hzx + qr * hzy - 2.0 * qi * hzz)
+            dQ[k, 2] = 2.0 * (-2.0 * qj * hxx + qi * hxy + qr * hxz + qi * hyx + qk_ * hyz - qr * hzx + qk_ * hzy - 2.0 * qj * hzz)
+            dQ[k, 3] = 2.0 * (-2.0 * qk_ * hxx - qr * hxy + qi * hxz + qr * hyx - 2.0 * qk_ * hyy + qj * hyz + qi * hzx + qj * hzy)
     return V, dQ, dT
 
 
 def overlap_score_grad_avoid_se3_batch(A, B, q, t, *, min_dist: float = 2.0,
                                        N_real=None, M_real=None, NEED_GRAD: bool = True,
-                                       BLOCK=None, num_warps=None, num_stages=None):
+                                       BLOCK=None, num_warps=None, num_stages=None, A_DIV=1):
     """CPU drop-in for the Triton ``overlap_score_grad_avoid_se3_batch``. A = fixed avoid points
-    (ref frame), B = fit points (transformed). Returns (V, dQ, dT) as torch tensors on A.device
-    with A.dtype. Extra kwargs (GPU-only knobs) ignored."""
-    K, N_pad, _ = A.shape
-    _, M_pad, _ = B.shape
+    (ref frame), B = fit points (transformed); pose row k reads avoid row ``k // A_DIV``, and
+    ``N_real`` is per avoid row. Returns (V, dQ, dT) as torch tensors on A.device with A.dtype.
+    Extra kwargs (GPU-only knobs) ignored."""
+    KA, N_pad, _ = A.shape
+    K, M_pad, _ = B.shape
+    if KA * int(A_DIV) != K:
+        raise ValueError(f"avoid rows {KA} x A_DIV {A_DIV} != poses {K}")
     dev, dt = A.device, A.dtype
     An = np.ascontiguousarray(A.detach().cpu().numpy())
     Bn = np.ascontiguousarray(B.detach().cpu().numpy())
     qn = np.ascontiguousarray(q.detach().cpu().numpy())
     tn = np.ascontiguousarray(t.detach().cpu().numpy())
-    Nr = (np.full(K, N_pad, np.int64) if N_real is None
+    Nr = (np.full(KA, N_pad, np.int64) if N_real is None
           else N_real.detach().cpu().numpy().astype(np.int64))
     Mr = (np.full(K, M_pad, np.int64) if M_real is None
           else M_real.detach().cpu().numpy().astype(np.int64))
-    V, dQ, dT = _avoid_grad_kernel(An, Bn, qn, tn, Nr, Mr, float(min_dist), bool(NEED_GRAD))
+    V, dQ, dT = _avoid_grad_kernel(An, Bn, qn, tn, Nr, Mr, float(min_dist), bool(NEED_GRAD),
+                                   int(A_DIV))
     return (torch.as_tensor(V, device=dev, dtype=dt),
             torch.as_tensor(dQ, device=dev, dtype=dt),
             torch.as_tensor(dT, device=dev, dtype=dt))

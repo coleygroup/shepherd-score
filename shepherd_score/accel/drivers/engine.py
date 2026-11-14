@@ -93,6 +93,30 @@ def _expand(x, P):
     return _rep(x, P)
 
 
+def _per_pose(term, ti, P, dedup=False):
+    """``(ref, fit, n_real, m_real, params)`` of one term's per-pair inputs laid out for ``P``
+    poses per pair: as-is under ``dedup`` (the kernel indexes ``pose // P``), else replicated.
+    The avoid term keeps its cloud and counts per pair and records ``_a_div = P``: its kernels
+    read avoid row ``pose // P``, so a pair's seeds share one copy of the cloud instead of P.
+    A shared cloud (one row for the whole batch, :func:`is_shared_pair`) passes through the
+    same way and is broadcast to every pose at launch. The avoid layout ignores ``dedup``: its
+    kernels index the fit by pose, with no ``pid // S`` molecule indexing, and every term
+    carries its own inputs, so it can sit beside deduped terms in one problem."""
+    tp = dict(ti.params)
+    for key in ("_n_surf", "_m_surf"):
+        if key in tp:
+            tp[key] = _rep(tp[key], P)
+    if term.kernel == "avoid":
+        tp["_a_div"] = int(P)
+        return (ti.ref, tuple(_expand(x, P) for x in ti.fit), ti.n_real, _rep(ti.m_real, P),
+                tp)
+    if dedup:
+        return ti.ref, ti.fit, ti.n_real, ti.m_real, tp
+    fit = tuple(_expand(x, P) for x in ti.fit)
+    m_real = _rep(ti.m_real, P)
+    return tuple(_expand(x, P) for x in ti.ref), fit, _rep(ti.n_real, P), m_real, tp
+
+
 def _masked_centroid(x, n_real):
     n = n_real.to(dtype=x.dtype)
     mask = (torch.arange(x.shape[1], device=x.device)[None] < n[:, None]).to(x.dtype)
@@ -235,16 +259,7 @@ def _finish(spec, chans, term_objs, params, B, quats, t_seeds, device, dtype, c_
     out = []
     for obj in term_objs:
         ti = obj.inputs
-        if dedup:
-            ref, fit, n_real, m_real = ti.ref, ti.fit, ti.n_real, ti.m_real
-        else:
-            ref = tuple(_expand(x, P) for x in ti.ref)
-            fit = tuple(_expand(x, P) for x in ti.fit)
-            n_real, m_real = _rep(ti.n_real, P), _rep(ti.m_real, P)
-        tp = dict(ti.params)
-        for key in ("_n_surf", "_m_surf"):
-            if key in tp:
-                tp[key] = _rep(tp[key], P)
+        ref, fit, n_real, m_real, tp = _per_pose(obj.spec, ti, P, dedup)
         new = _Term(obj.spec, T.TermInputs(ref, fit, n_real, m_real, ti.tables, None, tp),
                     obj.weight)
         red = obj.spec.reduction
@@ -322,14 +337,9 @@ def _coarse_topk(pr0, cb, num_seeds, trans_centers, trans_centers_real, nrpt, to
         tmp.terms = []
         for obj in pr0.terms:
             ti = obj.inputs
-            tp = dict(ti.params)
-            for key in ("_n_surf", "_m_surf"):
-                if key in tp:
-                    tp[key] = _rep(tp[key], g)
-            new = _Term(obj.spec, T.TermInputs(tuple(_expand(x, g) for x in ti.ref),
-                                                tuple(_expand(x, g) for x in ti.fit),
-                                                _rep(ti.n_real, g), _rep(ti.m_real, g),
-                                                ti.tables, None, tp), obj.weight)
+            ref, fit, n_real, m_real, tp = _per_pose(obj.spec, ti, g)
+            new = _Term(obj.spec, T.TermInputs(ref, fit, n_real, m_real, ti.tables, None, tp),
+                        obj.weight)
             red = obj.spec.reduction
             if red == "tanimoto":
                 new.norm = _rep(obj.vaa + obj.vbb, g)
@@ -594,9 +604,9 @@ def _graph_key(pr: Problem, steps, lr):
     p = pr.params
     key = [pr.device.index, pr.spec.name]
     for tm in pr.terms:
-        key += [tuple(int(x.shape[1]) for x in tm.inputs.ref),
+        key += [tuple(tuple(x.shape) for x in tm.inputs.ref),      # avoid: per pair, or 1 shared
                 tuple(int(x.shape[1]) for x in tm.inputs.fit)]
-    key += [int(pr.q.shape[0]), int(steps), round(float(lr), 5), pr.S_fine, pr.P_cta,
+    key += [int(pr.q.shape[0]), pr.P, int(steps), round(float(lr), 5), pr.S_fine, pr.P_cta,
             pr.similarity]
     for name in sorted(p):
         v = p[name]

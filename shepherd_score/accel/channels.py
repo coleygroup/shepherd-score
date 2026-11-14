@@ -219,10 +219,33 @@ _reg(Channel("partial", "scalar", "withH", "partial",
              flag="charges", profile="partial_charges"))
 _reg(Channel("radii", "scalar", "withH", "radii",
              lambda m: np.asarray(_need(m, "radii", "vdW radii")), "radii", flag="radii"))
-# The one pair-level channel: a fixed avoid cloud in the reference frame, attached to the pair
-# (``MoleculePair.avoid_points``) or supplied with the query on the screen path.
+def _spread_bits(x):
+    """Spread the low 10 bits of ``x`` (int64) to every third bit, for a 30-bit Morton code."""
+    x = x & 0x3FF
+    x = (x | (x << 16)) & 0x30000FF
+    x = (x | (x << 8)) & 0x300F00F
+    x = (x | (x << 4)) & 0x30C30C3
+    return (x | (x << 2)) & 0x9249249
+
+
+def z_order(points) -> np.ndarray:
+    """``points`` (K, 3) as float32, reordered along a Z-order curve. The avoid kernels skip
+    whole tiles of avoid points beyond reach of the fit, which only pays when a tile is spatially
+    compact; the penalty is a plain sum over points, so the order changes only float rounding."""
+    p = np.ascontiguousarray(points, dtype=np.float32)
+    if len(p) < 2:
+        return p
+    lo = p.min(0)
+    cell = ((p - lo) / np.maximum(p.max(0) - lo, 1e-6) * 1023).astype(np.int64)
+    code = sum(_spread_bits(cell[:, i]) << i for i in range(3))
+    return p[np.argsort(code, kind="stable")]
+
+
+# The one pair-level channel: a fixed avoid cloud in the frame the pair is scored in (used as-is,
+# never shifted), attached to the pair (``MoleculePair.avoid_points``) or supplied with the query
+# on the screen path. Z-ordered once here, not per call.
 _reg(Channel("avoid", "points", "pair", "avoid_pts",
-             lambda p: np.asarray(_need(p, "avoid_points", "avoid_points")), None))
+             lambda p: z_order(_need(p, "avoid_points", "avoid_points")), None))
 
 
 def channel(name: str) -> Channel:

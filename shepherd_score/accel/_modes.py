@@ -21,7 +21,8 @@ class Term:
                        (``pharm_grad_dq_se3_batch``; anchors + vectors + labels per side);
         ``"avoid"``   linear hard-sphere excluded-volume penalty
                        (``overlap_score_grad_avoid_se3_batch``; a fixed avoid cloud on the ref
-                       slot, fit points on the fit slot);
+                       slot, fit points on the fit slot; the engine keeps the cloud per pair,
+                       Z-ordered on the way in, and the kernels skip points beyond reach of the fit);
         ``"esp_cmp"`` the ShaEP surface-ESP agreement
                        (``esp_agreement_grad_se3_batch``; with-H atoms, charges, radii, surface
                        points, surface ESP per side).
