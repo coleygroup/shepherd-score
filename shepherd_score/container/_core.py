@@ -25,7 +25,7 @@ from shepherd_score.score.pharmacophore_scoring import _SIM_TYPE, get_overlap_ph
 from shepherd_score.score.similarity import Similarity, tversky_weights
 from shepherd_score.alignment._optimize import optimize_se3, tree_map
 from shepherd_score.modes import (Mode, get_mode, Vol, VolAvoid, VolESP, Surf, SurfESP, VolAndSurfESP,
-                                  Pharm, vol_color, vol_lipo, vol_mr, vol_fukui, vol_atomtype)
+                                  Pharm, vol_color, vol_color_avoid, vol_lipo, vol_mr, vol_fukui, vol_atomtype)
 from shepherd_score.alignment.utils.se3_np import apply_SE3_transform_np, apply_SO3_transform_np
 from shepherd_score.accel import batch as _ba
 from shepherd_score.accel._modes import (
@@ -57,6 +57,8 @@ _ALIGN_KEYS = (
     'vol_fukui',
     # shape minus a linear hard-sphere excluded-volume penalty against a fixed avoid-point cloud
     'vol_avoid',
+    # vol_color minus the same excluded-volume penalty, and its Tversky variant
+    'vol_color_avoid', 'vol_color_avoid_tversky',
 )
 
 
@@ -1050,9 +1052,12 @@ class MoleculePair:
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.device = device
 
-        # Center to origin
+        # Center to origin; ref_shift records how far the reference moved. An avoid cloud is
+        # never shifted for you: give it in this (centered) frame, e.g. ``cloud - pair.ref_shift``.
+        self.ref_shift = np.zeros(3)
         if do_center:
-            self.ref_molec.center_to(self.ref_molec.atom_pos.mean(0))
+            self.ref_shift = self.ref_molec.atom_pos.mean(0)
+            self.ref_molec.center_to(self.ref_shift)
             self.fit_molec.center_to(self.fit_molec.atom_pos.mean(0))
 
         # Atomic coordinates as float32 tensors on the target device.
@@ -1079,6 +1084,7 @@ class MoleculePair:
         stripped either way so a stale duplicate cannot shadow the canonical entry.
         """
         state = dict(state)
+        state.setdefault('ref_shift', np.zeros(3))
         aliases = {'esp': 'surf_esp', 'esp_combo': 'vol_and_surf_esp'}
 
         if '_alignments' not in state:
@@ -1125,13 +1131,15 @@ class MoleculePair:
         return (t.to(torch.float32) if t.is_floating_point() else t).to(self.device)
 
     def _mode_inputs(self, mode: Mode, convert) -> tuple:
+        # A Combined mode has no class-level name; its label ('vol_color', ...) identifies it
+        what = mode.name or getattr(mode, 'label', None) or type(mode).__name__
         for req in mode.requires:
             if req == 'surface' and self.num_surf_points is None:
-                raise ValueError(f'{mode.name or type(mode).__name__} needs surfaces, but the Molecule '
+                raise ValueError(f'{what} needs surfaces, but the Molecule '
                                  'objects were initialized with no surface points.')
             if req == 'pharmacophores' and (self.ref_molec.pharm_types is None
                                             or self.fit_molec.pharm_types is None):
-                raise ValueError(f'{mode.name or type(mode).__name__} needs pharmacophores on both '
+                raise ValueError(f'{what} needs pharmacophores on both '
                                  'Molecule objects (build them with `pharm_multi_vector` set).')
         return (tree_map(convert, mode.inputs(self.ref_molec)),
                 tree_map(convert, mode.inputs(self.fit_molec)))
@@ -1177,7 +1185,9 @@ class MoleculePair:
         verbose : bool, optional
             Print optimization progress. Default is ``False``.
         **params
-            Parameters of a named mode, e.g. ``alpha``, ``lam``, ``similarity``.
+            Parameters of a named mode, e.g. ``alpha``, ``lam``, ``similarity``. An
+            ``avoid_points`` cloud is used as-is, in the frame the molecules are scored in
+            (centered when ``do_center=True``; see :attr:`ref_shift`).
 
         Returns
         -------
@@ -1303,8 +1313,10 @@ class MoleculePair:
 
             score = shape_Tanimoto - avoid_weight * sum relu((avoid_min_dist - d)/avoid_min_dist)
 
-        ``avoid_points`` is an arbitrary cloud in the reference frame (a pocket wall, a region to
-        grow away from), not one of the two molecules. The penalty is evaluated on the fit shape
+        ``avoid_points`` is an arbitrary cloud relative to the reference (a pocket wall, a region
+        to grow away from), not one of the two molecules. It is used as-is, in the frame the
+        molecules are scored in: with ``do_center=True`` that is the centered reference frame,
+        so pass ``cloud - self.ref_shift`` for a cloud in the original coordinates. The penalty is evaluated on the fit shape
         atoms. Optimally aligned score found in ``self.sim_aligned_vol_avoid`` and the SE(3)
         transformation in ``self.transform_vol_avoid``.
 
@@ -1670,6 +1682,65 @@ class MoleculePair:
                          color_similarity=color_similarity, directionless=directionless,
                          extended_points=extended_points, only_extended=only_extended)
         slot = _similarity_slot('vol_color', similarity)
+        return self._align_and_store(slot, mode, num_repeats=num_repeats,
+                                     trans_init=trans_init, lr=lr, max_num_steps=max_num_steps,
+                                     verbose=verbose)[0]['points']
+
+
+    def align_with_vol_color_avoid(self,
+                                   avoid_points: np.ndarray,
+                                   color_weight: float = 0.5,
+                                   avoid_weight: float = 1.0,
+                                   avoid_min_dist: float = 2.0,
+                                   alpha: float = 0.81,
+                                   similarity: Similarity = 'tanimoto',
+                                   directionless: bool = True,
+                                   extended_points: bool = False,
+                                   only_extended: bool = False,
+                                   no_H: bool = True,
+                                   num_repeats: int = 50,
+                                   trans_init: bool = False,
+                                   lr: float = 0.1,
+                                   max_num_steps: int = 200,
+                                   verbose: bool = False,
+                                   color_similarity: Optional[Similarity] = None) -> np.ndarray:
+        """Align by shape + color (as :meth:`align_with_vol_color`) minus the excluded-volume
+        penalty of :meth:`align_with_vol_avoid`:
+
+            score = (1 - color_weight) * shape + color_weight * color
+                    - avoid_weight * sum relu((avoid_min_dist - d) / avoid_min_dist)
+
+        The penalty is evaluated between the fit's shape atoms and ``avoid_points``, a fixed
+        (K, 3) cloud relative to the reference (see :meth:`align_with_vol_avoid`). Runs on the
+        generic PyTorch optimizer. Score and
+        transform are stored in ``self.sim_aligned_vol_color_avoid`` /
+        ``self.transform_vol_color_avoid``, or in ``self.sim_aligned_vol_color_avoid_tversky`` /
+        ``self.transform_vol_color_avoid_tversky`` for a Tversky ``similarity``.
+
+        Parameters
+        ----------
+        avoid_points : np.ndarray (K,3)
+            Points to penalize the fit for coming within ``avoid_min_dist`` of.
+        color_weight, alpha, similarity, directionless, extended_points, only_extended, color_similarity
+            As in :meth:`align_with_vol_color`. ``similarity`` does not affect the penalty.
+        avoid_weight, avoid_min_dist
+            As in :meth:`align_with_vol_avoid`.
+        no_H : bool, optional
+            Score shape and penalty without hydrogens. Default ``True``.
+        num_repeats, trans_init, lr, max_num_steps, verbose
+            As in :meth:`align_with_vol`.
+
+        Returns
+        -------
+        aligned_fit_points : np.ndarray (M,3)
+            Transformed fit shape-atom coordinates.
+        """
+        mode = vol_color_avoid(avoid_points=avoid_points, color_weight=color_weight,
+                               avoid_weight=avoid_weight, avoid_min_dist=avoid_min_dist,
+                               alpha=alpha, similarity=similarity, directionless=directionless,
+                               extended_points=extended_points, only_extended=only_extended,
+                               color_similarity=color_similarity, no_H=no_H)
+        slot = _similarity_slot('vol_color_avoid', similarity)
         return self._align_and_store(slot, mode, num_repeats=num_repeats,
                                      trans_init=trans_init, lr=lr, max_num_steps=max_num_steps,
                                      verbose=verbose)[0]['points']

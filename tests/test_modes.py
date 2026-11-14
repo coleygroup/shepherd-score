@@ -34,7 +34,7 @@ def _far_cloud(pair):
 @pytest.mark.parametrize('similarity', ['tanimoto', 'tversky'])
 def test_every_mode_scores_one_on_itself(name, similarity):
     pair = _self_pair()
-    kw = {'avoid_points': _far_cloud(pair)} if name == 'vol_avoid' else {}
+    kw = {'avoid_points': _far_cloud(pair)} if name.endswith('_avoid') else {}
     assert np.isclose(pair.score(name, similarity=similarity, **kw), 1.0, atol=1e-5)
     res = pair.align(name, similarity=similarity, **FAST, **kw)
     assert np.isclose(res.score, 1.0, atol=5e-3)
