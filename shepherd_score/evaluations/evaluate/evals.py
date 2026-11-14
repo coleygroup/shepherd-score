@@ -15,7 +15,7 @@ from rdkit import Chem, RDConfig
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.Chem.rdMolAlign import GetBestRMS, AlignMol
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos
+from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos, ChargeSpec
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 from shepherd_score.score.constants import P_TYPES
@@ -71,7 +71,8 @@ class ConfEval:
                  positions: np.ndarray,
                  solvent: Optional[str] = None,
                  num_processes: int = 1,
-                 timeout_minutes: Optional[float] = None):
+                 timeout_minutes: Optional[float] = None,
+                 expected_charge: ChargeSpec = None):
         """
         Base class for evaluation of a single generated conformer.
 
@@ -92,6 +93,8 @@ class ConfEval:
             Per-xtb-call timeout in minutes. If exceeded, the xtb subprocess is killed and the
             corresponding step (single point or relaxation) is treated as failed. Default is
             ``None`` (no timeout).
+        expected_charge : int or sequence of int, optional
+            Charges to try when reconstructing the molecule; see ``get_mol_from_atom_pos``.
         """
         xtb_timeout = timeout_minutes * 60 if timeout_minutes is not None else None
         self.xyz_block = None
@@ -135,7 +138,9 @@ class ConfEval:
         # 1. Converts coords + atom_ids -> xyz block
         atoms, positions = _clean_dummy_atom_arrays(atoms, positions)
         # 2. Get mol from xyz block
-        self.mol, self.charge, self.xyz_block = get_mol_from_atom_pos(atoms=atoms, positions=positions)
+        self.mol, self.charge, self.xyz_block = get_mol_from_atom_pos(
+            atoms=atoms, positions=positions, expected_charge=expected_charge
+        )
 
         # 3. Get xtb energy and charges of initial conformation
         try:
@@ -248,7 +253,9 @@ class ConsistencyEval(ConfEval):
                  solvent: Optional[str] = None,
                  probe_radius: float = 1.2,
                  num_processes: int = 1,
-                 timeout_minutes: Optional[float] = None):
+                 timeout_minutes: Optional[float] = None,
+                 expected_charge: ChargeSpec = None,
+                 ):
         """
         Consistency evaluation class for jointly generated molecule and features.
 
@@ -296,12 +303,14 @@ class ConsistencyEval(ConfEval):
             Per-xtb-call timeout in minutes. If exceeded, the xtb subprocess is killed and the
             corresponding step (single point or relaxation) is treated as failed. Default is
             ``None`` (no timeout).
+        expected_charge : int or sequence of int, optional
+            Charges to try when reconstructing the molecule; see ``get_mol_from_atom_pos``.
         """
         if not (isinstance(atoms, np.ndarray) or isinstance(positions, np.ndarray)):
             raise ValueError(f"Must provide `atoms` and `positions` as np.ndarrays. Instead {type(atoms)} and {type(positions)} were given.")
 
         super().__init__(atoms=atoms, positions=positions, solvent=solvent, num_processes=num_processes,
-                         timeout_minutes=timeout_minutes)
+                         timeout_minutes=timeout_minutes, expected_charge=expected_charge)
 
         self.molec = None
         self.probe_radius = probe_radius
@@ -525,6 +534,7 @@ class ConditionalEval(ConfEval):
                  solvent: Optional[str] = None,
                  num_processes: int = 1,
                  timeout_minutes: Optional[float] = None,
+                 expected_charge: ChargeSpec = None,
                  ):
         """
         Evaluation pipeline for conditionally-generated molecules.
@@ -576,6 +586,8 @@ class ConditionalEval(ConfEval):
             Per-xtb-call timeout in minutes. If exceeded, the xtb subprocess is killed and the
             corresponding step (single point or relaxation) is treated as failed. Default is
             ``None`` (no timeout).
+        expected_charge : int or sequence of int, optional
+            Charges to try when reconstructing the generated molecule; see ``get_mol_from_atom_pos``.
         """
         condition = condition.lower()
         self.condition = None
@@ -594,7 +606,8 @@ class ConditionalEval(ConfEval):
                          positions=positions,
                          solvent=solvent,
                          num_processes=num_processes,
-                         timeout_minutes=timeout_minutes)
+                         timeout_minutes=timeout_minutes,
+                         expected_charge=expected_charge)
 
         self.sim_surf_target = None
         self.sim_esp_target = None
