@@ -188,11 +188,11 @@ class MoleculePairBatch:
         e.g. ``'vol'`` or ``'vol_tversky'``) and store the results in its slots.
 
         ``params`` are the registry mode's parameters (e.g. ``alpha``, ``lam``,
-        ``tversky_alpha``), plus ``no_H`` and, for ``vol_avoid``, ``avoid_points``. The other
+        ``tversky_alpha``), plus ``no_H`` and, for the avoid modes, ``avoid_points``. The other
         keywords are as in the class docstring. ``backend="jax"`` here always runs each pair's
         ``MoleculePair.align``; the padded JAX paths live in the ``align_with_*`` methods.
         """
-        from shepherd_score.accel._modes import SPECS, canonical
+        from shepherd_score.accel._modes import SPECS, canonical, uses_avoid
 
         name = canonical(mode)
         if name not in SPECS:
@@ -200,8 +200,8 @@ class MoleculePairBatch:
         spec = SPECS[name]
         backend = _resolve_backend(backend)
 
-        if name == 'vol_avoid':
-            self._attach_avoid_points(params.pop('avoid_points', None))
+        if uses_avoid(name):
+            self._attach_avoid_points(params.pop('avoid_points', None), name)
 
         # Batched Triton / numba alignment
         if backend in _ACCEL_BACKENDS:
@@ -269,11 +269,11 @@ class MoleculePairBatch:
         for p in self.pairs:
             p.device = cpu
 
-    def _attach_avoid_points(self, avoid_points):
-        """Attach ``vol_avoid``'s avoid cloud to every pair as ``p.avoid_points``: one ``(K,3)``
+    def _attach_avoid_points(self, avoid_points, name: str = 'vol_avoid'):
+        """Attach an avoid mode's avoid cloud to every pair as ``p.avoid_points``: one ``(K,3)``
         array for all pairs, or a list of per-pair ``(K_i,3)`` arrays."""
         if avoid_points is None:
-            raise TypeError("vol_avoid requires avoid_points")
+            raise TypeError(f"{name} requires avoid_points")
 
         # One point cloud per pair, or one shared point cloud broadcast to every pair
         if isinstance(avoid_points, (list, tuple)):
@@ -285,8 +285,14 @@ class MoleculePairBatch:
             cloud = np.ascontiguousarray(np.asarray(avoid_points, dtype=np.float32))
             clouds = [cloud] * len(self.pairs)
 
+        # Drop any cached upload of a previous cloud: the batch path uploads a pair channel
+        # only when its tensor slot is empty, so a stale one would be scored in place of ``c``.
+        from shepherd_score.accel.channels import CHANNELS
+        cached = CHANNELS['avoid'].ref_attr
         for p, c in zip(self.pairs, clouds):
             p.avoid_points = c
+            if getattr(p, cached, None) is not None:
+                setattr(p, cached, None)
 
     def _run_accel(self, name: str, kw: dict, num_workers: int):
         """Run the batched accel aligner for ``name``, which stores results on each pair.
@@ -348,6 +354,8 @@ class MoleculePairBatch:
     def _align_per_pair(self, spec, backend: str, **kwargs):
         """Run each pair's ``MoleculePair.align`` for the registry mode ``spec`` and store the
         results in its attributes. Returns the aligned fit inputs in ``_aligned_fits`` form."""
+        from shepherd_score.accel._modes import uses_avoid
+
         name = spec.name
         params = dict(kwargs)
 
@@ -370,8 +378,8 @@ class MoleculePairBatch:
 
         # 'auto' is MoleculePair's PyTorch path; jax falls back to it without a JAX optimizer
         if backend == 'jax':
-            mode = get_mode(name, **({'avoid_points': None} if name == 'vol_avoid' else {}),
-                            **params)
+            mode = get_mode(name, **({'avoid_points': self.pairs[0].avoid_points}
+                                     if uses_avoid(spec.name) and self.pairs else {}), **params)
             if 'jax' not in mode.backends():
                 warnings.warn(f"{spec.name} has no JAX implementation; backend='jax' falls back "
                               "to per-pair PyTorch.", RuntimeWarning, stacklevel=4)
@@ -382,7 +390,7 @@ class MoleculePairBatch:
         # Align each pair and write its attributes
         out = [[None] * len(self.pairs) for _ in range(2 if spec.pharm_style else 1)]
         for i, pair in enumerate(self.pairs):
-            if name == 'vol_avoid':
+            if uses_avoid(spec.name):
                 params['avoid_points'] = pair.avoid_points
             res = pair.align(name, backend=backend, **opt, **params)
             setattr(pair, tf_attr, res.transform)
@@ -1325,7 +1333,8 @@ class MoleculePairBatch:
         """Shape Tanimoto minus a linear hard-sphere excluded-volume penalty (``vol_avoid``
         slots).
 
-        ``avoid_points`` is the fixed reference-frame cloud to keep the fit out of: a single
+        ``avoid_points`` is the fixed cloud to keep the fit out of, used as-is in the frame
+        each pair is scored in (centered under ``do_center``; see ``MoleculePair.ref_shift``): a single
         ``(K,3)`` array applied to every pair, or a list of per-pair ``(K_i,3)`` arrays. It is
         attached to each pair as ``p.avoid_points``; the penalty is evaluated on the fit shape
         atoms."""
@@ -1334,6 +1343,28 @@ class MoleculePairBatch:
             avoid_min_dist=avoid_min_dist, alpha=alpha, num_repeats=num_repeats, lr=lr,
             max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
             verbose=verbose, backend=backend, return_aligned=return_aligned)
+
+    def align_with_vol_color_avoid(self, avoid_points, color_weight: float = 0.5,
+                                   avoid_weight: float = 1.0, avoid_min_dist: float = 2.0,
+                                   alpha: float = 0.81, num_repeats: int = None,
+                                   lr: Optional[float] = None, max_num_steps: int = None,
+                                   verbose: bool = False, backend: Optional[str] = None,
+                                   return_aligned: bool = False, trans_init: bool = False,
+                                   num_workers: int = 1, similarity: Similarity = 'tanimoto'):
+        """Shape + directionless color minus the ``vol_avoid`` excluded-volume penalty
+        (``vol_color_avoid`` slots):
+        ``(1 - color_weight) * shape + color_weight * color - avoid_weight * penalty``.
+
+        ``avoid_points`` is as in :meth:`align_with_vol_avoid`: one ``(K,3)`` reference-frame
+        cloud for every pair, or a list of per-pair clouds. A Tversky ``similarity`` applies to
+        shape and color (not the penalty) and stores results in the
+        ``vol_color_avoid_tversky`` slots."""
+        return self._align_with(
+            'vol_color_avoid', similarity, avoid_points=avoid_points, color_weight=color_weight,
+            avoid_weight=avoid_weight, avoid_min_dist=avoid_min_dist, alpha=alpha,
+            num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+            num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
 
     def align_with_vol_atomtype(self, atomtype_weight: float = 0.5, alpha: float = 0.81,
                                 num_repeats: int = None, lr: Optional[float] = None,

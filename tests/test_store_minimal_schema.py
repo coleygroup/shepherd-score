@@ -65,6 +65,7 @@ def _screenable():
 @pytest.mark.parametrize("mode", _screenable())
 def test_mode_screens_from_a_store_built_for_itself_alone(mode):
     """A store created with ``modes=[mode]`` must actually serve that mode."""
+    from shepherd_score.accel._modes import uses_avoid
     from shepherd_score.screen import ProfileStore, screen
 
     mols = [_mol(s, i) for i, s in enumerate(SMILES)]
@@ -82,8 +83,8 @@ def test_mode_screens_from_a_store_built_for_itself_alone(mode):
             f"a store created with modes=[{mode!r}] reports it cannot serve {mode}")
 
         kw = dict(KW.get(mode, {}))
-        if mode == "vol_avoid":
-            # the one mode with a third, non-molecule input: a cloud in the QUERY's frame
+        if uses_avoid(mode):
+            # the modes with a third, non-molecule input: a cloud in the QUERY's frame
             kw["avoid_points"] = (np.asarray(mols[0].atom_pos, dtype=np.float32) + 40.0)
         hits = screen(mols[0], st, mode=mode, top_k=len(mols), **kw)
         assert len(hits) == len(mols)

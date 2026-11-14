@@ -124,6 +124,7 @@ Swap `"vol"` for any scoring mode. The main ones:
 | `vol_color` | Shape plus pharmacophore features | pharmacophores |
 | `vol_lipo` | Shape plus Crippen logP field | nothing extra |
 | `vol_avoid` | Shape minus an excluded-volume penalty | `avoid_points` passed to the call |
+| `vol_color_avoid` | `vol_color` minus an excluded-volume penalty | pharmacophores, `avoid_points` passed to the call |
 
 Modes also take `similarity="tversky"` for asymmetric scoring. Shape blends with molar refractivity, Fukui and atom-type terms are also available. See [scoring modes](https://shepherd-score.readthedocs.io/en/latest/modes.html) for the full list, parameters and backend support.
 

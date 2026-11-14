@@ -18,6 +18,13 @@ from . import terms as T
 #: ``None`` for a pair-level channel, and int32 real counts (``m_real`` ``None`` likewise).
 Batch = namedtuple("Batch", "ref fit n_real m_real")
 
+
+def is_shared_pair(b: Batch) -> bool:
+    """A pair-level channel (``fit`` None) holding one row that every pair of the batch reads:
+    one avoid cloud shared by all pairs. Slicing keeps it whole and the avoid kernels broadcast
+    it to every pose. With a single pair this is also the per-pair layout, which reads the same."""
+    return b.fit is None and int(b.ref.shape[0]) == 1
+
 _PHARM_SIGMA = {"tversky": 0.95, "tversky_ref": 1.0, "tversky_fit": 0.05}
 
 # the assembled problem
@@ -64,7 +71,8 @@ def _weight_of(term, spec, params, terms):
     """Blend weight of ``term`` as a Python float (negative for a subtracted penalty)."""
     w = term.weight
     if w is None:                                    # complement of the other named weight
-        other = next(x.weight for x in terms if isinstance(x.weight, str))
+        other = next(x.weight for x in terms              # (not a subtracted penalty's)
+                     if isinstance(x.weight, str) and not x.weight.startswith("-"))
         return 1.0 - float(params[other.lstrip("-")])
     if isinstance(w, str):
         neg = w.startswith("-")
@@ -454,10 +462,11 @@ def _step_generic(pr: Problem, st: _State, *, update=True):
     """One fine step of a non-pharm-style mode. Evaluates every term (value-only terms without
     their gradient), tracks the best pose on the blended score, forms the blended descent
     gradient and (when ``update``) applies the tangent-projected Adam step."""
-    # Shape+color modes fuse their two gradient kernels into one launch where it fits; None
-    # when it does not apply (CPU tensors, or a pad past the fused kernel's single tile).
+    # Shape+color modes fuse their first two gradient kernels (terms 0 and 1) into one launch
+    # where it fits; any further term (the avoid penalty) is evaluated on its own. None when it
+    # does not apply (CPU tensors, or a pad past the fused kernel's single tile).
     fused = None
-    if pr.spec.fused_pair and len(pr.terms) == 2:
+    if pr.spec.fused_pair:
         fused = T.evaluate_fused_pair(pr.terms[0].spec, pr.terms[1].spec, pr.terms[0].inputs,
                                       pr.terms[1].inputs, st.q, st.t, pr.params)
     score = None
@@ -469,7 +478,7 @@ def _step_generic(pr: Problem, st: _State, *, update=True):
             contrib = sim if tm.weight == 1.0 else sim * tm.weight
             score = contrib if score is None else score + contrib
             continue
-        if fused is not None:
+        if fused is not None and ti < 2:
             V, dQ, dT = fused[ti]
         else:
             V, dQ, dT = T.evaluate(tm.spec, tm.inputs, st.q, st.t, seeds_per_mol=pr.S_fine,

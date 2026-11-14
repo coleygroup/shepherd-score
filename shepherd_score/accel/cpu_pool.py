@@ -28,11 +28,19 @@ def _run_shard(bm, torch, mode, rows, kwargs):
     mode = _LEGACY_MODE_ALIASES.get(mode, mode)
     spec = bm._MODE_SPEC[mode]
     tnames = spec["tensors"]
+    pair_attrs = {t for (side, _), (t, _) in zip(spec["extract"], tnames) if side == "pair"}
     standins = []
+    shared = {}                     # an array pickled once for many rows arrives as one object
     for row in rows:
         s = bm._ProcStandIn(torch.device("cpu"))
         for (tname, dt), arr in zip(tnames, row):
-            setattr(s, tname, torch.as_tensor(np.asarray(arr), dtype=dt))
+            if tname in pair_attrs:
+                key = (tname, id(arr))
+                if key not in shared:
+                    shared[key] = torch.as_tensor(np.asarray(arr), dtype=dt)
+                setattr(s, tname, shared[key])
+            else:
+                setattr(s, tname, torch.as_tensor(np.asarray(arr), dtype=dt))
         standins.append(s)
     if standins:
         getattr(bm, "_align_batch_" + mode)(standins, **kwargs)
@@ -157,18 +165,33 @@ def align_pairs(mode, pairs, num_workers, align_kwargs):
     """
     import torch
     from shepherd_score.accel import batch as bm
+    from shepherd_score.accel.batch.aligners import _pair_src_of
     mode = _LEGACY_MODE_ALIASES.get(mode, mode)    # accept legacy esp / esp_combo
     spec = bm._MODE_SPEC[mode]
     extract, tnames = spec["extract"], spec["tensors"]
     tf_attr, sc_attr = spec["out"]
 
-    per_pair = [tuple(np.asarray(fn(p if side == "pair" else getattr(p, side)))
-                      for (side, fn) in extract)
-                for p in pairs]
+    # A pair-level source (one avoid cloud attached to many pairs) is read once and the same
+    # array object put in every row: pickling sends it once per shard, and the worker and the
+    # write-back below keep it one tensor, so the bucket builder sees one shared cloud.
+    pair_src = {}
+
+    def _read(p, side, fn):
+        if side != "pair":
+            return np.asarray(fn(getattr(p, side)))
+        key = (id(fn), id(_pair_src_of(p)))
+        if key not in pair_src:
+            pair_src[key] = np.asarray(fn(p))
+        return pair_src[key]
+
+    per_pair = [tuple(_read(p, side, fn) for (side, fn) in extract) for p in pairs]
     scores, transforms = get_pool(num_workers).align(mode, per_pair, align_kwargs)
 
+    back = {}
     for i, p in enumerate(pairs):
         for (tname, dt), arr in zip(tnames, per_pair[i]):
-            setattr(p, tname, torch.as_tensor(arr, dtype=dt))
+            if id(arr) not in back:
+                back[id(arr)] = torch.as_tensor(arr, dtype=dt)
+            setattr(p, tname, back[id(arr)])
         setattr(p, tf_attr, torch.as_tensor(transforms[i], dtype=torch.float32))
         setattr(p, sc_attr, float(scores[i]))

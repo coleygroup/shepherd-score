@@ -8,7 +8,7 @@ from shepherd_score.accel import _modes as M
 
 
 def test_canonical_modes_consistent():
-    assert len(M.CANONICAL_MODES) == 21   # 10 core + 9 SI experimental modes + vol_fukui + vol_avoid
+    assert len(M.CANONICAL_MODES) == 23   # 10 core + 9 SI experimental modes + vol_fukui + vol_avoid + vol_color_avoid(_tversky)
     assert tuple(M.MODE_ATTRS) == M.CANONICAL_MODES
     # every mode has both a seed and a step default
     assert set(M.MODE_SEEDS) == set(M.CANONICAL_MODES)

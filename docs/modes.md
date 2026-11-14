@@ -27,6 +27,7 @@ screen(query, store, mode="vol_esp", top_k=100)
 | `vol_fukui` | Shape plus condensed Fukui dual-descriptor field | Fukui values (xTB, no MMFF fallback) | `fukui_weight` (0.5), `lam` (0.1) |
 | `vol_atomtype` | Shape plus same-element overlap | nothing extra | `atomtype_weight` (0.5) |
 | `vol_avoid` | Shape minus an excluded-volume penalty | `avoid_points` passed to the call | `avoid_weight` (1.0), `avoid_min_dist` (2.0) |
+| `vol_color_avoid` | `vol_color` minus the `vol_avoid` penalty | pharmacophores, `avoid_points` passed to the call | `color_weight` (0.5), `avoid_weight` (1.0), `avoid_min_dist` (2.0) |
 
 "Shape" is the `vol` term. In the blended modes the weight parameter sets the
 non-shape share, so `color_weight=0.5` scores `0.5 * vol + 0.5 * color`.
@@ -42,6 +43,12 @@ What the "Needs" column means:
   modes compute their potentials from the same charges.
 - **Pharmacophores**: set `pharm_multi_vector` (`False` recommended), or pass
   the pharmacophore arrays directly.
+- **`avoid_points`**: a `(K, 3)` cloud (for example a pocket wall), used
+  as-is in the frame the molecules are scored in. It is never shifted for you.
+  `MoleculePair(..., do_center=True)` (the default) centers the reference, so
+  pass `cloud - pair.ref_shift`, or build the pair with `do_center=False` to
+  keep your original coordinates. `screen` centers the query on a pre-centered
+  store, so pass `cloud - query.atom_pos.mean(0)` there.
 
 `esp` and `esp_combo` are accepted as aliases for `surf_esp` and
 `vol_and_surf_esp`.
@@ -51,8 +58,9 @@ What the "Needs" column means:
 `similarity=` sets how an overlap becomes a score: `"tanimoto"` (default),
 `"tversky"`, `"tversky_ref"`, `"tversky_fit"` or explicit weights `(a, b)`.
 Every mode accepts it in `MoleculePair.align`; the batched backends accept it
-for `vol`, `vol_esp`, `surf`, `surf_esp`, `pharm`, `vol_color`, `vol_lipo` and
-`vol_and_surf_esp` (shape term only). The Similarity section of the
+for `vol`, `vol_esp`, `surf`, `surf_esp`, `pharm`, `vol_color`, `vol_lipo`,
+`vol_color_avoid` (shape and color; not the penalty) and `vol_and_surf_esp` (shape
+term only). The Similarity section of the
 [accelerated API guide](accelerated_api.md) gives the weights and the
 `<mode>_tversky` names that `screen` accepts.
 

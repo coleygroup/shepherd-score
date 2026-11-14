@@ -66,7 +66,7 @@ def mols():
 
 def _scores(mode, mols, force_eager):
     """Align mols[0] against every mol, optionally with the fused loop disabled."""
-    from shepherd_score.accel._modes import MODE_ATTRS
+    from shepherd_score.accel._modes import MODE_ATTRS, uses_avoid
     from shepherd_score.accel.kernels import cpu_fused
     from shepherd_score.container import MoleculePair, MoleculePairBatch
 
@@ -80,7 +80,7 @@ def _scores(mode, mols, force_eager):
                  for f in mols]
         batch = MoleculePairBatch(pairs)
         extra = {}
-        if mode == "vol_avoid":                       # the one mode with a third input
+        if uses_avoid(mode):          # the modes with a third input
             extra["avoid_points"] = np.asarray(mols[0].atom_pos, dtype=np.float32) + 40.0
         batch._align_mode(mode, backend="numba", **extra, **KW.get(mode, {}))
         return [float(getattr(p, MODE_ATTRS[mode][1])) for p in pairs]

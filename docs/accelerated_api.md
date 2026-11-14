@@ -64,6 +64,7 @@ See [Molecule](api/container/molecule.rst) and
 | `vol_atomtype` | Shape plus element-matched overlap |
 | `vol_and_surf_esp` | Shape plus masked surface-potential agreement |
 | `vol_avoid` | Shape minus an excluded-volume penalty; needs `avoid_points` |
+| `vol_color_avoid` | `vol_color` minus the `vol_avoid` penalty; needs `avoid_points` |
 
 `align_with_esp` and `align_with_esp_combo` are aliases for `surf_esp` and
 `vol_and_surf_esp`.
@@ -93,8 +94,9 @@ MoleculePairBatch(pairs).align_with_vol(similarity="tversky", backend="triton")
 A Tversky result is stored in the `<mode>_tversky` slots
 (`sim_aligned_vol_tversky`, `transform_vol_tversky`, ...). On the batched
 backends, `similarity=` is accepted by `vol`, `vol_esp`, `surf`, `surf_esp`,
-`pharm`, `vol_color`, `vol_lipo` and `vol_and_surf_esp`; for
-`vol_and_surf_esp` it applies to the shape term only. Pharmacophore Tversky
+`pharm`, `vol_color`, `vol_lipo`, `vol_color_avoid` and `vol_and_surf_esp`; for
+`vol_color_avoid` it applies to shape and color but not the penalty, and for
+`vol_and_surf_esp` to the shape term only. Pharmacophore Tversky
 scores are clamped at one; the other Tversky scores are not.
 
 The batch kernels and `screen` also accept the registry names
@@ -163,7 +165,13 @@ Hits are per conformer. For compound-level ranking, aggregate over each
 compound's conformers; the paper benchmarks use the maximum score.
 
 `screen_many` returns one hit list per query. `scores_out` collects every
-score in caller-provided arrays on the single-process path. See
+score in caller-provided arrays on the single-process path.
+
+The avoid modes (`vol_avoid`, `vol_color_avoid`, `vol_color_avoid_tversky`) take
+`avoid_points=`, a `(K, 3)` cloud used as-is in the frame the query is scored in;
+it is never shifted for you. The screen centers the query on a pre-centered store,
+so pass the cloud centered the same way, e.g. `pocket - query.atom_pos.mean(0)`.
+With `screen_many` the one cloud serves every query unchanged. See
 [screening](api/screening.rst).
 
 ## Parallel execution
