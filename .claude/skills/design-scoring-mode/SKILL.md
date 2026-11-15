@@ -99,13 +99,13 @@ Reference-mode gates are shared, parametrized tests; add rows, not a new file.
 The tests must cover:
 
 - the fixed-pose and optimized self-score on identical molecules:
-  `tests/test_modes.py::test_every_mode_scores_one_on_itself` runs every entry
+  `tests/modes/test_modes.py::test_every_mode_scores_one_on_itself` runs every entry
   in `MODES` under Tanimoto and Tversky. Make sure its `_self_pair` fixture
   supplies the new mode's features, or extend it;
 - autograd against finite differences at a non-identity pose on distinct
   inputs, and recovery of a planted rigid transform with the returned transform
   rescored by `mode.score`: add the mode (and any Tversky variant) to `CASES`
-  in `tests/test_reference_modes.py`. Its inputs come from `mode.inputs`, so a
+  in `tests/modes/test_reference_modes.py`. Its inputs come from `mode.inputs`, so a
   per-atom field the library cannot compute without external tools must be
   injected in `_molecule` (as the synthetic Fukui field is);
 - field/position correspondence on a molecule with a retained isotope-labelled
@@ -117,12 +117,12 @@ The tests must cover:
 A mode whose inputs cannot be built that way (surfaces, caller-supplied clouds)
 gets its own file; [template_test.py](template_test.py) lays out the same gates.
 
-Base tolerances on the nearest existing tests (`tests/test_reference_modes.py`,
-`tests/test_modes.py`). A unit self-score alone does
+Base tolerances on the nearest existing tests (`tests/modes/test_reference_modes.py`,
+`tests/modes/test_modes.py`). A unit self-score alone does
 not show that features or gradients are correct. If the reference and a later
 accelerated version disagree, investigate both.
 
-Run `tests/test_reference_modes.py`, `tests/test_modes.py`, `tests/test_mode_registry.py`
+Run `tests/modes/test_reference_modes.py`, `tests/modes/test_modes.py`, `tests/modes/test_mode_registry.py`
 and any new test file.
 Mark GPU tests (or GPU parameters) `cuda`; `tests/conftest.py` skips them without CUDA.
 Report which backends were and were not tested.

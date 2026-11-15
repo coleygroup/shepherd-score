@@ -36,7 +36,7 @@ Paths are under `shepherd_score/` unless they start with `tests/`.
 `align_with_<mode>` calls `_align_and_store(slot, mode, ...)`, which runs
 `align` and writes the score and transform to that slot.
 
-`tests/utils.py::mode_loss(mode, se3, ref, fit)` is the loss `optimize_se3`
+`tests/_support/utils.py::mode_loss(mode, se3, ref, fit)` is the loss `optimize_se3`
 minimizes, for finite-difference tests.
 
 ## Reuse examples
@@ -51,7 +51,7 @@ minimizes, for finite-difference tests.
 | `vol_atomtype` | `blend(Vol, AtomType)` |
 | any Tversky variant | the same mode with `similarity=` |
 
-`tests/test_modes.py::HeavyAtomCount` is a minimal `Mode` subclass defined
+`tests/modes/test_modes.py::HeavyAtomCount` is a minimal `Mode` subclass defined
 outside the package.
 
 ## Per-atom feature contract

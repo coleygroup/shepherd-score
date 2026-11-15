@@ -20,7 +20,7 @@ score or omit a term's gradient from a composite objective.
 `esp_cmp` now calls `esp_agreement_grad_se3_batch`: the combined ESP objective
 uses both shape and electrostatic gradients at every evaluation. Its exclusion
 masks make it piecewise smooth; finite differences should avoid mask crossings.
-Use `tests/test_esp_agreement_grad.py` to locate the current reference and tests.
+Use `tests/modes/test_esp_agreement_grad.py` to locate the current reference and tests.
 
 ## Dispatch and fused execution
 

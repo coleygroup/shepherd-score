@@ -68,8 +68,8 @@ aromatic normals use its absolute value before clamping.
 
 Use nontrivial poses and distinct molecules. Test finite differences away from
 hard exclusion-mask boundaries and other nondifferentiable points; also test
-the boundary convention separately. `tests/test_esp_agreement_grad.py` is an
-example for the combined ESP gradient. `tests/utils.py::mode_loss` gives the
+the boundary convention separately. `tests/modes/test_esp_agreement_grad.py` is an
+example for the combined ESP gradient. `tests/_support/utils.py::mode_loss` gives the
 exact loss `optimize_se3` minimizes.
 
 The SE(3) helpers used by the reference commonly work in float32. Check their

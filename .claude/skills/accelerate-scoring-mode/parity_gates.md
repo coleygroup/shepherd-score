@@ -56,14 +56,14 @@ third input through screening and worker dispatch, not just a single pair.
 
 | Test | Evidence it targets |
 |---|---|
-| `tests/test_mode_registry.py` | derived mode maps, public bindings, result slots |
-| `tests/test_esp_agreement_grad.py` | surface-potential agreement gradients |
-| `tests/test_graph_early_stop.py` | replay stopping schedule and cached patience |
-| `tests/test_cpu_fine_loops_agree.py` | fused/eager CPU comparisons |
-| `tests/test_trans_init_accel.py` | translation-initialized execution |
-| `tests/test_screen_arrays.py` | array/object screening and transforms |
-| `tests/test_screen_const_seeds.py` | canonical seed routing |
-| `tests/test_triton_tuning.py` | frozen launch configuration handling |
+| `tests/modes/test_mode_registry.py` | derived mode maps, public bindings, result slots |
+| `tests/modes/test_esp_agreement_grad.py` | surface-potential agreement gradients |
+| `tests/accel/test_graph_early_stop.py` | replay stopping schedule and cached patience |
+| `tests/accel/test_cpu_fine_loops_agree.py` | fused/eager CPU comparisons |
+| `tests/accel/test_trans_init_accel.py` | translation-initialized execution |
+| `tests/screen/test_screen_arrays.py` | array/object screening and transforms |
+| `tests/screen/test_screen_const_seeds.py` | canonical seed routing |
+| `tests/accel/test_triton_tuning.py` | frozen launch configuration handling |
 
 Run applicable tests on the intended backend. Mark every GPU test (or GPU
 parameter, via `pytest.param(..., marks=pytest.mark.cuda)`) with `cuda`:

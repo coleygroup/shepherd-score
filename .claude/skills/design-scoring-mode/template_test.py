@@ -1,8 +1,8 @@
-"""Reference-mode test template, for a mode whose inputs ``tests/test_reference_modes.py``
+"""Reference-mode test template, for a mode whose inputs ``tests/modes/test_reference_modes.py``
 cannot build (surfaces, caller-supplied clouds). Prefer adding a row to that file's ``CASES``
 and parametrize lists; see the design-scoring-mode SKILL.md "Validate" section.
 
-Copy this to ``tests/test_<mode>.py``, replace ``YOURMODE`` with the name registered in
+Copy this to ``tests/modes/test_<mode>.py``, replace ``YOURMODE`` with the name registered in
 ``shepherd_score.modes.MODES``, and fill in the ``# TODO`` markers.
 
 Gates 1-3 apply to every reference mode. Gate 4 (retained H) applies only if the mode reads a
@@ -11,10 +11,10 @@ Delete the gates that do not apply. All remaining gates must pass before handing
 ``accelerate-scoring-mode``.
 
 Filled-in examples:
-  * ``tests/test_reference_modes.py`` -- the same gates, parametrized over the vol-family modes,
+  * ``tests/modes/test_reference_modes.py`` -- the same gates, parametrized over the vol-family modes,
     with a per-atom field injected through ``Molecule(fukui=...)`` so no xTB binary is needed.
-  * ``tests/test_vol_color_avoid.py`` -- a mode with a caller-supplied avoid cloud, in its own file.
-  * ``tests/test_modes.py``     -- every registered mode on itself, Tversky slots, a user-defined
+  * ``tests/modes/test_vol_color_avoid.py`` -- a mode with a caller-supplied avoid cloud, in its own file.
+  * ``tests/modes/test_modes.py``     -- every registered mode on itself, Tversky slots, a user-defined
     ``Mode`` subclass and ``blend``.
 
 This file is valid Python but does not run until YOURMODE exists. Keep it under
@@ -33,7 +33,7 @@ from shepherd_score.alignment.utils.se3 import get_SE3_transform
 from shepherd_score.container import Molecule, MoleculePair
 from shepherd_score.modes import get_mode
 
-from .utils import mode_loss
+from .._support.utils import mode_loss
 
 
 MODE = "YOURMODE"           # name registered in shepherd_score.modes.MODES
@@ -55,7 +55,7 @@ def _molecule(m):
 
     TODO: pass the features the mode needs (``num_surf_points``, ``pharm_multi_vector``,
     ``charge_model="mmff"``, ...). For a field that needs xTB, inject a deterministic synthetic
-    field through the constructor (see ``_molecule`` in ``tests/test_reference_modes.py``); the overlap math does not
+    field through the constructor (see ``_molecule`` in ``tests/modes/test_reference_modes.py``); the overlap math does not
     depend on how the field was produced.
     """
     return Molecule(Chem.Mol(m), charge_model="mmff")
