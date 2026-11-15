@@ -353,6 +353,37 @@ def test_vol_tversky_stream_matches_object(tmp_path, molecules):
         assert by_id[p.id] == pytest.approx(float(rs), abs=1e-4)
 
 
+def test_screen_similarity_routes_to_tversky_mode(tmp_path, molecules):
+    """screen(mode, similarity=...) matches the registry <mode>_tversky name with its weights,
+    and rejects modes without a Tversky variant or conflicting keywords."""
+    store_path = os.path.join(tmp_path, "lib.fss")
+    with ProfileStore.create(store_path, num_surf_points=64, modes=("vol",),
+                             dtype="float32", pre_centered=True, canonical=False) as store:
+        for i, m in enumerate(molecules):
+            store.add(m, id=i)
+    store = ProfileStore.open(store_path)
+    query, kw = molecules[1], dict(backend="numba", num_repeats=5, max_num_steps=50,
+                                   top_k=len(molecules))
+
+    def scores(**extra):
+        return {h.id: h.score for h in screen(query, store, **kw, **extra)}
+
+    by_name = scores(mode="vol_tversky", tversky_alpha=0.7, tversky_beta=0.3)
+    by_sim = scores(mode="vol", similarity=(0.7, 0.3))
+    assert by_sim == pytest.approx(by_name, abs=1e-6)
+    assert scores(mode="vol", similarity="tversky") == pytest.approx(
+        scores(mode="vol_tversky"), abs=1e-6)                  # default weights 0.95 / 0.05
+    assert scores(mode="vol", similarity="tanimoto") == pytest.approx(scores(mode="vol"), abs=1e-6)
+    assert by_sim != pytest.approx(scores(mode="vol"), abs=1e-3)   # Tversky actually applied
+
+    with pytest.raises(ValueError, match="already a Tversky mode"):
+        screen(query, store, mode="vol_tversky", similarity="tversky", **kw)
+    with pytest.raises(ValueError, match="not both"):
+        screen(query, store, mode="vol", similarity="tversky", tversky_alpha=0.5, **kw)
+    with pytest.raises(ValueError, match="no Tversky variant"):
+        screen(query, store, mode="vol_mr", similarity="tversky", **kw)
+
+
 def test_vol_esp_tversky_stream_matches_object(tmp_path, molecules):
     """vol_esp_tversky screens from a vol_esp-style store and matches the per-pair object path."""
     import copy, glob

@@ -129,8 +129,10 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
         Print a line after each shard. Default False.
     **align_kwargs
         Mode parameters and optimizer settings passed to the aligner, for example
-        ``lam`` (ESP weight), ``color_weight``, ``tversky_alpha``/``tversky_beta``,
-        ``similarity`` (``pharm``), ``avoid_points`` (required by the avoid modes, see
+        ``lam`` (ESP weight), ``color_weight``, ``similarity`` (``'tanimoto'`` (default),
+        ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'`` or ``(a, b)`` weights; a Tversky
+        similarity runs the registry's ``<mode>_tversky`` mode, as
+        ``MoleculePairBatch.align`` does), ``avoid_points`` (required by the avoid modes, see
         below), ``num_repeats``, ``max_num_steps`` and ``lr``. Unset parameters take the
         mode's defaults. ``trans_init=True`` is supported but uses the slower per-pair path.
 
@@ -189,6 +191,7 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
                          "worker_threads (CPU threads per GPU worker) instead")
     queries = list(queries)
     mode = _canon_mode(mode)                      # accept legacy esp / esp_combo everywhere below
+    mode, align_kwargs = _route_similarity(mode, dict(align_kwargs))
     align_kwargs = _resolve_screen(store, mode, alpha, align_kwargs)
     backend = backend or _default_backend()
 
@@ -986,6 +989,30 @@ def _id_to_py(x):
 
 # --------------------------------------------------------------------------- #
 # Internal: screen driver -- argument resolution and the single-process shard loop
+
+def _route_similarity(mode, align_kwargs):
+    """Map ``similarity=`` onto the registry, as ``MoleculePairBatch.align`` does: a Tversky
+    similarity on a non-pharm mode runs ``<mode>_tversky`` with its ``tversky_alpha`` /
+    ``tversky_beta``. ``pharm`` takes ``similarity`` natively, so it is passed through."""
+    from shepherd_score.score.similarity import tversky_weights
+    if "similarity" not in align_kwargs or mode not in _SPECS or _spec_of(mode).pharm_style:
+        return mode, align_kwargs
+    similarity = align_kwargs.pop("similarity")
+    weights = tversky_weights(similarity)
+    if weights is None:                           # tanimoto
+        return mode, align_kwargs
+    if mode.endswith("_tversky"):
+        raise ValueError(f"{mode!r} is already a Tversky mode; pass similarity= with "
+                         f"mode={mode[:-len('_tversky')]!r} instead")
+    if "tversky_alpha" in align_kwargs or "tversky_beta" in align_kwargs:
+        raise ValueError("pass either similarity= or tversky_alpha/tversky_beta, not both")
+    tversky_mode = f"{mode}_tversky"
+    if tversky_mode not in _SPECS:
+        raise ValueError(f"{mode!r} has no Tversky variant; modes with one: "
+                         f"{sorted(m[:-len('_tversky')] for m in _SPECS if m.endswith('_tversky'))}")
+    align_kwargs.update(tversky_alpha=weights[0], tversky_beta=weights[1])
+    return tversky_mode, align_kwargs
+
 
 def _resolve_screen(store, mode, alpha, align_kwargs):
     """Shared validation + alpha resolution for screen()/screen_many()."""

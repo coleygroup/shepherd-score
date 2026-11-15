@@ -223,6 +223,9 @@ def test_batch_align_runs_registry_tversky_modes():
     assert np.allclose(scores, [p.sim_aligned_pharm_tversky for p in batch.pairs], atol=1e-6)
     with pytest.raises(ValueError, match='already a Tversky mode'):
         batch.align('vol_tversky', similarity='tversky')
+    for mode in ('vol_mr', 'vol_atomtype'):
+        with pytest.raises(ValueError, match='no Tversky variant'):
+            batch.align(mode, similarity='tversky', backend='numba')
 
 
 def test_batch_tversky_keeps_the_heavy_atom_guard():

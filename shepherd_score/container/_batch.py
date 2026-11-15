@@ -185,6 +185,13 @@ class MoleculePairBatch:
         if method is None:
             raise ValueError(f'No batched implementation of {mode!r}.')
 
+        if tversky_weights(similarity) is not None:
+            import inspect
+            if 'similarity' not in inspect.signature(method).parameters:
+                from shepherd_score.accel._modes import SPECS
+                raise ValueError(
+                    f'{mode!r} has no Tversky variant; modes with one: '
+                    f"{sorted(m[:-len('_tversky')] for m in SPECS if m.endswith('_tversky'))}")
         if similarity != 'tanimoto':
             kwargs['similarity'] = similarity
         return method(**kwargs)
