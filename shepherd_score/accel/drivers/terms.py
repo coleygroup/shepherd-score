@@ -91,6 +91,46 @@ def _chunked(fn, K, S, args_mol, args_pose, kw, extra):
     return out_V, out_dQ, out_dT
 
 
+def _avoid_chunked(AV, B, q, t, n_real, m_real, div, kw):
+    """The avoid kernel over ``K`` poses in grid-safe slices. ``AV`` / ``n_real`` hold one row
+    per ``div`` poses (a pair's shared cloud), ``B`` / ``m_real`` / ``q`` / ``t`` one per pose;
+    slices are whole multiples of ``div`` so each keeps its avoid rows aligned. A single row
+    (one cloud for the whole batch) is read by every pose: each slice passes it whole with
+    ``A_DIV`` = the slice's pose count."""
+    K = int(q.shape[0])
+    if int(AV.shape[0]) == 1:
+        fn = overlap_score_grad_avoid_se3_batch
+        step = _launch_step(1, (AV, B))
+        if K <= step:
+            return fn(AV, B, q, t, N_real=n_real, M_real=m_real, A_DIV=K, **kw)
+        out_V = torch.empty(K, device=q.device, dtype=AV.dtype)
+        out_dQ = torch.empty_like(q)
+        out_dT = torch.empty_like(t)
+        for s in range(0, K, step):
+            e = min(s + step, K)
+            V, dQ, dT = fn(AV, B[s:e], q[s:e], t[s:e], N_real=n_real, M_real=m_real[s:e],
+                           A_DIV=e - s, **kw)
+            out_V[s:e] = V
+            out_dQ[s:e] = dQ
+            out_dT[s:e] = dT
+        return out_V, out_dQ, out_dT
+    step = _launch_step(div, (AV, B))
+    fn = overlap_score_grad_avoid_se3_batch
+    if K <= step:
+        return fn(AV, B, q, t, N_real=n_real, M_real=m_real, A_DIV=div, **kw)
+    out_V = torch.empty(K, device=q.device, dtype=AV.dtype)
+    out_dQ = torch.empty_like(q)
+    out_dT = torch.empty_like(t)
+    for s in range(0, K, step):
+        e = min(s + step, K)
+        V, dQ, dT = fn(AV[s // div:e // div], B[s:e], q[s:e], t[s:e],
+                       N_real=n_real[s // div:e // div], M_real=m_real[s:e], A_DIV=div, **kw)
+        out_V[s:e] = V
+        out_dQ[s:e] = dQ
+        out_dT[s:e] = dT
+    return out_V, out_dQ, out_dT
+
+
 def _layout_kw(seeds_per_mol, poses_per_cta):
     extra = {}
     if seeds_per_mol > 1:
@@ -157,9 +197,8 @@ def evaluate(term, ti: TermInputs, q, t, *, need_grad=True, seeds_per_mol=1, pos
     if term.kernel == "avoid":
         AV, = ti.ref
         B, = ti.fit
-        kw = dict(min_dist=float(p["avoid_min_dist"]), N_real=ti.n_real, M_real=ti.m_real,
-                  NEED_GRAD=need_grad)
-        return _chunked(overlap_score_grad_avoid_se3_batch, K, S, (AV, B), (q, t), kw, {})
+        return _avoid_chunked(AV, B, q, t, ti.n_real, ti.m_real, int(p.get("_a_div", 1)),
+                              dict(min_dist=float(p["avoid_min_dist"]), NEED_GRAD=need_grad))
     if term.kernel == "esp_cmp":
         V, dQ, dT = esp_agreement(ti, q, t, need_grad=need_grad, seeds_per_mol=S)
         return (V, dQ, dT) if need_grad else (V, None, None)

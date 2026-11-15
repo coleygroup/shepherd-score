@@ -48,6 +48,14 @@ def _fit_molec_of(p):
     return p.fit_molec
 
 
+def _pair_src_of(p):
+    """Upload key of the pair-level ``avoid`` channel: the attached cloud array itself, so one
+    cloud shared by many pairs (``_attach_avoid_points``) is read, Z-ordered and uploaded once
+    and every pair holds the same tensor (``build_bucket`` then keeps one row). A pair with no
+    cloud keys on itself, so the reader raises its own message."""
+    return getattr(p, "avoid_points", p)
+
+
 def _batch_upload(pairs, attr, src_fn, dtype, device, *, key_fn=None):
     """Set ``p.<attr>`` for every ``p`` with one host concat and one ``.to(device)`` view-split
     instead of one ``torch.as_tensor`` per pair.
@@ -94,18 +102,21 @@ def _batch_upload(pairs, attr, src_fn, dtype, device, *, key_fn=None):
     # on every call; compare against the indexed current device instead.
     if nb and device.index is None:
         device = torch.device("cuda", torch.cuda.current_device())
+    # One move per distinct tensor, so pairs that shared one before the move still share it.
+    moved = {}
     for p in pairs:
         t = getattr(p, attr)
         if t.device != device:
-            setattr(p, attr, t.to(device, non_blocking=nb))
+            if id(t) not in moved:
+                moved[id(t)] = t.to(device, non_blocking=nb)
+            setattr(p, attr, moved[id(t)])
 
 # the generic aligner
 
 #: Keywords every mode accepts that are not objective parameters: the optimiser schedule, the
-#: legacy translation-seeded grid, and the screen front end's constant seeds and avoid cloud.
+#: legacy translation-seeded grid, and the screen front end's constant seeds.
 _LOOP_KW = ("steps_fine", "num_repeats", "trans_init", "num_repeats_per_trans", "topk",
-            "early_stop_patience", "early_stop_tol", "const_seeds", "avoid_points",
-            "avoid_points_t")
+            "early_stop_patience", "early_stop_tol", "const_seeds")
 
 
 def resolve_params(spec, kw: dict, fn_name: str) -> dict:
@@ -150,7 +161,7 @@ def upload_channels(pairs, names, device):
         ch = CHANNELS[n]
         dt = _DTYPES[ch.dtype]
         if ch.is_pair:
-            _batch_upload(pairs, ch.ref_attr, ch.read, dt, device)
+            _batch_upload(pairs, ch.ref_attr, ch.read, dt, device, key_fn=_pair_src_of)
         else:
             _batch_upload(pairs, ch.ref_attr, lambda p, r=ch.read: r(p.ref_molec), dt, device)
             _batch_upload(pairs, ch.fit_attr, lambda p, r=ch.read: r(p.fit_molec), dt, device)
@@ -210,6 +221,15 @@ def build_bucket(spec, bucket, bk, bch, names, device):
         ch = CHANNELS[n]
         dt = _DTYPES[ch.dtype]
         ts_ref = [getattr(p, ch.ref_attr) for p in bucket]
+        if ch.is_pair and K > 1 and all(t is ts_ref[0] for t in ts_ref):
+            # one cloud on every pair: a single row, which the avoid kernels broadcast to every
+            # pose (see ``terms._avoid_chunked``), instead of K padded copies
+            na = int(ts_ref[0].shape[0])
+            ref = torch.zeros((1, _pad_width(bk, bch, n, "ref", [na])) + tuple(ts_ref[0].shape[1:]),
+                              device=device, dtype=dt)
+            ref[0, :na] = ts_ref[0]
+            chans[n] = Batch(ref, None, torch.tensor([na], device=device, dtype=torch.int32), None)
+            continue
         if ch.basis not in sizes_ref:
             sizes_ref[ch.basis] = [int(t.shape[0]) for t in ts_ref]
         n_list = sizes_ref[ch.basis]
@@ -240,9 +260,12 @@ def build_bucket(spec, bucket, bk, bch, names, device):
 
 
 def _slice_chans(chans, sl):
-    from ..drivers.engine import Batch
-    return {n: Batch(b.ref[sl], None if b.fit is None else b.fit[sl], b.n_real[sl],
-                     None if b.m_real is None else b.m_real[sl]) for n, b in chans.items()}
+    """Rows ``sl`` of every channel; a shared pair channel (one row, ``fit`` None) is kept
+    whole, since every pair reads that row."""
+    from ..drivers.engine import Batch, is_shared_pair
+    return {n: b if is_shared_pair(b) else
+            Batch(b.ref[sl], None if b.fit is None else b.fit[sl], b.n_real[sl],
+                  None if b.m_real is None else b.m_real[sl]) for n, b in chans.items()}
 
 
 def _run_bucket(spec, chans, K, key, device, *, params, n_seeds, steps_fine, es_patience,

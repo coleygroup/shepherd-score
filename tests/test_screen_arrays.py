@@ -16,7 +16,7 @@ from rdkit import Chem                                          # noqa: E402
 from rdkit.Chem import AllChem                                  # noqa: E402
 
 import shepherd_score.screen as screenmod                       # noqa: E402
-from shepherd_score.accel._modes import CANONICAL_MODES         # noqa: E402
+from shepherd_score.accel._modes import CANONICAL_MODES, uses_avoid  # noqa: E402
 from shepherd_score.container import Molecule                   # noqa: E402
 from shepherd_score.screen import ProfileStore, screen          # noqa: E402
 
@@ -27,19 +27,19 @@ _BAND = 16          # mirrors accel.batch._pad._BAND; asserted against the real 
 _MODES = tuple(screenmod._ARRAY_MODES)
 
 #: The kwargs each mode requires of ``screen()``: spec parameters defaulting to ``None`` must be
-#: supplied, and ``vol_avoid`` additionally needs its avoid cloud.
+#: supplied, and the avoid modes additionally need their avoid cloud.
 _REQUIRED_VALUES = {"lam": 0.1, "alpha": 0.81}
 _MODE_KW = {}
 for _m, _sp in screenmod._SPECS.items():
     _kw = {k: _REQUIRED_VALUES[k] for k, v in _sp.params.items() if v is None}
-    if _m == "vol_avoid":
+    if uses_avoid(_m):
         _kw["avoid_points"] = np.array([[6.0, 0.0, 0.0], [6.0, 2.0, 0.0]], dtype=np.float32)
     if _kw:
         _MODE_KW[_m] = _kw
 
 #: Modes whose self-copy cannot reach ~1.0 on this fixture, derived from the spec: a value-only
 #: agreement term (the synthetic surface is not the one implied by the atoms) or a subtracted
-#: penalty term (``vol_avoid``).
+#: penalty term (the avoid modes).
 _SELF_SCORE_NOT_ONE = {m for m, sp in screenmod._SPECS.items()
                        if any(t.reduction == "agreement" for t in sp.terms)
                        or any(isinstance(t.weight, str) and t.weight.startswith("-")

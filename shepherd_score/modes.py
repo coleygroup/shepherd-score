@@ -572,13 +572,38 @@ def blend(shape: Mode, other: Mode, weight: float, label: str) -> Combined:
 
 def vol_color(color_weight: float = 0.5, alpha: float = 0.81, similarity: Similarity = 'tanimoto',
               directionless: bool = True, extended_points: bool = False, only_extended: bool = False,
-              color_similarity: Optional[Similarity] = None) -> Combined:
+              color_similarity: Optional[Similarity] = None, no_H: bool = True) -> Combined:
     """Shape + pharmacophore color (``directionless=False`` keeps the vector weighting).
-    ``color_similarity`` defaults to ``similarity``."""
+    ``color_similarity`` defaults to ``similarity``. ``no_H`` selects the shape atoms, as in
+    ``vol`` (color is unaffected)."""
     color = Pharm(similarity=similarity if color_similarity is None else color_similarity,
                   directionless=directionless, extended_points=extended_points,
                   only_extended=only_extended)
-    return blend(Vol(alpha=alpha, similarity=similarity), color, color_weight, 'vol_color')
+    return blend(Vol(alpha=alpha, similarity=similarity, no_H=no_H), color, color_weight,
+                 'vol_color')
+
+
+def vol_color_avoid(avoid_points: Any = None, color_weight: float = 0.5, avoid_weight: float = 1.0,
+                    avoid_min_dist: float = 2.0, alpha: float = 0.81,
+                    similarity: Similarity = 'tanimoto', directionless: bool = True,
+                    extended_points: bool = False, only_extended: bool = False,
+                    color_similarity: Optional[Similarity] = None, no_H: bool = True) -> Combined:
+    """``vol_color`` minus ``avoid_weight`` times the ``Avoid`` penalty on the fit's shape atoms::
+
+        (1 - color_weight) * shape + color_weight * color
+            - avoid_weight * sum relu((avoid_min_dist - d) / avoid_min_dist)
+
+    ``avoid_points`` is a fixed (K, 3) cloud in the reference frame, as in ``vol_avoid``. The
+    penalty is unnormalized, so the score is at most the ``vol_color`` score (1 on itself with
+    the cloud out of reach) and can be negative. ``color_similarity`` defaults to ``similarity``;
+    ``similarity`` does not affect the penalty; ``no_H`` selects the atoms of both the shape
+    term and the penalty."""
+    base = vol_color(color_weight=color_weight, alpha=alpha, similarity=similarity,
+                     directionless=directionless, extended_points=extended_points,
+                     only_extended=only_extended, color_similarity=color_similarity, no_H=no_H)
+    return Combined(terms=base.terms + ((-avoid_weight,
+                                         Avoid(avoid_points, min_dist=avoid_min_dist, no_H=no_H)),),
+                    label='vol_color_avoid')
 
 
 def _vol_field(field: str, weight: float, alpha: float, lam: float, similarity: Similarity) -> Combined:
@@ -626,6 +651,7 @@ MODES: Dict[str, Callable[..., Mode]] = {
     'vol_and_surf_esp': VolAndSurfESP,
     'pharm': Pharm,
     'vol_color': vol_color,
+    'vol_color_avoid': vol_color_avoid,
     'vol_pharm': partial(vol_color, directionless=False),
     'vol_lipo': vol_lipo,
     'vol_mr': vol_mr,

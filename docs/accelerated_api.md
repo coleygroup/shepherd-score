@@ -64,6 +64,7 @@ See [Molecule](api/container/molecule.rst) and
 | `vol_atomtype` | Shape plus element-matched overlap |
 | `vol_and_surf_esp` | Shape plus masked surface-potential agreement |
 | `vol_avoid` | Shape minus an excluded-volume penalty; needs `avoid_points` |
+| `vol_color_avoid` | `vol_color` minus the `vol_avoid` penalty; needs `avoid_points` |
 
 `align_with_esp` and `align_with_esp_combo` are aliases for `surf_esp` and
 `vol_and_surf_esp`.
@@ -93,8 +94,9 @@ MoleculePairBatch(pairs).align_with_vol(similarity="tversky", backend="triton")
 A Tversky result is stored in the `<mode>_tversky` slots
 (`sim_aligned_vol_tversky`, `transform_vol_tversky`, ...). On the batched
 backends, `similarity=` is accepted by `vol`, `vol_esp`, `surf`, `surf_esp`,
-`pharm`, `vol_color`, `vol_lipo` and `vol_and_surf_esp`; for
-`vol_and_surf_esp` it applies to the shape term only. Pharmacophore Tversky
+`pharm`, `vol_color`, `vol_lipo`, `vol_color_avoid` and `vol_and_surf_esp`; for
+`vol_color_avoid` it applies to shape and color but not the penalty, and for
+`vol_and_surf_esp` to the shape term only. Pharmacophore Tversky
 scores are clamped at one; the other Tversky scores are not.
 
 The batch kernels and `screen` also accept the registry names
@@ -163,7 +165,13 @@ Hits are per conformer. For compound-level ranking, aggregate over each
 compound's conformers; the paper benchmarks use the maximum score.
 
 `screen_many` returns one hit list per query. `scores_out` collects every
-score in caller-provided arrays on the single-process path. See
+score in caller-provided arrays on the single-process path.
+
+The avoid modes (`vol_avoid`, `vol_color_avoid`, `vol_color_avoid_tversky`) take
+`avoid_points=`, a `(K, 3)` cloud used as-is in the frame the query is scored in;
+it is never shifted for you. The screen centers the query on a pre-centered store,
+so pass the cloud centered the same way, e.g. `pocket - query.atom_pos.mean(0)`.
+With `screen_many` the one cloud serves every query unchanged. See
 [screening](api/screening.rst).
 
 ## Parallel execution
@@ -185,6 +193,32 @@ The first call includes pool startup, so exclude it from steady-state timing.
 
 Guard scripts that start GPU workers with `if __name__ == "__main__":`, since
 those workers are spawned. The CPU pool needs a platform that supports fork.
+
+### CPU threads
+
+On the numba backend, the kernels use one thread per CPU the process may run on.
+On a shared node, cap that with `cpu_threads`:
+
+```python
+batch = MoleculePairBatch(pairs, cpu_threads=8)
+hits = screen(query, store, mode="vol_color_avoid", backend="numba", cpu_threads=8, ...)
+```
+
+The cap covers the numba kernels and torch's intra-op pool for the duration of
+each call, then restores the previous counts. It can be raised or lowered per
+call up to numba's thread pool, which is sized when numba is first imported:
+from `NUMBA_NUM_THREADS`, or else from the process's CPU affinity. Launching
+under `taskset -c 0-7`, `--cpus-per-task=8` or `--cpuset-cpus` therefore caps
+the pool too. A time quota (`CPUQuota`, Docker `--cpus`) does not change what
+the process sees, so the pool stays at the full CPU count and gets throttled.
+
+With `ndev > 1` use `worker_threads`. With `num_workers > 1` each worker is
+single-threaded, so `cpu_threads` is rejected there.
+
+Logical CPUs count hardware threads: two per core on SMT machines. The kernels
+are arithmetic-bound, so a second thread on the same core adds little. In one
+measurement it was about 10% faster, against about 1.8× for a second physical
+core.
 
 ## Reproducible GPU launch configurations
 

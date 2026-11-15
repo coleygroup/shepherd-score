@@ -264,7 +264,11 @@ def _term_closure(tm, params):
     if kind == "avoid":
         from .cpu import _avoid_grad_kernel
         AV = _f32c(ti.ref[0]); B = _f32c(ti.fit[0]); d0 = float(params["avoid_min_dist"])
-        return lambda q, t: _cast3(*_avoid_grad_kernel(AV, B, q, t, Nr, Mr, d0, True))
+        if AV.shape[0] == 1:                         # one cloud for every pose (shared)
+            return lambda q, t: _cast3(*_avoid_grad_kernel(AV, B, q, t, Nr, Mr, d0, True,
+                                                           max(int(q.shape[0]), 1)))
+        div = int(ti.params.get("_a_div", 1))       # seeds per avoid row (per-pair layout)
+        return lambda q, t: _cast3(*_avoid_grad_kernel(AV, B, q, t, Nr, Mr, d0, True, div))
     if kind == "esp_cmp":
         from .cpu import _esp_agreement_grad_kernel
         from ...score.constants import COULOMB_SCALING, LAM_SCALING

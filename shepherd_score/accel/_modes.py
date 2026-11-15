@@ -21,7 +21,8 @@ class Term:
                        (``pharm_grad_dq_se3_batch``; anchors + vectors + labels per side);
         ``"avoid"``   linear hard-sphere excluded-volume penalty
                        (``overlap_score_grad_avoid_se3_batch``; a fixed avoid cloud on the ref
-                       slot, fit points on the fit slot);
+                       slot, fit points on the fit slot; the engine keeps the cloud per pair,
+                       Z-ordered on the way in, and the kernels skip points beyond reach of the fit);
         ``"esp_cmp"`` the ShaEP surface-ESP agreement
                        (``esp_agreement_grad_se3_batch``; with-H atoms, charges, radii, surface
                        points, surface ESP per side).
@@ -92,9 +93,9 @@ class ModeSpec:
         wins.
     cpu_fused_max_pad : the fused loop is used only when every padded width is at most this
         (``vol_esp`` only).
-    fused_pair : the two gradient terms can be evaluated by one fused kernel (the shape+color
-        single launch in ``kernels/vol_color_triton.py``), collapsing two launches per fine step
-        into one. CUDA-only and single-tile, so the engine falls back to the two separate
+    fused_pair : terms 0 and 1 (shape, color) are evaluated by one fused kernel (the
+        shape+color single launch in ``kernels/vol_color_triton.py``), collapsing two launches
+        per fine step into one; any later term (an avoid penalty) is launched on its own. CUDA-only and single-tile, so the engine falls back to the two separate
         kernels on CPU tensors or past ``VOL_COLOR_FUSED_MAX_PAD``.
     multipose : poses per CTA for the deduplicated multi-pose shape layout (surf only).
     pose_cap : bound the fine-loop sub-batch at ``_pad._FINE_CHUNK_POSES`` poses (vol only).
@@ -203,11 +204,13 @@ def _combo_terms(reduction="tanimoto"):
 _TV = {"tversky_alpha": 0.95, "tversky_beta": 0.05}
 _LR = {"lr": 0.075}
 
-# ---- the 21 canonical modes, in public order ---------------------------------------------------
+# ---- the modes, in public order ---------------------------------------------------
 SPECS = {}
 
 
 def _reg(spec: ModeSpec) -> ModeSpec:
+    if spec.fused_pair and [t.kernel for t in spec.terms[:2]] != ["shape", "color"]:
+        raise ValueError(f"{spec.name}: fused_pair needs terms 0 and 1 to be shape and color")
     SPECS[spec.name] = spec
     return spec
 
@@ -321,13 +324,38 @@ _reg(ModeSpec("vol_fukui", ("transform_vol_fukui", "sim_aligned_vol_fukui"), 16,
               graph_budget=30_000_000, screen_lr=0.1))
 # shape Tanimoto minus a linear hard-sphere excluded-volume penalty against a fixed avoid cloud,
 # a query-side (pair-level) third input carried by the ``avoid`` channel.
+# graph_budget counts atoms only (``pr.work``), not the avoid cloud, on purpose: measured on a
+# 4090, the graph matched or beat eager at every size tried (clouds of 300-3000 points, up to
+# 131k poses, shared or per-pair clouds; 0.18x-0.99x eager, identical scores), so adding the
+# cloud would only push large clouds onto the slower eager loop.
 _reg(ModeSpec("vol_avoid", ("transform_vol_avoid", "sim_aligned_vol_avoid"), 16, 50, 2,
               seed_channel="atoms", channels=("atoms", "avoid"), bucket=("atoms",),
               terms=(Term("shape", ("atoms",), ("atoms",), params=("alpha",), weight=1.0),
                      Term("avoid", ("avoid",), ("atoms",), params=("avoid_min_dist",),
                           reduction="raw", weight="-avoid_weight", guard=True)),
               params={"alpha": 0.81, "avoid_min_dist": 2.0, "avoid_weight": 1.0, **_LR},
-              graph_budget=None, screen_lr=0.1))
+              graph_budget=30_000_000, screen_lr=0.1))
+# vol_color minus the vol_avoid penalty: (1 - color_weight) * shape + color_weight * color
+# - avoid_weight * penalty. Shape+color share the fused launch; the avoid term runs after it.
+_reg(ModeSpec("vol_color_avoid", ("transform_vol_color_avoid", "sim_aligned_vol_color_avoid"),
+              16, 40, 2, seed_channel="atoms", channels=("atoms", "pharm_ancs", "pharm_types", "avoid"),
+              bucket=("atoms",),
+              terms=(*_color_blend(),
+                     Term("avoid", ("avoid",), ("atoms",), params=("avoid_min_dist",),
+                          reduction="raw", weight="-avoid_weight", guard=True)),
+              params={"alpha": 0.81, "color_weight": 0.5, "avoid_min_dist": 2.0,
+                      "avoid_weight": 1.0, **_LR},
+              graph_budget=30_000_000, fused_pair=True, screen_lr=0.1))
+_reg(ModeSpec("vol_color_avoid_tversky",
+              ("transform_vol_color_avoid_tversky", "sim_aligned_vol_color_avoid_tversky"),
+              16, 40, 2, seed_channel="atoms", channels=("atoms", "pharm_ancs", "pharm_types", "avoid"),
+              bucket=("atoms",),
+              terms=(*_color_blend(reduction="tversky"),
+                     Term("avoid", ("avoid",), ("atoms",), params=("avoid_min_dist",),
+                          reduction="raw", weight="-avoid_weight", guard=True)),
+              params={"alpha": 0.81, "color_weight": 0.5, "avoid_min_dist": 2.0,
+                      "avoid_weight": 1.0, **_TV, **_LR},
+              graph_budget=30_000_000, fused_pair=True, screen_lr=0.1))
 
 # Derived flat tables (the surface every consumer reads)
 
@@ -335,7 +363,7 @@ _reg(ModeSpec("vol_avoid", ("transform_vol_avoid", "sim_aligned_vol_avoid"), 16,
 #: ``MoleculePairBatch.align_with_<mode>``. Derived from SPECS, in public order.
 MODE_ATTRS = {m: s.attrs for m, s in SPECS.items()}
 
-#: The 21 canonical mode ids, in public order.
+#: The 23 canonical mode ids, in public order.
 CANONICAL_MODES = tuple(MODE_ATTRS)
 
 #: Legacy mode names -> canonical. The public entry points (``align_with_esp`` /
@@ -347,6 +375,11 @@ LEGACY_MODE_ALIASES = {"esp": "surf_esp", "esp_combo": "vol_and_surf_esp"}
 def canonical(mode: str) -> str:
     """Resolve a (possibly legacy) mode name to its canonical form; unknown names pass through."""
     return LEGACY_MODE_ALIASES.get(mode, mode)
+
+
+def uses_avoid(mode: str) -> bool:
+    """Whether ``mode`` reads the pair-level ``avoid`` cloud (``avoid_points`` on the call)."""
+    return "avoid" in spec_of(mode).channels
 
 
 def spec_of(mode: str) -> ModeSpec:

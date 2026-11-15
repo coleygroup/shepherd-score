@@ -45,8 +45,9 @@ import numpy as np
 from shepherd_score.accel._modes import (
     MODE_ATTRS as _MODE_ATTRS, canonical as _canon_mode,
     CONST_SEED_MODES as _CONST_SEED_MODES, SPECS as _SPECS, spec_of as _spec_of,
+    uses_avoid as _uses_avoid,
 )
-from shepherd_score.accel.channels import CHANNELS as _CHANNELS, SCHEMA_FLAGS as _SCHEMA_FLAGS
+from shepherd_score.accel.channels import CHANNELS as _CHANNELS, SCHEMA_FLAGS as _SCHEMA_FLAGS, z_order as _z_order
 
 __all__ = ["MoleculeProfile", "ProfileStore", "screen", "screen_many", "Hit",
            "close_multigpu_pool"]
@@ -74,7 +75,8 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
            top_k: int = 1000, ndev: Optional[int] = None,
            worker_threads: Optional[int] = None,
            scores_out: Optional[np.ndarray] = None, alpha: Optional[float] = None,
-           progress: bool = False, **align_kwargs) -> List["Hit"]:
+           progress: bool = False, cpu_threads: Optional[int] = None,
+           **align_kwargs) -> List["Hit"]:
     """Align every molecule in ``store`` to ``query`` and return the best ``top_k`` hits.
 
     The library is streamed from disk one shard at a time, so memory use does not grow
@@ -109,6 +111,12 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
     worker_threads : int, optional
         CPU threads per GPU worker when ``ndev > 1``. Defaults to the available cores
         divided by ``ndev``.
+    cpu_threads : int, optional
+        Cap the CPU threads this (single-process) screen uses: the numba kernels and torch's
+        intra-op pool, restored afterwards. ``None`` (default) leaves them alone, which on the
+        ``numba`` backend means one thread per CPU the process may use. It cannot exceed
+        numba's thread pool, sized at import from ``NUMBA_NUM_THREADS`` or the CPU affinity
+        (``taskset``, SLURM). With ``ndev > 1`` use ``worker_threads`` instead.
     scores_out : np.ndarray, optional
         A preallocated ``(len(store),)`` array (e.g. an ``np.memmap``) that receives every
         library molecule's score in store order, not just the top ``top_k``. Not
@@ -122,10 +130,15 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
     **align_kwargs
         Mode parameters and optimizer settings passed to the aligner, for example
         ``lam`` (ESP weight), ``color_weight``, ``tversky_alpha``/``tversky_beta``,
-        ``similarity`` (``pharm``), ``avoid_points`` (required by ``vol_avoid``: a
-        ``(K, 3)`` cloud in the query's frame), ``num_repeats``, ``max_num_steps`` and
-        ``lr``. Unset parameters take the mode's defaults. ``trans_init=True`` is
-        supported but uses the slower per-pair path.
+        ``similarity`` (``pharm``), ``avoid_points`` (required by the avoid modes, see
+        below), ``num_repeats``, ``max_num_steps`` and ``lr``. Unset parameters take the
+        mode's defaults. ``trans_init=True`` is supported but uses the slower per-pair path.
+
+        ``avoid_points`` is a ``(K, 3)`` cloud (e.g. a pocket wall) used as-is, in the frame
+        the query is scored in; it is never shifted for you. When the query is centered
+        (the default on a pre-centered store), pass the cloud centered the same way, e.g.
+        ``pocket - query.atom_pos.mean(0)``. With :func:`screen_many` the one cloud serves
+        every query unchanged.
 
     Returns
     -------
@@ -138,7 +151,7 @@ def screen(query, store: "ProfileStore", mode: str = "surf_esp", *,
     return screen_many([query], store, mode, backend=backend, do_center=do_center,
                        top_k=top_k, ndev=ndev, worker_threads=worker_threads,
                        scores_out=scores_out, alpha=alpha,
-                       progress=progress, **align_kwargs)[0]
+                       progress=progress, cpu_threads=cpu_threads, **align_kwargs)[0]
 
 
 def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp", *,
@@ -146,7 +159,8 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
                 top_k: int = 1000, ndev: Optional[int] = None,
                 worker_threads: Optional[int] = None,
                 scores_out=None, alpha: Optional[float] = None,
-                progress: bool = False, **align_kwargs) -> List[List["Hit"]]:
+                progress: bool = False, cpu_threads: Optional[int] = None,
+                **align_kwargs) -> List[List["Hit"]]:
     """Screen several queries against ``store`` in one pass over the library.
 
     Equivalent to calling :func:`screen` once per query, but each shard is read from disk
@@ -168,6 +182,11 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
         ``out[j]`` holds the hits for ``queries[j]``, best first.
     """
     import torch
+    from shepherd_score.accel._threads import check_cpu_threads, cpu_threads as _cpu_threads
+    cpu_threads = check_cpu_threads(cpu_threads)
+    if cpu_threads is not None and ndev is not None and ndev > 1:
+        raise ValueError("cpu_threads caps a single-process screen; with ndev > 1 set "
+                         "worker_threads (CPU threads per GPU worker) instead")
     queries = list(queries)
     mode = _canon_mode(mode)                      # accept legacy esp / esp_combo everywhere below
     align_kwargs = _resolve_screen(store, mode, alpha, align_kwargs)
@@ -200,6 +219,7 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
     else:
         qs = list(queries)
         center_profiles = False
+    q_avoid = _query_avoid_clouds(mode, align_kwargs, len(qs))
 
     fast = (mode in _FAST_MODES and store.pre_centered
             and not align_kwargs.get("trans_init") and backend != "jax")
@@ -225,24 +245,25 @@ def screen_many(queries: Sequence, store: "ProfileStore", mode: str = "surf_esp"
             # array could not be filled; fail rather than leave it silently unwritten.
             raise ValueError("scores_out is not supported with ndev>1 (multi-GPU screening "
                              "returns top-K hits only). Run single-process for full score vectors.")
+        # Each query's avoid cloud travels in its ref arrays, which the workers
+        # upload themselves.
         heaps = _screen_many_multigpu(qs, store.path, mode, ndev,
                                       _fast_batch_kwargs(mode, align_kwargs), top_k, progress,
-                                      worker_threads=worker_threads)
-        # The multi-GPU workers rebuild their own device tensors, so the avoid cloud crosses as
-        # the plain numpy array in ``align_kwargs`` and is uploaded inside each worker.
+                                      worker_threads=worker_threads, avoid=q_avoid)
         return [h.sorted() for h in heaps]
 
     so = _normalize_scores_out(scores_out, len(queries))
     if fast:
-        qs_ref = [_query_ref_arrays(q, mode) for q in qs]
+        qs_ref = [_query_ref_arrays(q, mode, a)
+                  for q, a in zip(qs, q_avoid or [None] * len(qs))]
         batch_kw = _fast_batch_kwargs(mode, align_kwargs)
-        batch_kw = _with_avoid(batch_kw, align_kwargs, device)
     else:
         qs_ref = qs
         batch_kw = None
-    heaps = _run_shards_inproc(store, range(store.num_shards), qs_ref, mode, device, top_k,
-                               batch_kw, align_kwargs, backend, fast, center_profiles, so,
-                               progress, len(store))
+    with _cpu_threads(cpu_threads):
+        heaps = _run_shards_inproc(store, range(store.num_shards), qs_ref, mode, device, top_k,
+                                   batch_kw, align_kwargs, backend, fast, center_profiles, so,
+                                   progress, len(store), query_avoid=q_avoid)
     return [h.sorted() for h in heaps]
 
 
@@ -985,9 +1006,9 @@ def _resolve_screen(store, mode, alpha, align_kwargs):
     for _name, _default in _spec_of(mode).params.items():
         if _default is None and _name not in align_kwargs:
             raise ValueError(f"{mode} requires an explicit {_name}=...; pass {_name}=...")
-    if _spec_of(mode).name == "vol_avoid" and align_kwargs.get("avoid_points") is None:
-        raise ValueError("vol_avoid requires an explicit avoid_points=... (an (K,3) cloud in "
-                         "the QUERY's frame to keep library molecules out of)")
+    if _uses_avoid(mode) and align_kwargs.get("avoid_points") is None:
+        raise ValueError(f"{_spec_of(mode).name} requires an explicit avoid_points=... (a (K,3) cloud, in the "
+                         "frame the query is scored in, to keep library molecules out of)")
     return align_kwargs
 
 
@@ -1078,7 +1099,7 @@ def _canonical_batch_kws(store, qs_ref, mode, device, batch_kw, fast=True):
 
 def _run_shards_inproc(store, shard_idxs, qs_ref, mode, device, top_k, batch_kw,
                        align_kwargs, backend, fast, center_profiles, scores_out, progress,
-                       n_total):
+                       n_total, query_avoid=None):
     """Read each shard in ``shard_idxs`` once and align every query against it.
 
     Returns one ``_TopK`` per query. Each shard takes one of three paths:
@@ -1094,7 +1115,10 @@ def _run_shards_inproc(store, shard_idxs, qs_ref, mode, device, top_k, batch_kw,
     # On a canonical store, one constant seed set per query for the whole screen.
     batch_kws = _canonical_batch_kws(store, qs_ref, mode, device, batch_kw, fast)
     done = 0
-    if not fast:
+    if fast:
+        # Upload each query's tensors (avoid cloud included) once, not once per shard.
+        ref_ts = [_ref_tensors_from_arrays(ra, mode, device) for ra in qs_ref]
+    else:
         from shepherd_score.container import MoleculePair, MoleculePairBatch
     for sh, arrs in _iter_shards_prefetched(store, shard_idxs):
         # Per-molecule rotation to undo on canonical stores; None otherwise.
@@ -1104,16 +1128,13 @@ def _run_shards_inproc(store, shard_idxs, qs_ref, mode, device, top_k, batch_kw,
             if _use_arrays(mode):
                 build, align = _array_dispatch(mode)
                 ids, fit = build(arrs, device)
-                for qi, ra in enumerate(qs_ref):
-                    ref = _ref_tensors_from_arrays(ra, mode, device)
+                for qi, ref in enumerate(ref_ts):
                     scores, se3 = align(ref, fit, batch_kws[qi])
                     _accumulate_arrays(heaps[qi], ids, scores, se3,
                                        scores_out, qi, start, rot)
             else:
-                ids, pairs = _build_fit_fast_pairs(arrs, mode, device,
-                                                   avoid=batch_kw.get("avoid_points"))
-                for qi, ra in enumerate(qs_ref):
-                    ref = _ref_tensors_from_arrays(ra, mode, device)
+                ids, pairs = _build_fit_fast_pairs(arrs, mode, device)
+                for qi, ref in enumerate(ref_ts):
                     scores = _align_fast(pairs, ref, mode, batch_kw)
                     _accumulate(heaps[qi], ids, scores, pairs, tf_attr, scores_out, qi,
                                 start, rot)
@@ -1126,8 +1147,10 @@ def _run_shards_inproc(store, shard_idxs, qs_ref, mode, device, top_k, batch_kw,
             start = sh["start"]
             for qi, q in enumerate(qs_ref):
                 pairs = [MoleculePair(q, p, do_center=False) for p in profiles]
+                ak = (align_kwargs if query_avoid is None
+                      else {**align_kwargs, "avoid_points": query_avoid[qi]})
                 result = MoleculePairBatch(pairs)._align_mode(
-                    mode, backend=backend, **{"return_aligned": False, **align_kwargs})
+                    mode, backend=backend, **{"return_aligned": False, **ak})
                 scores = np.asarray(result[0], dtype=float)
                 _accumulate(heaps[qi], ids, scores, pairs, tf_attr, scores_out, qi,
                             start, rot)
@@ -1193,16 +1216,19 @@ def _to_device(a, device, *, dtype=None):
     return out if dtype is None or out.dtype == dtype else out.to(dtype)
 
 
-def _query_ref_arrays(q, mode: str) -> dict:
+def _query_ref_arrays(q, mode: str, avoid=None) -> dict:
     """The (centered) query's numpy arrays for ``mode``, keyed by channel; plain numpy so they are
     cheap to ship to the multi-GPU workers. The channel readers treat a ``Molecule`` and a
-    ``MoleculeProfile`` identically and raise a ValueError naming any missing field."""
+    ``MoleculeProfile`` identically and raise a ValueError naming any missing field. ``avoid``
+    is this query's avoid cloud, used as-is (see :func:`_query_avoid_clouds`)."""
     spec = _spec_of(mode)
     out = {}
     for name in spec.all_channels():
         ch = _CHANNELS[name]
         if ch.is_pair:
-            continue                                  # supplied by the caller (avoid_points)
+            if avoid is not None:
+                out[name] = avoid
+            continue
         out[name] = np.ascontiguousarray(
             np.asarray(ch.read(q), dtype=np.int64 if ch.dtype == "int64" else np.float32))
     return out
@@ -1252,20 +1278,12 @@ def _fast_batch_kwargs(mode: str, ak: dict) -> dict:
     return kw
 
 
-def _with_avoid(batch_kw: dict, ak: dict, device) -> dict:
-    """Attach the query-side avoid cloud for ``vol_avoid`` (shape Tanimoto minus an excluded-volume
-    penalty against a cloud that belongs to the query, e.g. a pocket wall). It arrives as
-    ``screen(..., avoid_points=...)`` and is uploaded once here, like the query's own channels."""
-    cloud = ak.get("avoid_points")
-    if cloud is None:
-        return batch_kw
-    import torch
-    batch_kw = dict(batch_kw)
-    batch_kw["avoid_points"] = np.ascontiguousarray(np.asarray(cloud, dtype=np.float32))
-    batch_kw["avoid_points_t"] = _to_device(batch_kw["avoid_points"], device,
-                                            dtype=torch.float32)
-    return batch_kw
-
+def _query_avoid_clouds(mode: str, align_kwargs: dict, n_queries: int):
+    """The avoid cloud for each of ``n_queries`` queries (one Z-ordered array, shared and
+    used as-is, never shifted), or None for a mode without one."""
+    if not _uses_avoid(mode):
+        return None
+    return [_z_order(align_kwargs["avoid_points"])] * n_queries
 
 def _build_fit_arrays(arrs: dict, mode: str, device):
     """Array-native twin of :func:`_build_fit_fast_pairs`: ``(ids, {channel: (flat, off)})``.
@@ -1299,7 +1317,7 @@ def _align_fast_arrays(ref: dict, fit: dict, mode: str, batch_kw: dict):
                         steps_fine=int(batch_kw["steps_fine"]),
                         num_seeds=batch_kw.get("num_repeats"),
                         const_seeds=batch_kw.get("const_seeds"),
-                        avoid=batch_kw.get("avoid_points_t"))
+                        avoid=ref.get(_CHANNELS["avoid"].ref_attr))
 
 
 def _make_array_builder(mode: str):
@@ -1363,7 +1381,7 @@ class _FastPair:
         self.device = device
 
 
-def _build_fit_fast_pairs(arrs: dict, mode: str, device, avoid=None):
+def _build_fit_fast_pairs(arrs: dict, mode: str, device):
     """Load one shard's fit arrays as device tensors once; return ``(ids, [_FastPair])`` whose
     fit tensors are per-molecule views (one ``torch.split`` or ``unbind`` per channel). This is
     the object path, kept wired for every mode as the reference the array path is compared to."""
@@ -1376,12 +1394,7 @@ def _build_fit_fast_pairs(arrs: dict, mode: str, device, avoid=None):
     for name in spec.all_channels():
         ch = _CHANNELS[name]
         if ch.is_pair:
-            if avoid is not None:
-                t = _to_device(np.ascontiguousarray(np.asarray(avoid, np.float32)), device,
-                               dtype=torch.float32)
-                for p in pairs:
-                    setattr(p, ch.ref_attr, t)
-            continue
+            continue                          # the avoid cloud comes with the query's tensors
         flat, off = load_store_channel(arrs, name)
         dt = torch.int64 if ch.dtype == "int64" else torch.float32
         big = _to_device(flat, device, dtype=dt)
@@ -1621,8 +1634,7 @@ def _screen_worker(rank, threads, store_path, ref_arrays_list, mode, batch_kw, t
                     _accumulate_arrays(heaps[qi], ids, scores, se3, None, qi, 0, rot)
                 torch.cuda.synchronize()
                 continue
-            ids, pairs = _build_fit_fast_pairs(arrs, mode, dev,
-                                               avoid=batch_kw.get("avoid_points"))
+            ids, pairs = _build_fit_fast_pairs(arrs, mode, dev)
             for qi, ref in enumerate(ref_tensors):
                 scores = _align_fast(pairs, ref, mode, batch_kw)
                 # Same pre-filtered reduce as the in-process driver; scores_out is unsupported here.
@@ -1672,7 +1684,7 @@ def _mgpu_pool(ndev, threads):
 
 
 def _screen_many_multigpu(qs, store_path, mode, ndev, batch_kw, top_k, progress,
-                         worker_threads=None):
+                         worker_threads=None, avoid=None):
     import os as _os
     import torch
     from shepherd_score.accel._procs import collect
@@ -1685,7 +1697,8 @@ def _screen_many_multigpu(qs, store_path, mode, ndev, batch_kw, top_k, progress,
     if worker_threads is not None and (not isinstance(worker_threads, int) or worker_threads < 1):
         raise ValueError('worker_threads must be a positive integer')
     threads = worker_threads if worker_threads is not None else max(1, cores // ndev)
-    ref_arrays_list = [_query_ref_arrays(q, mode) for q in qs]
+    ref_arrays_list = [_query_ref_arrays(q, mode, a)
+                       for q, a in zip(qs, avoid or [None] * len(qs))]
 
     store = ProfileStore.open(store_path)
     n_shards = store.num_shards

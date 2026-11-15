@@ -166,7 +166,7 @@ def _combo_problem(mode, device, seed=4, K=8):
 
 @pytest.mark.parametrize("mode", ["vol_and_surf_esp", "vol_and_surf_esp_tversky"])
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.cuda)])
-def test_combo_step_follows_the_reported_score(mode, device):
+def test_combo_step_follows_the_reported_score(mode, device, request):
     """The engine's fine-step gradient equals the derivative of the score the mode selects on
     and reports (both terms), on the directions where that score is smooth."""
     if device == "cuda":
@@ -176,7 +176,9 @@ def test_combo_step_follows_the_reported_score(mode, device):
     import shepherd_score.accel.drivers.engine as EN
     pr = _combo_problem(mode, torch.device(device))
     if device == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = False
+        mm, old = torch.backends.cuda.matmul, torch.backends.cuda.matmul.allow_tf32
+        request.addfinalizer(lambda: setattr(mm, "allow_tf32", old))    # do not leak it
+        mm.allow_tf32 = False
     g = torch.Generator().manual_seed(5)
     rn = lambda *s: torch.randn(*s, generator=g).to(pr.q.device, pr.q.dtype)
     P = pr.q.shape[0]

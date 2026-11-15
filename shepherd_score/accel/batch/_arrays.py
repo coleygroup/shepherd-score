@@ -192,7 +192,7 @@ def align_arrays(mode: str, ref: dict, fit: dict, *, params: dict, steps_fine: i
     cloud for ``vol_avoid``, else None. Returns ``(scores (K,) float64, SE3 (K,4,4) float32)``
     as numpy arrays in shard order.
     """
-    from ..drivers.engine import Batch, align, term_self_overlaps
+    from ..drivers.engine import Batch, align, is_shared_pair, term_self_overlaps
     from shepherd_score.alignment.utils.se3 import quaternions_to_SE3_batch
 
     spec = SPECS[mode]
@@ -286,18 +286,20 @@ def align_arrays(mode: str, ref: dict, fit: dict, *, params: dict, steps_fine: i
                              c.to(torch.int32))
             pads += [n_pad, m_pad]
         if avoid is not None:
+            # the query's one cloud, as a single row every pose reads (not k padded copies)
             Ka = int(avoid.shape[0])
-            a_pad = torch.zeros(k, _band_key(Ka) or _BAND, 3, device=device, dtype=torch.float32)
-            a_pad[:, :Ka] = avoid
+            a_pad = torch.zeros(1, _band_key(Ka) or _BAND, 3, device=device, dtype=torch.float32)
+            a_pad[0, :Ka] = avoid
             chans["avoid"] = Batch(a_pad, None,
-                                   torch.full((k,), Ka, dtype=torch.int32, device=device), None)
+                                   torch.full((1,), Ka, dtype=torch.int32, device=device), None)
         cs = None if const_seeds is None else _const_seed_batch(const_seeds, k, device)
         so = term_self_overlaps(spec, chans, params, ref_shared=True)   # once per bucket
 
         def _proc(_s, _k, _ch=chans, _cs=cs, _so=so):
             sl = slice(_s, _s + _k)
-            sub = {n: Batch(b.ref[sl], None if b.fit is None else b.fit[sl], b.n_real[sl],
-                            None if b.m_real is None else b.m_real[sl])
+            sub = {n: b if is_shared_pair(b) else
+                   Batch(b.ref[sl], None if b.fit is None else b.fit[sl], b.n_real[sl],
+                         None if b.m_real is None else b.m_real[sl])
                    for n, b in _ch.items()}
             return align(spec, sub, params=params, num_seeds=n_seeds, steps_fine=steps_fine,
                          lr=float(params["lr"]), early_stop_patience=es_patience,

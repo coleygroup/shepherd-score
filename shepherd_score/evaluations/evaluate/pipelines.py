@@ -18,7 +18,12 @@ from rdkit import Chem, RDConfig
 from rdkit.Chem import QED, Crippen, Lipinski, rdFingerprintGenerator
 from rdkit.DataStructs import TanimotoSimilarity
 
-from shepherd_score.evaluations.utils.convert_data import extract_mol_from_xyz_block, get_mol_from_atom_pos # noqa: F401
+from shepherd_score.evaluations.utils.convert_data import (
+    extract_mol_from_xyz_block, # noqa: F401
+    get_mol_from_atom_pos, # noqa: F401
+    ChargeSpec,
+    normalize_expected_charge,
+)
 
 from shepherd_score.score.constants import ALPHA, LAM_SCALING
 
@@ -136,7 +141,9 @@ class UnconditionalEvalPipeline:
 
     def __init__(self,
                  generated_mols: List[Tuple[np.ndarray, np.ndarray]],
-                 solvent: Optional[str] = None):
+                 solvent: Optional[str] = None,
+                 expected_charge: ChargeSpec = None,
+                 ):
         """
         Evaluation pipeline for a list of unconditionally generated molecules.
 
@@ -147,6 +154,11 @@ class UnconditionalEvalPipeline:
             and corresponding positions (N, 3).
         solvent : str, optional
             Implicit solvent model to use for xtb relaxation.
+        expected_charge : int or sequence of int, optional
+            If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+            If an int, this formal charge is tried first, followed by the default charge
+            sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+            sequence entirely and only those charges are tried, in order.
         """
         self.generated_mols = generated_mols
         self.smiles = [None] * len(generated_mols)
@@ -156,6 +168,7 @@ class UnconditionalEvalPipeline:
         self.num_generated_mols = len(generated_mols)
 
         self.solvent = solvent
+        self.expected_charge = normalize_expected_charge(expected_charge)
 
         self.num_valid = 0
         self.num_valid_post_opt = 0
@@ -228,7 +241,7 @@ class UnconditionalEvalPipeline:
         """
         num_workers = _clamp_num_workers(num_workers, num_processes)
 
-        inputs = [(i, atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes, timeout_minutes)
+        inputs = [(i, atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes, timeout_minutes, self.expected_charge)
                   for i, (atoms, positions) in enumerate(self.generated_mols)]
 
         _dispatch_eval(
@@ -426,6 +439,7 @@ class ConditionalEvalPipeline:
                  pharm_multi_vector: Optional[bool] = None,
                  solvent: Optional[str] = None,
                  priority_pharm_indices: Optional[list] = None,
+                 expected_charge: ChargeSpec = None,
                  ):
         """
         Initialize attributes for conditional evaluation pipeline.
@@ -461,11 +475,17 @@ class ConditionalEvalPipeline:
             (``sims_pharm_nonpriority_target_relax_optimal``). Requires
             ``condition`` to be ``'pharm'`` or ``'all'`` and
             ``pharm_multi_vector`` to be a bool.
+        expected_charge : int or sequence of int, optional
+            If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+            If an int, this formal charge is tried first, followed by the default charge
+            sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+            sequence entirely and only those charges are tried, in order.
         """
         self.generated_mols = generated_mols
         self.num_generated_mols = len(self.generated_mols)
         self.solvent = solvent
         self.priority_pharm_indices = priority_pharm_indices
+        self.expected_charge = normalize_expected_charge(expected_charge)
 
         self.pharm_multi_vector = pharm_multi_vector
         self.condition = condition
@@ -589,7 +609,7 @@ class ConditionalEvalPipeline:
         inputs = [
             (i, self.ref_molec, self.condition, self.num_surf_points, self.pharm_multi_vector,
              atoms, positions, self.solvent, 1 if num_workers > 1 else num_processes,
-             self.priority_pharm_indices, timeout_minutes)
+             self.priority_pharm_indices, timeout_minutes, self.expected_charge)
             for i, (atoms, positions) in enumerate(self.generated_mols)
         ]
 
@@ -880,7 +900,8 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                  probe_radius: float = 1.2,
                  pharm_multi_vector: Optional[bool] = None,
                  solvent: Optional[str] = None,
-                 random_molblock_charges: Optional[List[Tuple]] = None
+                 random_molblock_charges: Optional[List[Tuple]] = None,
+                 expected_charge: ChargeSpec = None,
                  ):
         """
         Initialize attributes for consistency evaluation pipeline.
@@ -915,9 +936,15 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
         random_molblock_charges : List[Tuple], optional
             Contains molblock_charges to randomly select from, and align with
             (re-)generated sample.
+        expected_charge : int or sequence of int, optional
+            If None (default), the default sequence (0, 1, -1, 2, -2) is used.
+            If an int, this formal charge is tried first, followed by the default charge
+            sequence. If a sequence of ints (e.g., [3, -3, 0]), it replaces the default
+            sequence entirely and only those charges are tried, in order.
         """
         # Initialize parent class (UnconditionalEvalPipeline)
-        super().__init__(generated_mols=generated_mols, solvent=solvent)
+        super().__init__(generated_mols=generated_mols, solvent=solvent,
+                         expected_charge=expected_charge)
 
         # Consistency-specific attributes
         self.probe_radius = probe_radius
@@ -1012,7 +1039,9 @@ class ConsistencyEvalPipeline(UnconditionalEvalPipeline):
                    self.pharm_multi_vector, self.probe_radius, self.solvent,
                    1 if num_workers > 1 else num_processes,
                    self.random_molblock_charges, i,  # Use i as random seed for reproducibility
-                   timeout_minutes)
+                   timeout_minutes,
+                   self.expected_charge,
+                   )
                   for i, (atoms, positions) in enumerate(self.generated_mols)]
 
         _dispatch_eval(
