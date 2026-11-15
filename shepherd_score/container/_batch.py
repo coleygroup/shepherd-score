@@ -112,10 +112,28 @@ def _pinned_torch_threads(pairs):
 class MoleculePairBatch:
     """Align molecular pairs in batches and store scores and transforms on each pair.
 
-    Every ``align_with_<mode>`` method writes its results to the same ``transform_*`` /
-    ``sim_aligned_*`` slots on each pair as ``MoleculePair.align_with_<mode>``, and they share
-    these keywords:
+    Unlike :meth:`MoleculePair.align`, which returns an ``AlignmentResult`` and leaves the pair
+    unchanged, :meth:`align` and every ``align_with_<mode>`` method store their results on each
+    pair, in the same ``transform_<mode>`` / ``sim_aligned_<mode>`` slots as v1
+    ``MoleculePair.align_with_<mode>``. This holds on every backend (``"triton"``, ``"numba"``,
+    ``"jax"`` and ``"torch"``). They also return the scores (and optionally the aligned
+    coordinates), and they share the keywords listed under Other Parameters. Each method returns
+    ``(scores, aligned)``, or ``(scores, anchors, vectors)`` for ``pharm``.
 
+    Parameters
+    ----------
+    pairs : list of MoleculePair
+        The pairs to align. Each is modified in place by the alignment methods.
+    cpu_threads : int, optional
+        Cap the CPU threads every ``align_with_*`` call uses (the numba kernels, and torch on the
+        ``"torch"`` backend), then restore the previous counts. ``None`` (default) leaves them
+        alone, which on ``numba`` means one thread per CPU the process may use. It cannot exceed
+        numba's thread pool, which is sized at import from ``NUMBA_NUM_THREADS`` or the CPU
+        affinity (``taskset``, SLURM). Not combinable with ``num_workers > 1``, whose workers
+        are single-threaded. JAX/XLA threads are not affected.
+
+    Other Parameters
+    ----------------
     backend : str, optional
         ``None`` (default) resolves to ``"triton"`` on CUDA, else ``"numba"``.
         ``"triton"`` (aliases ``"cuda"``/``"gpu"``) and ``"numba"`` (alias ``"cpu"``) run the
@@ -142,16 +160,6 @@ class MoleculePairBatch:
         Also return the aligned fit coordinates (default False); ``None`` entries when False.
     verbose : bool
         Print per-pair progress on the JAX and per-pair paths; ignored by triton/numba.
-
-    The constructor takes ``cpu_threads`` (int, optional): cap the CPU threads every
-    ``align_with_*`` call uses (the numba kernels, and torch on the ``"torch"`` backend), then
-    restore the previous counts. ``None`` (default) leaves them alone, which on ``numba`` means
-    one thread per CPU the process may use. It cannot exceed numba's thread pool, which is
-    sized at import from ``NUMBA_NUM_THREADS`` or the CPU affinity (``taskset``, SLURM). Not
-    combinable with ``num_workers > 1``, whose workers are single-threaded. JAX/XLA threads are
-    not affected.
-
-    Each method returns ``(scores, aligned)``, or ``(scores, anchors, vectors)`` for ``pharm``.
     """
 
     def __init__(self, pairs: List[MoleculePair], cpu_threads: Optional[int] = None):
@@ -162,15 +170,54 @@ class MoleculePairBatch:
     def align(self, mode: str, similarity: Similarity = 'tanimoto', **kwargs):
         """Align all pairs under the named ``mode``, as ``MoleculePair.align`` names them.
 
-        Calls ``align_with_<mode>``, so results land in that method's slots and ``kwargs`` are
-        that method's keywords::
+        Calls ``align_with_<mode>``, so ``kwargs`` are that method's keywords::
 
             batch.align('vol', similarity='tversky', backend='triton')
 
         A registry ``<base>_tversky`` name (e.g. ``'vol_tversky'``, ``'pharm_tversky'``) runs
-        that registry mode directly and takes its keywords, ``tversky_alpha`` / ``tversky_beta``::
+        that registry mode directly and takes ``tversky_alpha`` / ``tversky_beta`` in place of
+        ``similarity``::
 
             batch.align('vol_tversky', tversky_alpha=0.7, tversky_beta=0.3)
+
+        Unlike :meth:`MoleculePair.align`, this stores the results on each pair (it does not
+        leave the pairs unchanged): ``transform_<mode>`` / ``sim_aligned_<mode>`` for the
+        Tanimoto modes (``transform_vol_noH`` / ``sim_aligned_vol_noH`` for ``vol`` with
+        ``no_H=True``), and ``transform_<mode>_tversky`` / ``sim_aligned_<mode>_tversky`` for a
+        Tversky similarity. All backends store.
+
+        Parameters
+        ----------
+        mode : str
+            Mode name, including the aliases ``MoleculePair.align`` accepts, or a registry
+            ``<base>_tversky`` name.
+        similarity : str or (float, float)
+            ``'tanimoto'`` (default), ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'`` or
+            explicit Tversky weights ``(a, b)``. Cannot be combined with a ``*_tversky`` mode
+            name (``ValueError``); pass ``similarity=`` with the base mode instead.
+        **kwargs
+            The mode's own parameters (e.g. ``alpha``, ``lam``, ``avoid_points``) and the
+            shared keywords documented on the class: ``backend``, ``num_repeats``, ``lr``,
+            ``max_num_steps``, ``trans_init``, ``num_workers``, ``return_aligned`` and
+            ``verbose``.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Score of each pair. Shape: (N,).
+        aligned : list of np.ndarray
+            Aligned fit coordinates of each pair, or ``None`` entries unless
+            ``return_aligned=True``. For ``pharm`` modes this is replaced by
+            ``anchors, vectors`` (the aligned fit pharmacophore anchors and vectors, likewise
+            ``None`` entries unless ``return_aligned=True``), so ``(scores, anchors, vectors)``
+            is returned.
+
+        Raises
+        ------
+        ValueError
+            If ``mode`` has no batched implementation, ``similarity`` is combined with a
+            ``*_tversky`` mode name, or a Tversky ``similarity`` is requested for a mode without
+            a Tversky variant.
         """
         name = MODE_ALIASES.get(mode, mode)
 

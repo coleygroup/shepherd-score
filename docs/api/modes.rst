@@ -41,18 +41,30 @@ Modes
 .. automodule:: shepherd_score.modes
    :members: Mode, Vol, Surf, VolAvoid, Avoid, VolESP, SurfESP, VolAndSurfESP, Pharm,
              Field, AtomType, Combined, blend, vol_color, vol_lipo, vol_mr, vol_fukui,
-             vol_atomtype, get_mode, MODES
+             vol_atomtype, get_mode
+   :exclude-members: MODES
    :show-inheritance:
+
+.. autodata:: shepherd_score.modes.MODES
+   :no-value:
 
 Similarity
 ----------
 
 .. automodule:: shepherd_score.score.similarity
-   :members: similarity_from_overlaps, tversky_weights, Similarity, TVERSKY_WEIGHTS
+   :members: similarity_from_overlaps, tversky_weights
+   :exclude-members: Similarity, TVERSKY_WEIGHTS
+
+.. autodata:: shepherd_score.score.similarity.Similarity
+   :no-value:
+
+.. autodata:: shepherd_score.score.similarity.TVERSKY_WEIGHTS
+   :no-value:
 
 Optimizer
 ---------
 
-``optimize_se3(mode, ref, fit, ...)`` is the shared PyTorch optimizer that
+The shared PyTorch optimizer
+:func:`~shepherd_score.alignment.optimize_se3` (``optimize_se3(mode, ref, fit, ...)``) is what
 :meth:`~shepherd_score.container.MoleculePair.align` runs for a mode without a
 specialized backend. It is documented under :doc:`alignment/main`.

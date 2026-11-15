@@ -137,6 +137,13 @@ Reference
 .. autoclass:: shepherd_score.screen.MoleculeProfile
    :members: from_molecule, center_to
 
+Utilities
+---------
+
+.. autofunction:: shepherd_score.accel.clear_caches
+
+.. autofunction:: shepherd_score.accel.has_triton
+
 Shard-parallel CPU screening
 ----------------------------
 

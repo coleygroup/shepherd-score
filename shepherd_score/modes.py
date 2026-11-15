@@ -642,6 +642,7 @@ def vol_atomtype(atomtype_weight: float = 0.5, alpha: float = 0.81,
 # ---------------------------------------------------------------------------------------------
 # Registry of names accepted by ``MoleculePair.align``
 
+#: Registry mapping the mode names accepted by ``MoleculePair.align`` to their :class:`Mode` classes or factories.
 MODES: Dict[str, Callable[..., Mode]] = {
     'vol': Vol,
     'vol_avoid': VolAvoid,
