@@ -23,3 +23,32 @@ def test_importing_accel_leaves_tf32_alone():
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2000:]
+
+
+def test_engine_align_scopes_tf32_to_its_own_call():
+    """``align`` runs its matmuls with TF32 allowed and puts the caller's setting back, also
+    when it raises."""
+    import torch
+    import shepherd_score.accel.drivers.engine as EN
+
+    mm, old = torch.backends.cuda.matmul, torch.backends.cuda.matmul.allow_tf32
+    seen = []
+
+    @EN._with_tf32
+    def probe(fail=False):
+        seen.append(mm.allow_tf32)
+        if fail:
+            raise RuntimeError
+
+    try:
+        mm.allow_tf32 = False
+        probe()
+        assert seen == [True] and mm.allow_tf32 is False
+        try:
+            probe(fail=True)
+        except RuntimeError:
+            pass
+        assert seen == [True, True] and mm.allow_tf32 is False
+    finally:
+        mm.allow_tf32 = old
+    assert EN.align.__name__ == "align"

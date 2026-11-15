@@ -1,6 +1,8 @@
 """Batched SE(3) optimization driven by mode specifications."""
 from __future__ import annotations
 
+import contextlib
+import functools
 from collections import namedtuple
 from typing import Optional
 
@@ -661,6 +663,31 @@ def _eager(pr: Problem, steps_fine, lr, es_patience, es_tol):
 
 # entry point
 
+@contextlib.contextmanager
+def _tf32_matmuls():
+    """Allow TF32 for CUDA fp32 matmuls inside the engine, then restore the caller's setting.
+
+    The flag is process-wide, so it is set around :func:`align` rather than at import: the
+    reference optimizer and user code keep full fp32 matmuls.
+    """
+    mm = torch.backends.cuda.matmul
+    old = mm.allow_tf32
+    mm.allow_tf32 = True
+    try:
+        yield
+    finally:
+        mm.allow_tf32 = old
+
+
+def _with_tf32(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _tf32_matmuls():
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+@_with_tf32
 def align(spec, chans: dict, *, params: dict, num_seeds: int, steps_fine: int, lr: float,
           early_stop_patience: int, early_stop_tol: float = 1e-5, seeds=None,
           ref_shared: bool = False, trans_centers=None, trans_centers_real=None,
