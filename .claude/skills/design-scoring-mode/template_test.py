@@ -1,17 +1,19 @@
-"""Reference-mode test template.
+"""Reference-mode test template, for a mode whose inputs ``tests/test_reference_modes.py``
+cannot build (surfaces, caller-supplied clouds). Prefer adding a row to that file's ``CASES``
+and parametrize lists; see the design-scoring-mode SKILL.md "Validate" section.
 
 Copy this to ``tests/test_<mode>.py``, replace ``YOURMODE`` with the name registered in
 ``shepherd_score.modes.MODES``, and fill in the ``# TODO`` markers.
 
-Gates 1-4 apply to every reference mode. Gate 5 (retained H) applies only if the mode reads a
-per-atom field; gate 6 (asymmetry) only if it is meant to be used with a Tversky similarity.
+Gates 1-3 apply to every reference mode. Gate 4 (retained H) applies only if the mode reads a
+per-atom field; gate 5 (asymmetry) only if it is meant to be used with a Tversky similarity.
 Delete the gates that do not apply. All remaining gates must pass before handing off to
 ``accelerate-scoring-mode``.
 
 Filled-in examples:
-  * ``tests/test_vol_fukui.py`` -- per-atom field injected through ``Molecule(fukui=...)``, so no
-    xTB binary is needed. The closest to this template.
-  * ``tests/test_vol_lipo.py``  -- per-atom field computed by the library.
+  * ``tests/test_reference_modes.py`` -- the same gates, parametrized over the vol-family modes,
+    with a per-atom field injected through ``Molecule(fukui=...)`` so no xTB binary is needed.
+  * ``tests/test_vol_color_avoid.py`` -- a mode with a caller-supplied avoid cloud, in its own file.
   * ``tests/test_modes.py``     -- every registered mode on itself, Tversky slots, a user-defined
     ``Mode`` subclass and ``blend``.
 
@@ -37,7 +39,6 @@ from .utils import mode_loss
 MODE = "YOURMODE"           # name registered in shepherd_score.modes.MODES
 SLOT = MODE                 # _ALIGN_KEYS slot written by align_with_<MODE> (vol/vol_esp use "<mode>_noH")
 PARAMS = {}                 # TODO: non-default mode parameters, e.g. {"lam": 0.1}
-SEED = 0
 FAST = dict(num_repeats=20, max_num_steps=200)
 
 
@@ -54,7 +55,7 @@ def _molecule(m):
 
     TODO: pass the features the mode needs (``num_surf_points``, ``pharm_multi_vector``,
     ``charge_model="mmff"``, ...). For a field that needs xTB, inject a deterministic synthetic
-    field through the constructor (see ``tests/test_vol_fukui.py``); the overlap math does not
+    field through the constructor (see ``_molecule`` in ``tests/test_reference_modes.py``); the overlap math does not
     depend on how the field was produced.
     """
     return Molecule(Chem.Mol(m), charge_model="mmff")
@@ -132,25 +133,11 @@ def test_optimizer_recovers_planted_pose():
     assert np.isclose(float(mode.score(ref, posed)), float(res.score), atol=1e-4)
 
 
-# --- Gate 4: determinism ----------------------------------------------------------------------
-def test_deterministic_given_seed():
-    """Same inputs and seed give the same score and transform."""
-    results = []
-    for _ in range(2):
-        torch.manual_seed(SEED)
-        pair = _make_pair(fit_smi="c1ccccc1CCN")
-        getattr(pair, f"align_with_{MODE}")()
-        results.append((float(getattr(pair, f"sim_aligned_{SLOT}")),
-                        getattr(pair, f"transform_{SLOT}")))
-    assert results[0][0] == results[1][0]
-    assert np.array_equal(results[0][1], results[1][1])
-
-
-# --- Gate 5: retained-H molecule (per-atom fields only) ---------------------------------------
+# --- Gate 4: retained-H molecule (per-atom fields only) ---------------------------------------
 def test_retained_h_molecule():
     """``Chem.RemoveHs`` keeps isotope-labelled hydrogen, so ``atom_pos`` on a deuterated molecule
     is longer than the strict-heavy set (``_nonH_atoms_idx``) that per-atom fields use. Field
-    positions must come from the same indices. Plain molecules pass gates 1-4 even with this bug.
+    positions must come from the same indices. Plain molecules pass gates 1-3 even with this bug.
     Delete this gate if the mode reads no per-atom field."""
     mol = _molecule(_embed("[2H]OC(=O)c1ccccc1"))
     assert mol.atom_pos.shape[0] != len(mol._nonH_atoms_idx), \
@@ -162,7 +149,7 @@ def test_retained_h_molecule():
     # ...then score the deuterated molecule against itself: pair.score(MODE) == 1
 
 
-# --- Gate 6: asymmetry (Tversky only) ---------------------------------------------------------
+# --- Gate 5: asymmetry (Tversky only) ---------------------------------------------------------
 def test_tversky_is_asymmetric():
     """With a != b the score is not symmetric: score(A, B) != score(B, A). Gaussian-overlap
     Tversky can exceed one; pharmacophore Tversky clamps at one. Delete this gate for a mode

@@ -95,28 +95,35 @@ requested backend, or state that the new mode is PyTorch-only.
 
 ## Validate
 
-Copy [template_test.py](template_test.py) to `tests/test_<mode>.py` and fill in
-the TODOs; its gates fail until then. The tests must cover:
+Reference-mode gates are shared, parametrized tests; add rows, not a new file.
+The tests must cover:
 
-- the fixed-pose self-score (`pair.score(name)` on identical molecules),
-  separate from optimizer convergence;
-- autograd against finite differences at a non-identity pose on distinct inputs;
-- recovery of a planted rigid transform, and rescoring of the returned
-  transform with `mode.score` instead of trusting the reported scalar;
-- repeatability with frozen inputs, seeds and settings;
-- field/position correspondence on a molecule with a retained isotope-labelled H;
-- reference/fit asymmetry and clamping for Tversky reductions.
+- the fixed-pose and optimized self-score on identical molecules:
+  `tests/test_modes.py::test_every_mode_scores_one_on_itself` runs every entry
+  in `MODES` under Tanimoto and Tversky. Make sure its `_self_pair` fixture
+  supplies the new mode's features, or extend it;
+- autograd against finite differences at a non-identity pose on distinct
+  inputs, and recovery of a planted rigid transform with the returned transform
+  rescored by `mode.score`: add the mode (and any Tversky variant) to `CASES`
+  in `tests/test_reference_modes.py`. Its inputs come from `mode.inputs`, so a
+  per-atom field the library cannot compute without external tools must be
+  injected in `_molecule` (as the synthetic Fukui field is);
+- field/position correspondence on a molecule with a retained isotope-labelled
+  H, if the mode reads a per-atom field: add it to
+  `test_retained_h_field_follows_heavy_atoms` and `test_retained_h_self_alignment`;
+- reference/fit asymmetry for Tversky reductions: add a substructure pair to
+  `test_tversky_asymmetry_fits_inside`.
 
-`tests/test_modes.py::test_every_mode_scores_one_on_itself` runs every entry in
-`MODES` under Tanimoto and Tversky. Make sure its `_self_pair` fixture supplies
-the new mode's features, or extend it.
+A mode whose inputs cannot be built that way (surfaces, caller-supplied clouds)
+gets its own file; [template_test.py](template_test.py) lays out the same gates.
 
-Base tolerances on the nearest existing tests (`tests/test_vol_fukui.py`,
-`tests/test_vol_lipo.py`, `tests/test_modes.py`). A unit self-score alone does
+Base tolerances on the nearest existing tests (`tests/test_reference_modes.py`,
+`tests/test_modes.py`). A unit self-score alone does
 not show that features or gradients are correct. If the reference and a later
 accelerated version disagree, investigate both.
 
-Run the new test file, `tests/test_modes.py` and `tests/test_mode_registry.py`.
+Run `tests/test_reference_modes.py`, `tests/test_modes.py`, `tests/test_mode_registry.py`
+and any new test file.
 GPU tests need an explicit CUDA check; a marker alone does not skip them.
 Report which backends were and were not tested.
 

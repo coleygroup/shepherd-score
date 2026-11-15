@@ -1,6 +1,7 @@
 """Batched-numba gates for the CPU-testable experimental modes: self-copy scores 1.0, and the
 batched path matches the per-pair torch reference on a distinct pair (loose tolerance, since
-the two use different multi-start seed sets). Triton parity is CUDA-only.
+the two use different multi-start seed sets). Triton parity is CUDA-only. ``vol_fukui`` reads a
+synthetic field injected via ``Molecule(fukui=...)``, so no xTB binary is needed.
 """
 import warnings
 import numpy as np
@@ -20,6 +21,12 @@ IBU = "CC(C)Cc1ccc(cc1)C(C)C(=O)O"
 CAF = "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"
 
 
+def _synthetic_fukui(rd):
+    """Deterministic signed per-atom field in with-H order (the real field needs xTB)."""
+    z = np.array([a.GetAtomicNum() for a in rd.GetAtoms()], dtype=np.float32)
+    return (0.2 * ((z % 4) - 1.5)).astype(np.float32)
+
+
 def _mol(smiles):
     from shepherd_score.conformer_generation import embed_conformer_from_smiles
     from shepherd_score.container import Molecule
@@ -27,7 +34,7 @@ def _mol(smiles):
         warnings.simplefilter("ignore")
         rd = embed_conformer_from_smiles(smiles, MMFF_optimize=True, random_seed=0)
     # pharm_multi_vector=False builds the pharmacophores the pharm/color modes need
-    return Molecule(rd, pharm_multi_vector=False)
+    return Molecule(rd, pharm_multi_vector=False, fukui=_synthetic_fukui(rd))
 
 
 @pytest.fixture(scope="module")
@@ -39,6 +46,7 @@ def mols():
 MODES = [
     ("vol_tversky", "sim_aligned_vol_tversky"),
     ("vol_lipo", "sim_aligned_vol_lipo"),
+    ("vol_fukui", "sim_aligned_vol_fukui"),
     ("vol_esp_tversky", "sim_aligned_vol_esp_tversky"),
     # surface-free SI modes only; the surface modes need Open3D
     ("vol_mr", "sim_aligned_vol_mr"),
