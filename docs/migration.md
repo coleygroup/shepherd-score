@@ -20,6 +20,7 @@ Charge-dependent scores (`vol_esp`, `surf_esp`, `vol_and_surf_esp`) will differ 
 - **`ProfileStore` and `screen`** for library screening, with multi-GPU (`ndev=`) and CPU thread control (`cpu_threads=`). See [Accelerated API](accelerated_api.md).
 - **New modes:** `vol_pharm`, `vol_color`, `vol_lipo`, `vol_mr`, `vol_fukui`, `vol_atomtype`, `vol_avoid`, `vol_color_avoid`, plus `similarity='tversky'` on every mode.
 - **Install extras:** `[cpu]` adds Intel SVML for the Numba kernels; `[gpu]` adds Triton (needs a CUDA build of PyTorch ≥2.6).
+- **TF32 matmuls** On CUDA, the accelerated engine (`MoleculePairBatch.align*` and `screen` on the `triton` and `numba` backends) runs its own fp32 matmuls with TF32 allowed. v2 sets this only for the duration of each engine call and then restores your setting.
 
 ## Renamed modes
 
