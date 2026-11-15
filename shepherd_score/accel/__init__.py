@@ -14,9 +14,9 @@ __all__ = ["has_triton", "align_multi_gpu", "MultiGPUAligner", "clear_caches"]
 
 
 def clear_caches() -> None:
-    """Free the process-global accel caches (the learned per-pair GPU-memory footprint table
-    and the CUDA-graph LRU) and return their memory.
+    """Free the process-global accel caches and return their memory.
 
+    These are the learned per-pair GPU-memory footprint table and the CUDA-graph LRU.
     The caches are keyed on tensor shapes, so a long-lived process that sees many distinct
     molecule sizes accumulates device memory; call this between independent workloads.
     """

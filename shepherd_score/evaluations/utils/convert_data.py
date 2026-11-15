@@ -180,8 +180,10 @@ def extract_mol_from_xyz_block(xyz_block: str,
     return mol
 
 
+#: Overall charges tried, in order, when reconstructing a molecule and no charge is given.
 DEFAULT_CHARGE_ORDER = (0, 1, -1, 2, -2)
 
+#: An ``expected_charge`` argument: ``None``, an int, or a sequence of ints.
 ChargeSpec = Optional[Union[int, Sequence[int]]]
 
 
@@ -222,24 +224,26 @@ def get_mol_from_atom_pos(atoms: np.ndarray,
     """
     Try to get a RDKit mol object from atom and coordinate arrays.
 
-    Arguments
-    ---------
-    atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M) one-hot
-        encoding.
-    positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
+    Parameters
+    ----------
+    atoms : np.ndarray
+        Atomic numbers of the generated molecule, shape (N,), or a one-hot encoding, shape (N, M).
+    positions : np.ndarray
+        Coordinates of the generated molecule's atoms. Shape: (N, 3).
     expected_charge : int or sequence of int, optional
-        If an int, this formal charge is tried first, followed by the default charge
-        sequence ``DEFAULT_CHARGE_ORDER = (0, 1, -1, 2, -2)``. If a sequence of ints (e.g., ``[3, -3, 0]``), it
-        replaces the default sequence entirely and only those charges are tried, in order.
-        If None (default), the default sequence is used.
+        If an int, this formal charge is tried first, followed by :data:`DEFAULT_CHARGE_ORDER`.
+        If a sequence of ints (e.g. ``[3, -3, 0]``), it replaces the default order entirely and
+        only those charges are tried, in order. If None (default), :data:`DEFAULT_CHARGE_ORDER`
+        is used.
 
     Returns
     -------
-    Tuple
-        mol : Chem.Mol or None
-        charge : int overall charge of molecule. If no charge succeeds, the first charge
-            that was tried.
-        xyz_block : str
+    mol : Chem.Mol or None
+        The molecule, or None if no charge succeeded.
+    charge : int
+        Overall charge of the molecule. If no charge succeeds, the first charge that was tried.
+    xyz_block : str
+        The xyz-format text built from ``atoms`` and ``positions``.
     """
     if len(atoms.shape) == 2:
         atomic_nums = np.argmin(np.abs(atoms - 1.0), axis = -1)
@@ -268,17 +272,19 @@ def get_smiles_from_atom_pos(atoms: np.ndarray,
     """
     Try to get a SMILES string from atom and coordinate arrays.
 
-    Arguments
-    ---------
-    atoms : np.ndarray (N,) of atomic numbers of the generated molecule or (N,M) one-hot
-        encoding.
-    positions : np.ndarray (N,3) of coordinates for the generated molecule's atoms.
+    Parameters
+    ----------
+    atoms : np.ndarray
+        Atomic numbers of the generated molecule, shape (N,), or a one-hot encoding, shape (N, M).
+    positions : np.ndarray
+        Coordinates of the generated molecule's atoms. Shape: (N, 3).
     expected_charge : int or sequence of int, optional
-        Charges to try when reconstructing the molecule; see ``get_mol_from_atom_pos``.
+        Charges to try when reconstructing the molecule; see :func:`get_mol_from_atom_pos`.
 
     Returns
     -------
-    SMILES str or None
+    str or None
+        SMILES string, or None if no molecule could be built.
     """
     mol, _, _ = get_mol_from_atom_pos(atoms=atoms, positions=positions, expected_charge=expected_charge)
     smiles = None

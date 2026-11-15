@@ -27,6 +27,6 @@ dependencies:
     - molscrub
     - tqdm
     - threadpoolctl     # runtime MKL/OMP cap for the multi-GPU workers
-    - pytest            # the suite runs off pytest.ini (no --cov, so pytest-cov is optional)
+    - pytest            # config in pyproject.toml; coverage is opt-in (--cov), so pytest-cov is optional
     - meeko             # docking
     - gemmi             # imported by meeko, which declares no dependencies on PyPI

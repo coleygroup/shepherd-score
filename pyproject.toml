@@ -167,9 +167,16 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=shepherd_score",
-    "--cov-report=term-missing",
+# Coverage is opt-in (pytest --cov=shepherd_score) so plain runs do not need pytest-cov.
+addopts = ["--strict-markers", "--strict-config", "--tb=short"]
+markers = [
+    "slow: marks tests as slow to run",
+    "torch: marks tests that require PyTorch (will be auto-skipped if not available)",
+    "jax: marks tests that require JAX (will be auto-skipped if not available)",
+    "cuda: marks tests that require a CUDA GPU (will be auto-skipped if not available)",
+]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
 ]

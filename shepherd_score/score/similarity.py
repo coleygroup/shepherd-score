@@ -16,8 +16,10 @@ from typing import Literal, Tuple, Union
 
 import torch
 
+#: A similarity choice: ``'tanimoto'``, a named Tversky variant, or explicit Tversky weights ``(a, b)``.
 Similarity = Union[Literal['tanimoto', 'tversky', 'tversky_ref', 'tversky_fit'], Tuple[float, float]]
 
+#: ``(a, b)`` weights behind each named Tversky similarity.
 TVERSKY_WEIGHTS = {
     'tversky': (0.95, 0.05),
     'tversky_ref': (1.0, 0.0),

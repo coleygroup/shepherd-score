@@ -38,9 +38,9 @@ and screening; the direct method requires its own `avoid_points` argument.
 - Canonical and noncanonical stores, with their actual seed choices recorded.
 - Multi-GPU worker dispatch for a new channel or required argument, if supported.
 
-Useful tests are `tests/test_screen_arrays.py`, `tests/test_screen.py`,
-`tests/test_screen_const_seeds.py`, `tests/test_screen_ndev_dispatch.py`,
-`tests/test_screen_pipeline.py`, and `tests/test_screen_worker_threads.py`.
+Useful tests are `tests/screen/test_screen_arrays.py`, `tests/screen/test_screen.py`,
+`tests/screen/test_screen_const_seeds.py`, `tests/screen/test_screen_ndev_dispatch.py`,
+`tests/screen/test_screen_pipeline.py`, and `tests/screen/test_screen_worker_threads.py`.
 Inspect fixtures rather than assuming they generate arbitrary new features.
 Compare under matched seeds and stopping settings; different coordinate
 frames or chunk boundaries can change the optimization trajectory.

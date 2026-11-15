@@ -200,6 +200,9 @@ everywhere, so the gradient leaves it out. A Tversky `similarity` applies to the
 
 If you use or adapt this work, please cite:
 
+An article describing ShEPhERD-score v2.0 is forthcoming.
+<!-- TODO: add the ShEPhERD-score v2.0 citation here once available. -->
+
 Adams, K., Abeywardane, K., Fromer, J., & Coley, C. W. (2025). ShEPhERD: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design. In *The Thirteenth International Conference on Learning Representations*. https://openreview.net/forum?id=KSLkFYHlYg
 
 Grant, J. A. & Pickup, B. T. (1995). A Gaussian description of molecular shape. *Journal of Physical Chemistry*, *99*(11), 3503-3510. https://doi.org/10.1021/j100011a016

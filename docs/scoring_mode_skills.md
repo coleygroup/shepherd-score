@@ -1,6 +1,8 @@
 # Scoring-mode development skills
 
-The repository includes two coding-agent skills for adding scoring modes:
+A skill is a folder of written instructions (a `SKILL.md` plus references) that
+a coding agent reads to follow a repeatable workflow. The repository includes
+two for adding scoring modes:
 
 - **`design-scoring-mode`** develops and tests a PyTorch reference objective
   and single-pair alignment method from a mathematical or plain-language description.
@@ -17,20 +19,10 @@ agent, copy the whole folder, including its supporting references. The skills
 are instructions for development; nothing in them runs when `shepherd_score` is
 imported.
 
-Both folders are included in source distributions. Wheels install them under
-the installation's data directory at `share/shepherd-score/skills/`. Locate
-that directory with the Python interpreter used for the installation:
-
-```python
-from pathlib import Path
-import sysconfig
-
-skills = Path(sysconfig.get_path("data")) / "share/shepherd-score/skills"
-print(skills)
-```
-
-For editable installs, use the folders in the repository. Older PyPI releases
-do not include the skills.
+Both folders are in source distributions, and wheels install them under
+`share/shepherd-score/skills/` in the installation's data directory
+(`Path(sysconfig.get_path("data")) / "share/shepherd-score/skills"`); for
+editable installs, use the repository folders.
 
 The reference workflow tests the objective and its gradients before any kernel
 work. The acceleration workflow compares fixed-pose values and gradients,
@@ -41,5 +33,5 @@ template fails until its gates are filled in for the new objective.
 
 Review generated code as you would any other contribution: a self-score of one
 and agreement on a few optimized pairs do not show the objective is correct.
-See the [API guide](accelerated_api.md) for existing modes and preparation,
-and [scoring theory](theory.md) for the implemented objectives.
+This page covers the agent workflow; the mechanism is described under
+[Adding a mode](modes.md).

@@ -1,8 +1,8 @@
 # Evaluation scripts
 
-Install the package with `python -m pip install -e .`. These scripts evaluate
-generated ShEPhERD samples; the alignment and retrieval benchmarks are in
-[Shepherd-Score-Paper](https://github.com/Nate-Somers/Shepherd-Score-Paper).
+These contain evaluation scripts for ShEPhERD. For evaluations of ShEPhERD-score, please visit [Shepherd-Score-Benchmarks](https://github.com/Nate-Somers/Shepherd-Score-Benchmarks).
+
+Install the package with `python -m pip install -e .`. These scripts evaluate generated ShEPhERD samples.
 Run commands from the repository root. Shell wrappers accept the same arguments.
 
 ```bash

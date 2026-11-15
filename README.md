@@ -12,17 +12,15 @@
 
 </div>
 
-This repository contains the code for **extracting interaction profiles** and **molecular alignment procedures** with **differentiably scoring 3D similarity**. It also contains modules to evaluate conformers generated with *ShEPhERD*<sup>1</sup>, *ShEPhERD–2* and other generative models.
+ShEPhERD-score is a Python package for **3D molecular similarity**. It **extracts interaction profiles** (shape, surface electrostatics and pharmacophores), **aligns and scores** molecules with differentiable 3D similarity functions, **screens** compound libraries at high throughput, and **evaluates** 3D molecules sampled from generative models such as *ShEPhERD* and *ShEPhERD–2*.
 
-The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our ICLR 2025 publication *[ShEPhERD*: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design](https://openreview.net/forum?id=KSLkFYHlYg). The diffusion model and its successor is found in *separate* repositories: [ShEPhERD](https://github.com/coleygroup/shepherd), [ShEPhERD–2](https://github.com/coleygroup/shepherd2).
+**Version 2.0** (Nov. 2026) makes scoring functions modular: each scoring mode is a small registered definition, so new similarity functions can be added and run on every backend. Accelerated CPU (Numba) and GPU (Triton) kernels run batched alignment and library screening, including across multiple GPUs. Together this makes ShEPhERD-score a modular and expressive platform that enables high-throughput 3D similarity search relative to open-source alternatives (see [timings](https://shepherd-score.readthedocs.io/en/latest/performance/timings.html)). v2.0 requires Python ≥3.10; see the [migration notes](https://shepherd-score.readthedocs.io/en/latest/migration.html) for changes from v1.
 
-**Version 2.0** of ShEPhERD-score introduces improvements in scoring function modularity and accelerated CPU (Numba) and GPU kernels (Triton) for high-throughput alignment and scoring. These accelerated backends are the state-of-the-art for open source alternatives while supporting a generalized platform for implementing scoring functions. Note that v2.0+ requires Python ≥3.10.
+The interaction profile representation and scoring functions were introduced with the *ShEPhERD* diffusion model ([ICLR 2025](https://openreview.net/forum?id=KSLkFYHlYg)). The generative models live in separate repositories: [ShEPhERD](https://github.com/coleygroup/shepherd) and [ShEPhERD–2](https://github.com/coleygroup/shepherd2).
 
 <p align="center">
   <img width="200" src="./logo.svg">
 </p>
-
-<sub><sup>1</sup> *ShEPhERD*: **S**hape, **E**lectrostatics, and **Ph**armacophores **E**xplicit **R**epresentation **D**iffusion</sub>
 
 ## Documentation
 
@@ -49,7 +47,7 @@ uv pip install "shepherd-score[cpu]"
 
 Alternatively, `conda env create -f environment.yml` builds a CPU environment with SVML, xTB and Vina.
 
-For GPU-accelerated scoring and alignment backends with Triton:
+For GPU-accelerated scoring and alignment backends with Triton (needs a CUDA build of PyTorch ≥2.6 which should be installed separately for your device):
 
 ```bash
 uv pip install "shepherd-score[gpu]"
@@ -109,7 +107,7 @@ result.aligned["points"]     # np.ndarray (N, 3): fit heavy atoms after transfor
 ```
 
 > [!NOTE]
-> `MoleculePair.align()` (new in v2.0) returns an `AlignmentResult` and leaves the pair unchanged. The v1 `align_with_*()` methods still exist in v2.0 and store the score and transform as attributes on the pair.
+> `MoleculePair.align()` (new in v2.0) returns an `AlignmentResult` and leaves the `MoleculePair` object unchanged. The v1 `align_with_*()` methods still exist in v2.0 and store the score and transform as attributes on the pair, as does `MoleculePairBatch.align()` below.
 
 Swap `"vol"` for any scoring mode. The main ones:
 
@@ -120,8 +118,8 @@ Swap `"vol"` for any scoring mode. The main ones:
 | `vol_esp` | Shape weighted by partial charges | partial charges |
 | `surf_esp` | Surface shape weighted by ESP | `num_surf_points` |
 | `vol_and_surf_esp` | Shape plus surface ESP agreement | `num_surf_points` |
-| `pharm` | Directional pharmacophores | pharmacophores |
-| `vol_color` | Shape plus pharmacophore features | pharmacophores |
+| `pharm` | Directional ShEPhERD-style pharmacophores | pharmacophores |
+| `vol_color` | Shape plus directionless RDKit pharmacophore features | pharmacophores (`feature_set='rdkit_base'`) |
 | `vol_lipo` | Shape plus Crippen logP field | nothing extra |
 | `vol_avoid` | Shape minus an excluded-volume penalty | `avoid_points` passed to the call |
 | `vol_color_avoid` | `vol_color` minus an excluded-volume penalty | pharmacophores, `avoid_points` passed to the call |
@@ -171,7 +169,8 @@ conf_eval = ConfEval(atoms=atom_array, positions=position_array)
 
 # Alternatively, if you have a list of molecules you want to test:
 uncond_pipe = UnconditionalEvalPipeline(
-    generated_mols = [(a, p) for a, p in zip(atom_arrays, position_arrays)]
+    generated_mols = [(a, p) for a, p in zip(atom_arrays, position_arrays)],
+    expected_charge = 1,  # optional: formal charge to try first when inferring bonds (default tries 0, +1, -1, +2, -2)
 )
 uncond_pipe.evaluate(num_workers=4)
 
@@ -185,7 +184,13 @@ This project is licensed under the MIT License -- see [LICENSE](./LICENSE) file 
 
 ## Citation
 
-If you use or adapt `shepherd_score` or *[ShEPhERD](https://github.com/coleygroup/shepherd)* in your work, please cite us:
+An article describing ShEPhERD-score v2.0 is forthcoming. If you use or adapt ShEPhERD-score in your work, please cite it once available:
+
+```bibtex
+Citation forthcoming.
+```
+
+The interaction profile representation and scoring functions were introduced with *[ShEPhERD](https://github.com/coleygroup/shepherd)*. If you use them or the ShEPhERD models, please also cite:
 
 ```bibtex
 @inproceedings{

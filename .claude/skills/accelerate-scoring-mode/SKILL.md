@@ -68,7 +68,7 @@ their gradients, including the ESP term in combined volume-and-surface modes.
    by the reference mode. If Tversky is supported, add a `<name>_tversky` spec
    and route `similarity=` through `_align_with`. Audit effective defaults
    across reference, batch and screen calls. Do not change other modes.
-6. Update `tests/test_mode_registry.py`'s mode count and any necessary fixtures.
+6. Update `tests/modes/test_mode_registry.py`'s mode count and any necessary fixtures.
    Registry-derived tests provide coverage only if their fixtures actually
    supply the new features and required arguments. Inspect their parametrization;
    do not assume registration alone makes every test applicable.
