@@ -1,10 +1,10 @@
-ShEPhERD Score Documentation
+ShEPhERD-score Documentation
 ============================
 
 .. image:: _static/logo.svg
    :width: 200
    :align: center
-   :alt: ShEPhERD Logo
+   :alt: ShEPhERD-score logo
 
 |
 
@@ -16,21 +16,23 @@ ShEPhERD Score Documentation
    :target: https://pypi.org/project/shepherd-score/
    :alt: Python versions
 
-``shepherd-score`` generates and optimizes conformers, extracts interaction profiles, and scores and
-aligns molecules by 3D similarity. Batched alignment and library screening run on Numba (CPU) and
-Triton (GPU) kernels. It also evaluates conformers generated with *ShEPhERD* and other generative models.
+ShEPhERD-score generates and optimizes conformers, extracts interaction profiles, and scores and
+aligns molecules by 3D similarity. Scoring modes are modular, and batched alignment and library
+screening run on Numba (CPU) and Triton (GPU) kernels. It also evaluates 3D molecules sampled from
+generative models such as *ShEPhERD* and *ShEPhERD-2*.
 
-The formulation of the interaction profile representation, scoring, alignment, and evaluations are found in our 
-ICLR 2025 paper `ShEPhERD: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design <https://arxiv.org/abs/2411.04130>`_.
-
-*ShEPhERD*: **S**\ hape, **E**\ lectrostatics, and **Ph**\ armacophores **E**\ xplicit **R**\ epresentation **D**\ iffusion
+The interaction profile representation and scoring functions were introduced with the *ShEPhERD*
+diffusion model (`ICLR 2025 <https://openreview.net/forum?id=KSLkFYHlYg>`_). Coming from v1? See
+:doc:`migration`.
 
 Quick Install
 -------------
 
-Install from the repository root::
+Install from PyPI (Python ≥3.10)::
 
-   python -m pip install -e .
+   pip install shepherd-score            # core
+   pip install "shepherd-score[cpu]"     # + SVML-accelerated Numba kernels
+   pip install "shepherd-score[gpu]"     # + Triton GPU kernels
 
 See :doc:`installation` for optional backends and external executables.
 
@@ -44,6 +46,7 @@ See :doc:`installation` for optional backends and external executables.
    theory
    accelerated_api
    scoring_mode_skills
+   migration
 
 .. toctree::
    :caption: Performance
@@ -66,7 +69,14 @@ See :doc:`installation` for optional backends and external executables.
 Citation
 --------
 
-If you use or adapt ``shepherd_score`` or `ShEPhERD <https://github.com/coleygroup/shepherd>`_ in your work, please cite us:
+An article describing ShEPhERD-score v2.0 is forthcoming. If you use or adapt ShEPhERD-score in
+your work, please cite it once available.
+
+.. TODO: add the ShEPhERD-score v2.0 article BibTeX here
+
+The interaction profile representation and scoring functions were introduced with
+`ShEPhERD <https://github.com/coleygroup/shepherd>`_. If you use them or the ShEPhERD models,
+please also cite:
 
 .. code-block:: bibtex
 

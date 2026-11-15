@@ -1,18 +1,14 @@
 # Accelerated API guide
 
-This guide covers batched alignment, the scoring modes, library stores,
-screening and parallel execution. Signatures and parameters are in the
-[API reference](api/index.rst), and the objectives are defined in
-[scoring theory](theory.md).
+This guide covers batched alignment, library stores, screening and parallel
+execution. The scoring modes, similarity options and backend support are in
+[Scoring modes](modes.md). Signatures are in the [API reference](api/index.rst)
+and the objectives in [scoring theory](theory.md).
 
-| Capability | Interface | Notes |
-|---|---|---|
-| Single-pair alignment | `MoleculePair.align(mode, ...)`, `align_with_<mode>` | PyTorch reference optimizer; analytic gradients where available, else autograd |
-| Batched alignment | `MoleculePairBatch.align(mode, ...)`, `align_with_<mode>` | Numba CPU or Triton GPU kernels; pairs grouped by size, several starting poses per pair |
-| Library stores | `ProfileStore.create`, `add`, `close`, `open` | Sharded on disk; keeps the arrays the declared modes need |
-| Screening | `screen`, `screen_many` | Streams the store shard by shard and keeps a running top-K; `screen_many` reads each shard once for all queries |
-| Multiple GPUs | `screen(..., ndev=...)`, `align_multi_gpu`, `MultiGPUAligner` | One worker process per GPU |
-| CPU worker processes | `screen_parallel`, `screen_parallel_close` | In-memory library, persistent pool of forked workers |
+`MoleculePair.align` runs the PyTorch reference optimizer on one pair.
+`MoleculePairBatch` runs Numba (CPU) or Triton (GPU) kernels on many pairs,
+`ProfileStore` holds a library on disk, and `screen` / `screen_many` stream it
+against one or several queries, optionally across GPUs.
 
 ## Preparing molecules
 
@@ -49,79 +45,24 @@ conformer so that aromaticity is set for pharmacophore and Crippen features.
 See [Molecule](api/container/molecule.rst) and
 [profile containers](api/container/profiles.rst).
 
-## Choosing a mode
-
-| Mode | Objective |
-|---|---|
-| `vol`, `surf` | Gaussian overlap of heavy-atom or surface point clouds |
-| `vol_esp`, `surf_esp` | Overlap weighted by atomic charges or surface potentials |
-| `pharm` | Typed, directional pharmacophore overlap |
-| `vol_color` | Shape plus directionless pharmacophore overlap |
-| `vol_pharm` | Shape plus directional pharmacophore overlap |
-| `vol_lipo` | Shape plus per-atom Crippen lipophilicity |
-| `vol_mr` | Shape plus per-atom Crippen molar refractivity |
-| `vol_fukui` | Shape plus condensed Fukui reactivity |
-| `vol_atomtype` | Shape plus element-matched overlap |
-| `vol_and_surf_esp` | Shape plus masked surface-potential agreement |
-| `vol_avoid` | Shape minus an excluded-volume penalty; needs `avoid_points` |
-| `vol_color_avoid` | `vol_color` minus the `vol_avoid` penalty; needs `avoid_points` |
-
-`align_with_esp` and `align_with_esp_combo` are aliases for `surf_esp` and
-`vol_and_surf_esp`.
-
-`vol_color` ignores pharmacophore directions; `vol_pharm` and `pharm` use
-them. All three read the pharmacophores already on each `Molecule`; the mode
-does not re-extract them.
-
-### Similarity
-
-Overlap modes take `similarity=`:
-
-| Value | Weights `(a, b)` on reference / fit self-overlap |
-|---|---|
-| `"tanimoto"` (default) | symmetric Tanimoto |
-| `"tversky"` | `(0.95, 0.05)` |
-| `"tversky_ref"` | `(1.0, 0.0)` |
-| `"tversky_fit"` | `(0.05, 0.95)` |
-| `(a, b)` | explicit weights |
-
-```python
-pair.align("vol", similarity="tversky")
-pair.align_with_vol_color(similarity=(0.7, 0.3))   # applies to shape and color
-MoleculePairBatch(pairs).align_with_vol(similarity="tversky", backend="triton")
-```
-
-A Tversky result is stored in the `<mode>_tversky` slots
-(`sim_aligned_vol_tversky`, `transform_vol_tversky`, ...). On the batched
-backends, `similarity=` is accepted by `vol`, `vol_esp`, `surf`, `surf_esp`,
-`pharm`, `vol_color`, `vol_lipo`, `vol_color_avoid` and `vol_and_surf_esp`; for
-`vol_color_avoid` it applies to shape and color but not the penalty, and for
-`vol_and_surf_esp` to the shape term only. Pharmacophore Tversky
-scores are clamped at one; the other Tversky scores are not.
-
-The batch kernels and `screen` also accept the registry names
-`<mode>_tversky` (for example `screen(..., mode="vol_tversky")`) with
-`tversky_alpha` and `tversky_beta` keywords.
-
 ## Aligning pairs
 
 ```python
-pair = MoleculePair(ref, fit, num_surf_points=200)   # needed for surface modes
+pair = MoleculePair(ref, fit, num_surf_points=200, do_center=True)   # surface modes need num_surf_points
 
 res = pair.align("vol_esp", lam=0.1)            # PyTorch, returns AlignmentResult
 scores, aligned = MoleculePairBatch([pair]).align_with_vol(backend="numba")
 ```
 
-`MoleculePair.align` returns the result without storing it;
-`align_with_<mode>` stores the score and transform on the pair.
-`MoleculePairBatch` writes to the same slots on each pair and returns the
-scores and, with `return_aligned=True`, the aligned coordinates. A mode can
-also be passed as a `shepherd_score.modes.Mode` instance; see
-[modes](api/modes.rst).
+`MoleculePair.align` returns an `AlignmentResult` and leaves the pair unchanged;
+`MoleculePairBatch.align` and `align_with_<mode>` store `transform_<mode>` and
+`sim_aligned_<mode>` on each pair, and return the scores and, with
+`return_aligned=True`, the aligned coordinates. See [modes](modes.md) for mode
+names and [Modes and Similarity](api/modes.rst) for `Mode` instances.
 
 On `backend="numba"` and `"triton"`, `num_repeats`, `max_num_steps` and `lr`
 default to each mode's values in
-[`accel/_modes.py`](../shepherd_score/accel/_modes.py). On `"jax"` and
+[`accel/_modes.py`](https://github.com/coleygroup/shepherd-score/blob/main/shepherd_score/accel/_modes.py). On `"jax"` and
 `"torch"` they default to 50 / 200 / 0.1. See
 [MoleculePairBatch](api/container/molecule_pair_batch.rst).
 
@@ -167,32 +108,35 @@ compound's conformers; the paper benchmarks use the maximum score.
 `screen_many` returns one hit list per query. `scores_out` collects every
 score in caller-provided arrays on the single-process path.
 
-The avoid modes (`vol_avoid`, `vol_color_avoid`, `vol_color_avoid_tversky`) take
-`avoid_points=`, a `(K, 3)` cloud used as-is in the frame the query is scored in;
-it is never shifted for you. The screen centers the query on a pre-centered store,
-so pass the cloud centered the same way, e.g. `pocket - query.atom_pos.mean(0)`.
-With `screen_many` the one cloud serves every query unchanged. See
+The avoid modes take `avoid_points=`; see [Scoring modes](modes.md) for the
+frame it must be in (for `screen`, centered on the query). See
 [screening](api/screening.rst).
 
 ## Parallel execution
 
-For disk-backed GPU screening, pass `backend="triton", ndev=2` to `screen` or
-`screen_many`. Workers start on the first call and are reused;
-`close_multigpu_pool()` stops them. `worker_threads` sets the host compute
-threads per GPU worker; by default the available CPUs are divided among the
-GPUs. Prefetch threads are not counted in this limit.
+```python
+# Disk-backed library on several GPUs: one worker process per GPU
+hits = screen(ref, library, mode="vol", backend="triton", ndev=2, top_k=100)
+from shepherd_score.screen import close_multigpu_pool
+close_multigpu_pool()          # stop the workers when done
 
-For in-memory pairs, `shepherd_score.accel.multi_gpu.align_multi_gpu` aligns
-one list across GPUs, and `MultiGPUAligner` keeps its workers for repeated
-calls.
+# In-memory pairs on several GPUs
+from shepherd_score.accel.multi_gpu import align_multi_gpu
+align_multi_gpu(pairs, "vol", ndev=2)       # results written back to each pair
 
-`shepherd_score.accel.screen_parallel.screen_parallel` screens a query against
-an in-memory list of molecules with forked CPU workers. The pool is kept for
-later calls against the same library; `screen_parallel_close()` stops it.
-The first call includes pool startup, so exclude it from steady-state timing.
+# CPU: shard a batch over forked numba worker processes
+MoleculePairBatch(pairs).align_with_vol(backend="numba", num_workers=8)
+```
 
-Guard scripts that start GPU workers with `if __name__ == "__main__":`, since
-those workers are spawned. The CPU pool needs a platform that supports fork.
+Workers for `ndev` start on the first call and are reused;
+`MultiGPUAligner(pairs, ndev=2)` keeps its workers for repeated `align` calls.
+`shepherd_score.accel.screen_parallel.screen_parallel(query, library, mode,
+n_workers=...)` screens an in-memory list of molecules with a persistent pool of
+forked CPU workers (stop it with `screen_parallel_close()`); the first call
+includes pool startup, so exclude it from steady-state timing. Guard scripts
+that start worker processes (`ndev`, `num_workers`) with
+`if __name__ == "__main__":`, since those workers are spawned.
+`screen_parallel` needs a platform that supports fork.
 
 ### CPU threads
 
@@ -204,58 +148,45 @@ batch = MoleculePairBatch(pairs, cpu_threads=8)
 hits = screen(query, store, mode="vol_color_avoid", backend="numba", cpu_threads=8, ...)
 ```
 
-The cap covers the numba kernels and torch's intra-op pool for the duration of
-each call, then restores the previous counts. It can be raised or lowered per
-call up to numba's thread pool, which is sized when numba is first imported:
-from `NUMBA_NUM_THREADS`, or else from the process's CPU affinity. Launching
-under `taskset -c 0-7`, `--cpus-per-task=8` or `--cpuset-cpus` therefore caps
-the pool too. A time quota (`CPUQuota`, Docker `--cpus`) does not change what
-the process sees, so the pool stays at the full CPU count and gets throttled.
-
-With `ndev > 1` use `worker_threads`. With `num_workers > 1` each worker is
-single-threaded, so `cpu_threads` is rejected there.
-
-Logical CPUs count hardware threads: two per core on SMT machines. The kernels
-are arithmetic-bound, so a second thread on the same core adds little. In one
-measurement it was about 10% faster, against about 1.8× for a second physical
-core.
+The cap applies for the duration of each call. It can be set up to numba's
+thread pool size, which is fixed when numba is first imported, from
+`NUMBA_NUM_THREADS` or else the process's CPU affinity (so `taskset`,
+`--cpus-per-task` and `--cpuset-cpus` cap it; a time quota such as Docker
+`--cpus` does not). With `ndev > 1` use `worker_threads` (host threads per GPU
+worker, default CPUs divided among GPUs); with `num_workers > 1` each worker is
+single-threaded and `cpu_threads` is rejected. Logical CPUs count SMT threads,
+which add little for these arithmetic-bound kernels; see
+[timings](performance/timings.md).
 
 ## Reproducible GPU launch configurations
 
-Triton picks kernel launch configurations by timing candidates, and the
-choices can vary between installations. To record the choices made during a
-warm-up run:
+Triton picks launch configurations by timing candidates, so choices can vary
+between installations. To record and replay them:
 
 ```python
 from shepherd_score.accel.kernels.tuning import export_configurations
-# Run the intended workloads once, outside timing.
+# Run every intended workload shape once, outside timing.
 export_configurations("triton-configurations.json")
 ```
 
 Set `FSS_TRITON_CONFIGS=/absolute/path/triton-configurations.json` before
-importing the kernels to replay them, including in spawned screening workers.
-A kernel or shape missing from the file, or a different GPU model,
-architecture or Triton version, raises an error instead of re-tuning. The file
-holds only the configurations used in the exporting process, so run every
-workload shape before exporting. Files from separate runs can be combined only
-if they agree on shared entries.
-
-Replaying fixes the launch configurations; timings still depend on hardware
-and cache state. Store the file with the commit, software versions, inputs and
-timing results it was recorded with. Without the variable, Triton autotunes as
-usual.
+importing the kernels (spawned workers inherit it). A kernel or shape missing
+from the file, or a different GPU model, architecture or Triton version, raises
+an error instead of re-tuning. Timings still depend on hardware and cache
+state, so store the file with the commit, software versions and inputs.
 
 ## Further reference
 
 - [Installation](installation.rst): optional backends and external executables
 - [Batch alignment](api/container/molecule_pair_batch.rst)
-- [Modes and similarity](api/modes.rst)
+- [Scoring modes](modes.md) and [Modes and similarity](api/modes.rst)
 - [Screening and parallel APIs](api/screening.rst)
 - [Analytical gradients](api/alignment/analytical_gradients.rst)
 - [Scoring theory](theory.md)
 - [Measured throughput](performance/timings.md)
 - [Scoring-mode development skills](scoring_mode_skills.md)
-- [Paper benchmark procedures](https://github.com/Nate-Somers/Shepherd-Score-Paper/blob/main/benchmarks/README.md)
+- [Benchmark procedures](https://github.com/Nate-Somers/Shepherd-Score-Benchmarks)
 
-The tutorial notebooks cover the original preparation and scoring workflows,
-not the batched API.
+The [screening tutorial](tutorials/04_screening.ipynb) walks through the batched
+and screening API; the other tutorial notebooks cover the original preparation
+and scoring workflows.
