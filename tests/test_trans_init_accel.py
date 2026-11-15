@@ -147,6 +147,7 @@ def test_combo_self_copy_falls_short_of_one_as_it_always_has():
         "it against the rest of the parity gates before widening this bound.")
 
 
+@pytest.mark.cuda
 @pytest.mark.skipif(not (TORCH and torch.cuda.is_available()), reason="CUDA required")
 @pytest.mark.parametrize("mode", sorted(GRID_CLOUD))
 def test_triton_coarse_grid_matches_numba(mode, monkeypatch):

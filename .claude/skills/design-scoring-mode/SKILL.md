@@ -124,7 +124,7 @@ accelerated version disagree, investigate both.
 
 Run `tests/test_reference_modes.py`, `tests/test_modes.py`, `tests/test_mode_registry.py`
 and any new test file.
-GPU tests need an explicit CUDA check; a marker alone does not skip them.
+Mark GPU tests (or GPU parameters) `cuda`; `tests/conftest.py` skips them without CUDA.
 Report which backends were and were not tested.
 
 ## Handoff

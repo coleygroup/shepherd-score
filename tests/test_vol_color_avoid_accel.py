@@ -107,7 +107,7 @@ def _batch_similarity(sim):
 # 1. fixed-pose value and gradient against the reference
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.cuda)])
 @pytest.mark.parametrize("sim", SIMS + [(0.7, 0.3)])
 def test_fixed_pose_value_matches_reference(pairs, clouds, device, sim):
     import shepherd_score.accel.drivers.engine as EN
@@ -120,7 +120,7 @@ def test_fixed_pose_value_matches_reference(pairs, clouds, device, sim):
     assert torch.allclose(sc, ref, rtol=1e-5, atol=1e-4), (sc - ref).abs().max()
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.cuda)])
 @pytest.mark.parametrize("sim", SIMS)
 def test_fine_step_gradient_follows_the_reported_score(pairs, clouds, device, sim):
     """The engine's blended descent gradient equals the derivative of the score it reports, on
@@ -150,6 +150,7 @@ def test_fine_step_gradient_follows_the_reported_score(pairs, clouds, device, si
 # 2. fused shape+color launch (CUDA)
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("sim", SIMS)
 def test_fused_pair_runs_and_matches_separate_kernels(pairs, clouds, sim):
     _cuda()
@@ -171,6 +172,7 @@ def test_fused_pair_runs_and_matches_separate_kernels(pairs, clouds, sim):
         assert torch.allclose(a, b, rtol=1e-5, atol=1e-5), (a - b).abs().max()
 
 
+@pytest.mark.cuda
 def test_fused_pair_falls_back_past_its_tile(pairs, clouds):
     """Past ``VOL_COLOR_FUSED_MAX_PAD`` the fused launch declines and the separate kernels run,
     matching the CPU step on the same (over-padded) inputs."""
@@ -202,6 +204,7 @@ def test_fused_pair_falls_back_past_its_tile(pairs, clouds):
 # 3. CUDA graph vs eager
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("mode", [MODE, "vol_color_avoid_tversky", "vol_avoid"])
 def test_graph_runs_and_matches_eager(pairs, clouds, mode):
     """Matched seeds and a patience large enough that neither loop stops early: the graph and
@@ -248,7 +251,7 @@ def test_numba_batched_matches_per_pair_engine():
     assert abs(float(sc_pp[0]) - float(sc_b[0])) < 1e-4, (float(sc_pp[0]), float(sc_b[0]))
 
 
-@pytest.mark.parametrize("backend", ["numba", "triton"])
+@pytest.mark.parametrize("backend", ["numba", pytest.param("triton", marks=pytest.mark.cuda)])
 @pytest.mark.parametrize("sim", SIMS)
 def test_returned_transform_rescores_with_the_reference(backend, sim):
     """The batch fills only its similarity's slots, and the stored transform, applied to the
@@ -311,6 +314,7 @@ def test_self_copy_far_cloud_scores_one():
     assert np.isclose(float(sc[0]), 1.0, atol=1e-2), float(sc[0])
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("sim", SIMS)
 def test_triton_matches_numba_end_to_end(sim):
     _cuda()
@@ -391,7 +395,7 @@ def test_screen_requires_avoid_points(store_path):
             screen(V.mol(V.SMILES[0]), st, mode=MODE, backend="numba")
 
 
-@pytest.mark.parametrize("backend", ["numba", "triton"])
+@pytest.mark.parametrize("backend", ["numba", pytest.param("triton", marks=pytest.mark.cuda)])
 def test_screen_array_path_matches_object_path(monkeypatch, store_path, backend):
     import shepherd_score.screen as screenmod
     from shepherd_score.accel.batch import _arrays
@@ -456,6 +460,7 @@ def test_screen_many_shares_one_cloud(store_path):
             _same_hits(hits, alone, tol=1e-6)
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("mode", [MODE, "vol_avoid"])
 def test_screen_multi_gpu_uses_the_cloud(store_path, mode):
     """The ``ndev>1`` workers get the query's cloud (they once dropped it entirely): two GPUs

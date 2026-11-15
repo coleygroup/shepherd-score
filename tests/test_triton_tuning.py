@@ -5,7 +5,8 @@ import pytest
 triton = pytest.importorskip('triton')
 import triton.language as tl
 torch = pytest.importorskip('torch')
-pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+pytestmark = [pytest.mark.cuda,
+              pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')]
 
 from shepherd_score.accel.kernels.tuning import autotune, export_configurations
 

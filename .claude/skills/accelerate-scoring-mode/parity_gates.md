@@ -65,8 +65,10 @@ third input through screening and worker dispatch, not just a single pair.
 | `tests/test_screen_const_seeds.py` | canonical seed routing |
 | `tests/test_triton_tuning.py` | frozen launch configuration handling |
 
-Run applicable tests on the intended backend. Check CUDA availability and
-Triton imports explicitly; a `cuda` marker alone does not skip a test.
+Run applicable tests on the intended backend. Mark every GPU test (or GPU
+parameter, via `pytest.param(..., marks=pytest.mark.cuda)`) with `cuda`:
+`tests/conftest.py` skips it without CUDA, and `pytest -m cuda` must select
+every GPU test since CI has no GPU. Import Triton with `pytest.importorskip`.
 Report what ran, what passed, tolerances, and pending checks. Benchmark only
 after correctness, with untimed setup/warm-up and the user's requested timing
 protocol; never reuse archived throughput as proof of new-mode correctness.

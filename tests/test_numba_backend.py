@@ -78,6 +78,7 @@ def test_numba_vol_self_copy_and_distinct():
     assert np.all(sc <= 1.0 + 1e-3)   # tanimoto-bounded
 
 
+@pytest.mark.cuda
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_kernel_dispatch_routes_by_device():
     """On a GPU box: CUDA tensors -> Triton, CPU tensors -> numba, in one process."""
