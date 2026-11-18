@@ -4,9 +4,11 @@ No torch in the hot loop: inputs are marshalled to numpy once, each step chains 
 overlap+grad njit kernels with two njit ``prange`` tails (score / best / blended descent
 gradient, then the tangent-projected Adam), and the per-pair early-stop check is a numpy
 ``.max(axis=1)``. The tails reproduce the torch fp32 arithmetic of ``drivers/engine.py`` op for
-op (same operand order, float32 constants, eps inside the sqrt, no bias correction). With SVML
-the SoA fp32 kernels of ``cpu_soa.py`` run; otherwise the fp64 AoS kernels of ``cpu.py``.
-Seeds, step count and early-stop schedule are the caller's.
+op (same operand order, float32 constants, eps inside the sqrt, no bias correction).
+
+The shape, ESP, color and pharm terms run the SoA fp32 kernels of ``cpu_soa.py``, whose exp2 is
+a polynomial, so they vectorize with or without SVML; avoid and esp_cmp use the fp64 AoS kernels
+of ``cpu.py``. Seeds, step count and early-stop schedule are the caller's.
 """
 from __future__ import annotations
 
@@ -28,29 +30,6 @@ _A2 = np.float32(1.0 - 0.999)
 _EPS = np.float32(1e-8)
 _F1 = np.float32(1.0)
 _F0 = np.float32(0.0)
-
-try:
-    import numba.core.config as _nbcfg
-    _SVML = bool(_nbcfg.USING_SVML)
-except Exception:
-    _SVML = False
-_USE_SOA = _SVML
-
-_SVML_WARNED = False
-
-
-def _warn_if_no_svml():
-    global _SVML_WARNED
-    if not _SVML and not _SVML_WARNED:
-        _SVML_WARNED = True
-        import warnings
-        warnings.warn(
-            "CPU alignment is running WITHOUT numba SVML "
-            "(USING_SVML=False; numba>=0.62 dropped it), so the overlap kernels are unvectorized "
-            "and ~3-6x slower than they should be. For full CPU speed, pip install "
-            "'shepherd-score[cpu]' (numba<0.62 + icc_rt) or build the conda environment.yml. "
-            "Suppress via warnings filters.",
-            RuntimeWarning, stacklevel=3)
 
 # njit tails
 
@@ -226,41 +205,24 @@ def _term_closure(tm, params):
     kind = tm.spec.kernel
     Nr, Mr = _i64(ti.n_real), _i64(ti.m_real)
     if kind == "shape":
-        a_f = float(params["alpha"])
-        if _USE_SOA:
-            from .cpu_soa import _overlap_grad_kernel_soa, to_soa
-            A = to_soa(_f32c(ti.ref[0])); B = to_soa(_f32c(ti.fit[0]))
-            return lambda q, t: _overlap_grad_kernel_soa(A, B, q, t, Nr, Mr, a_f, True)
-        from .cpu import _overlap_grad_kernel
-        A = _f32c(ti.ref[0]); B = _f32c(ti.fit[0])
-        return lambda q, t: _cast3(*_overlap_grad_kernel(A, B, q, t, Nr, Mr, a_f, True))
+        from .cpu_soa import shape_closure
+        return shape_closure(_f32c(ti.ref[0]), _f32c(ti.fit[0]), Nr, Mr, float(params["alpha"]))
     if kind == "esp":
-        a_f = float(params["alpha"]); inv_lam = 1.0 / float(params["lam"])
-        CA = _f32c(ti.ref[1]); CB = _f32c(ti.fit[1])
-        if _USE_SOA:
-            from .cpu_soa import _overlap_grad_esp_kernel_soa, to_soa
-            A = to_soa(_f32c(ti.ref[0])); B = to_soa(_f32c(ti.fit[0]))
-            return lambda q, t: _overlap_grad_esp_kernel_soa(A, B, CA, CB, q, t, Nr, Mr, a_f,
-                                                             inv_lam, True)
-        from .cpu import _overlap_grad_esp_kernel
-        A = _f32c(ti.ref[0]); B = _f32c(ti.fit[0])
-        return lambda q, t: _cast3(*_overlap_grad_esp_kernel(A, B, CA, CB, q, t, Nr, Mr, a_f,
-                                                             inv_lam, True))
+        from .cpu_soa import esp_closure
+        return esp_closure(_f32c(ti.ref[0]), _f32c(ti.fit[0]), _f32c(ti.ref[1]),
+                           _f32c(ti.fit[1]), Nr, Mr, float(params["alpha"]),
+                           1.0 / float(params["lam"]))
     if kind == "color":
-        from .cpu import _pharm_color_grad_kernel
-        A = _f32c(ti.ref[0]); B = _f32c(ti.fit[0]); At = _i64(ti.ref[1]); Bt = _i64(ti.fit[1])
+        from .cpu_soa import color_closure
         al, Ks, cats = ti.tables
-        aln, Ksn, cn = _f64c(al), _f64c(Ks), _i64(cats)
-        return lambda q, t: _cast3(*_pharm_color_grad_kernel(A, B, q, t, At, Bt, aln, Ksn, cn,
-                                                             Nr, Mr, True))
+        return color_closure(_f32c(ti.ref[0]), _f32c(ti.fit[0]), _i64(ti.ref[1]),
+                             _i64(ti.fit[1]), Nr, Mr, _f64c(al), _f64c(Ks), _i64(cats))
     if kind == "pharm":
-        from .cpu import _pharm_grad_dq_kernel
-        A, VA, TA = _f32c(ti.ref[0]), _f32c(ti.ref[1]), _i64(ti.ref[2])
-        B, VB, TB = _f32c(ti.fit[0]), _f32c(ti.fit[1]), _i64(ti.fit[2])
+        from .cpu_soa import pharm_closure
         al, Ks, cats = ti.tables
-        aln, Ksn, cn = _f64c(al), _f64c(Ks), _i64(cats)
-        return lambda q, t: _cast3(*_pharm_grad_dq_kernel(A, B, q, t, TA, TB, VA, VB, aln, Ksn,
-                                                          cn, Nr, Mr, True))
+        return pharm_closure(_f32c(ti.ref[0]), _f32c(ti.ref[1]), _i64(ti.ref[2]),
+                             _f32c(ti.fit[0]), _f32c(ti.fit[1]), _i64(ti.fit[2]), Nr, Mr,
+                             _f64c(al), _f64c(Ks), _i64(cats))
     if kind == "avoid":
         from .cpu import _avoid_grad_kernel
         AV = _f32c(ti.ref[0]); B = _f32c(ti.fit[0]); d0 = float(params["avoid_min_dist"])
@@ -295,7 +257,6 @@ def run_fused(pr, steps, lr, es_patience, es_tol):
     """Run ``pr`` (an assembled :class:`~drivers.engine.Problem`, replicated layout, CPU fp32)
     through the fused loop. Returns torch ``(best, bq, bt)`` on the problem's device."""
     import torch
-    _warn_if_no_svml()
     spec = pr.spec
     P = int(pr.q.shape[0])
     S = int(pr.P) or P

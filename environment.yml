@@ -1,9 +1,9 @@
-# Conda environment for shepherd-score with the SVML-enabled numba build used by the CPU kernels.
+# Conda environment for shepherd-score with the SVML-enabled numba build used by the fp64 CPU kernels.
 # SVML needs numba < 0.62 (numba 0.62 dropped it). numba, llvmlite and icc_rt come from pip:
 # conda-forge's llvmlite lost SVML at 0.44 (numba 0.61), and the PyPI wheels still have it, so
 # pip is the only way to get SVML together with NumPy 2.2. shepherd_score loads pip's icc_rt
-# itself (no LD_LIBRARY_PATH). Without SVML the CPU kernels still run, several times slower,
-# and warn once.
+# itself (no LD_LIBRARY_PATH). SVML is optional: the fused fp32 CPU kernels (cpu_soa.py) do not
+# use it; without it the fp64 kernels (the eager fallback) run slower.
 # Check:  python -c "import shepherd_score.accel.kernels.cpu, numba; print(numba.config.USING_SVML)"
 # GPU (Triton) kernels are not in this env: install a CUDA build of torch plus
 # `pip install "shepherd-score[gpu]"` on top.

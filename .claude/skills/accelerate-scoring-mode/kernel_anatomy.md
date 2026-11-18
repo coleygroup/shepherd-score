@@ -87,6 +87,10 @@ replay in a new process with `FSS_TRITON_CONFIGS` set before import. A profile
 freezes launch choices, not wall time or optimality. Record hardware, versions,
 inputs, profile hash, paths taken, and timing boundaries for comparisons.
 
-CPU precision and speed depend on the installed Numba/SVML path. Inspect
-`numba.core.config.USING_SVML` and the actual kernel implementation; do not
+CPU precision and speed depend on the kernel path. The fused loop's fp32 kernels
+(`kernels/cpu_soa.py`) evaluate exp2 with a polynomial and do not depend on SVML;
+the fp64 kernels in `kernels/cpu.py` (eager loop) vectorize `exp` only when
+`numba.core.config.USING_SVML` is true. A new fused term needs a `cpu_soa.py` twin
+checked against its `cpu.py` reference (see `tests/accel/test_cpu_soa_kernels.py`). Inspect
+the actual kernel implementation; do not
 borrow old machine-specific tolerances or speedups as universal guarantees.

@@ -43,7 +43,7 @@ dependencies = [
     "scipy>=1.10",
     "molscrub",
     "tqdm",
-    "numba",            # default CPU backend for the batched aligners; see [cpu] for the SVML build
+    "numba",            # default CPU backend for the batched aligners; [cpu] adds SVML (optional)
     "threadpoolctl",    # caps BLAS/OpenMP threads in the multi-GPU worker processes
 ]
 
@@ -66,8 +66,9 @@ docs = [
     "sphinx-copybutton>=0.5",
     "myst-nb>=1.0",
 ]
-# SVML-vectorized CPU kernels: llvmlite stopped building in SVML at numba 0.62. icc_rt is
-# Intel's runtime; shepherd_score/accel/kernels/_svml.py loads it from the pip install (Linux).
+# SVML for the fp64 CPU kernels (the vol_and_surf_esp ESP term, the eager fallback); the
+# fused fp32 kernels in cpu_soa.py do not use it. llvmlite stopped building in SVML at numba
+# 0.62. icc_rt is Intel's runtime; shepherd_score/accel/kernels/_svml.py loads it (Linux).
 cpu = [
     "numba>=0.59,<0.62",
     "icc_rt; sys_platform == 'linux' and platform_machine == 'x86_64'",
