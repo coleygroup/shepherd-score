@@ -1291,3 +1291,4 @@ def optimize_pharm_overlay(ref_pharms: torch.Tensor,
         best_transform = SE3_transform.cpu()[best_idx]
         best_score = scores.cpu()[best_idx]
     return best_alignment, best_aligned_vectors, best_transform, best_score
+

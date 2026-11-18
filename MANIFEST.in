@@ -1,0 +1,8 @@
+prune .claude
+recursive-include .claude/skills/design-scoring-mode *.md *.py
+recursive-include .claude/skills/accelerate-scoring-mode *.md
+prune .codex
+prune .agents
+prune docs/_build
+prune outputs
+global-exclude __pycache__ *.py[cod]

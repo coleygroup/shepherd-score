@@ -484,14 +484,14 @@ class ConsistencyEval(ConfEval):
         -------
         float : ESP similarity score of optimally aligned molecule.
         """
-        _ = mp_ref_and_relaxed.align_with_esp(
+        _ = mp_ref_and_relaxed.align_with_surf_esp(
             self.alpha,
             lam=self.lam,
             num_repeats=1,
             trans_init=False,
             use_jax=False
         )
-        esp_similarity = mp_ref_and_relaxed.sim_aligned_esp
+        esp_similarity = mp_ref_and_relaxed.sim_aligned_surf_esp
         return float(esp_similarity)
 
 
@@ -763,8 +763,8 @@ class ConditionalEval(ConfEval):
                         ))
 
             # Compute ESP-aligned surf and pharmacophore similarity scores
-            if mp_ref_and_relaxed.transform_esp is not None and self.condition in ('esp', 'all'):
-                molec_post_opt_esp_aligned = mp_ref_and_relaxed.get_transformed_molecule(mp_ref_and_relaxed.transform_esp)
+            if mp_ref_and_relaxed.transform_surf_esp is not None and self.condition in ('esp', 'all'):
+                molec_post_opt_esp_aligned = mp_ref_and_relaxed.get_transformed_molecule(mp_ref_and_relaxed.transform_surf_esp)
                 esp_aligned_molec_pair = MoleculePair(ref_mol=self.ref_molec,
                                                       fit_mol=molec_post_opt_esp_aligned,
                                                       num_surf_points=self.ref_molec.num_surf_points,
@@ -808,14 +808,14 @@ class ConditionalEval(ConfEval):
         -------
         float : ESP similarity score of optimally aligned molecule.
         """
-        _ = mp_ref_and_relaxed.align_with_esp(
+        _ = mp_ref_and_relaxed.align_with_surf_esp(
             self.alpha,
             lam=self.lam,
             num_repeats=1,
             trans_init=False,
             use_jax=False
         )
-        esp_similarity = mp_ref_and_relaxed.sim_aligned_esp
+        esp_similarity = mp_ref_and_relaxed.sim_aligned_surf_esp
         return float(esp_similarity)
 
 

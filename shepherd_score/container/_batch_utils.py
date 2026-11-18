@@ -193,7 +193,7 @@ def _init_se3_batch(raw_refs, raw_fits, trans_centers_list, num_repeats):
     raw_refs, raw_fits : list of np.ndarray
         Unpadded atom coordinate arrays for each pair.
     trans_centers_list : list of np.ndarray or None
-        Per-pair translation initialisation centres, or ``None``.
+        Per-pair translation initialisation centers, or ``None``.
     num_repeats : int
         Number of random SE(3) repeats when ``trans_centers`` is ``None``.
 
@@ -230,7 +230,7 @@ def _init_se3_batch(raw_refs, raw_fits, trans_centers_list, num_repeats):
 
 def _align_vol_shmap(
     pair_data_list, num_workers, num_repeats, lr, max_num_steps, verbose,
-    num_buckets: int = 1,
+    num_buckets: int = 1, alpha: float = 0.81,
 ):
     """Parallel volumetric alignment via ``jax.shard_map`` across virtual CPU devices.
 
@@ -284,7 +284,6 @@ def _align_vol_shmap(
         raw_refs, raw_fits, trans_centers_list, num_repeats
     )
 
-    alpha = 0.81
     n_devices = len(jax.devices())
 
     # Build bucket index lists.
@@ -388,7 +387,7 @@ def _align_vol_worker(args):
     Parameters
     ----------
     args : tuple
-        ``(pair_data_list, num_repeats, lr, max_num_steps, verbose)`` where
+        ``(pair_data_list, num_repeats, lr, max_num_steps, verbose, alpha)`` where
         ``pair_data_list`` is a list of ``(ref_pos, fit_pos, trans_centers)``
         tuples (all plain numpy arrays; ``trans_centers`` may be ``None``).
 
@@ -396,7 +395,7 @@ def _align_vol_worker(args):
     -------
     list of (score, se3_transform, aligned_pts) tuples
     """
-    pair_data_list, num_repeats, lr, max_num_steps, verbose = args
+    pair_data_list, num_repeats, lr, max_num_steps, verbose, alpha = args
 
     try:
         import jax.numpy as jnp
@@ -421,7 +420,7 @@ def _align_vol_worker(args):
             fit_points=jnp.array(fit_pad),
             mask_ref=jnp.array(mask_ref),
             mask_fit=jnp.array(mask_fit),
-            alpha=0.81,
+            alpha=alpha,
             num_repeats=num_repeats,
             trans_centers=trans_centers,
             lr=lr,
@@ -443,7 +442,7 @@ def _align_vol_esp_worker(args):
     Parameters
     ----------
     args : tuple
-        ``(pair_data_list, lam, num_repeats, lr, max_num_steps, verbose)``
+        ``(pair_data_list, lam, num_repeats, lr, max_num_steps, verbose, alpha)``
         where each element of ``pair_data_list`` is
         ``(ref_pos, fit_pos, ref_charges, fit_charges, trans_centers)``
         (all plain numpy arrays; ``trans_centers`` may be ``None``).
@@ -452,7 +451,7 @@ def _align_vol_esp_worker(args):
     -------
     list of (score, se3_transform, aligned_pts) tuples
     """
-    pair_data_list, lam, num_repeats, lr, max_num_steps, verbose = args
+    pair_data_list, lam, num_repeats, lr, max_num_steps, verbose, alpha = args
 
     try:
         import jax.numpy as jnp
@@ -482,7 +481,7 @@ def _align_vol_esp_worker(args):
             fit_charges=jnp.array(fit_ch),
             mask_ref=jnp.array(mask_ref),
             mask_fit=jnp.array(mask_fit),
-            alpha=0.81,
+            alpha=alpha,
             lam=lam,
             num_repeats=num_repeats,
             trans_centers=trans_centers,
@@ -747,7 +746,7 @@ def _align_pharm_worker(args):
 
 def _align_vol_esp_shmap(
     pair_data_list, num_workers, lam, num_repeats, lr, max_num_steps, verbose,
-    num_buckets: int = 1,
+    num_buckets: int = 1, alpha: float = 0.81,
 ):
     """Parallel masked volumetric ESP alignment via ``jax.shard_map``.
 
@@ -788,7 +787,6 @@ def _align_vol_esp_shmap(
         raw_refs, raw_fits, trans_centers_list, num_repeats
     )
 
-    alpha = 0.81
     n_devices = len(jax.devices())
 
     if num_buckets <= 1:

@@ -1,9 +1,8 @@
 Profile Containers
 ==================
 
-Structured containers for extracted interaction profiles, used internally by
-:class:`~shepherd_score.container.Molecule` and available for serialization and
-visualization.
+Containers for extracted interaction profiles. :class:`~shepherd_score.container.Molecule`
+stores its surface and pharmacophores in them, and the visualization functions accept them.
 
 .. autoclass:: shepherd_score.container.profiles.Surface
    :members:
@@ -12,5 +11,5 @@ visualization.
    :show-inheritance:
 
 ``Pharmacophore`` is defined in :mod:`shepherd_score.pharm_utils.pharmacophore`
-and re-exported from :mod:`shepherd_score.container` for convenience. See
+and re-exported from :mod:`shepherd_score.container`. See
 :doc:`../pharmacophore` for priority-label semantics.

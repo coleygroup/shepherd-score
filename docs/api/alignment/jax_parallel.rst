@@ -5,9 +5,9 @@ JAX Parallel Alignment
 
 .. note::
 
-   ``XLA_FLAGS`` **must** be set **before any JAX import** so that
+   ``XLA_FLAGS`` must be set before JAX is imported so that
    ``len(jax.devices())`` equals the desired number of virtual CPU devices.
-   Place the following lines at the very top of your script:
+   Put these lines at the top of the script:
 
    .. code-block:: python
 
@@ -18,18 +18,17 @@ JAX Parallel Alignment
 This module provides multi-device volumetric alignment using
 :func:`jax.shard_map`.  It is the backend called by
 :meth:`shepherd_score.container.MoleculePairBatch.align_with_vol` when
-``use_shmap=True``.
+``backend="jax", use_shmap=True``.
 
 Overview
 --------
 
 :func:`optimize_ROCS_overlay_jax_vol_shmap` distributes a flat batch of
-molecule pairs across virtual CPU devices without any Python-level
-``multiprocessing``.  Key properties:
+molecule pairs across virtual CPU devices in a single process:
 
 * Accepts **flat** ``(total, ...)`` arrays where ``total`` is the number of
-  pairs padded to a multiple of ``len(jax.devices())``.  Do **not**
-  pre-reshape to ``(n_devices, B, ...)``.
+  pairs padded to a multiple of ``len(jax.devices())``.  Do not
+  reshape to ``(n_devices, B, ...)``.
 * Internally wraps ``_per_pair_optimize_vol_mask_scan`` (from
   :mod:`shepherd_score.alignment._jax`) in ``vmap``, then distributes via
   ``shard_map`` with ``PartitionSpec('i')`` on the leading axis.
@@ -37,13 +36,12 @@ molecule pairs across virtual CPU devices without any Python-level
   ``(max_num_steps, n_devices)`` so the XLA kernel is compiled only once
   per unique ``(steps, device-count)`` combination.
 * Uses ``lax.scan`` for a fixed number of steps (no convergence-based early
-  stopping).  This enables full ahead-of-time compilation; typical speedup is
-  ~2.8× on 4 CPU cores compared to sequential JAX alignment.
+  stopping), which enables full ahead-of-time compilation.
 
 Usage via the high-level API
 -----------------------------
 
-The recommended entry point is
+The usual entry point is
 :meth:`~shepherd_score.container.MoleculePairBatch.align_with_vol`:
 
 .. code-block:: python
@@ -57,18 +55,18 @@ The recommended entry point is
    batch = MoleculePairBatch(pairs)
 
    # Default: single pass (n_buckets=1)
-   scores, aligned = batch.align_with_vol(num_workers=4, use_shmap=True)
+   scores, aligned = batch.align_with_vol(backend="jax", num_workers=4, use_shmap=True)
 
    # Bucketed: useful for >10k pairs with diverse molecule sizes
-   scores, aligned = batch.align_with_vol(num_workers=4, use_shmap=True, n_buckets=8)
+   scores, aligned = batch.align_with_vol(backend="jax", num_workers=4, use_shmap=True, num_buckets=8)
 
 See :doc:`../container/molecule_pair_batch` for details on bucketing and masking strategy.
 
 Direct usage
 ------------
 
-Pre-compute self-overlaps and SE(3) initialisations **outside** the function
-(they are invariant to the optimisation loop), then call:
+Pre-compute self-overlaps and SE(3) initializations outside the function
+(they do not change during optimization), then call:
 
 .. code-block:: python
 
@@ -81,7 +79,7 @@ Pre-compute self-overlaps and SE(3) initialisations **outside** the function
        mask_fit_batch,  # (total, M)
        VAA_batch,       # (total,)  pre-computed ref self-overlaps
        VBB_batch,       # (total,)  pre-computed fit self-overlaps
-       se3_init_batch,  # (total, R, 7)  pre-initialised SE(3) params
+       se3_init_batch,  # (total, R, 7)  initial SE(3) params
        alpha=0.81,
        lr=0.1,
        max_num_steps=200,

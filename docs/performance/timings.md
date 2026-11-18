@@ -1,100 +1,100 @@
-Alignment Throughput
-====================
+# Alignment throughput
 
-The following reports throughput for several alignment modes on a Linux HPC system.
-They summarize how backend and batching choices affect wall-clock cost across workloads.
+**Procedure.** Timings run after warmup and do not include:
 
-## Experiment
-Experiments use 98 diverse drugs (50–800 g/mol), randomly paired under a fixed seed with shared embedded conformers.
-Alignments are run through the `MoleculePair` and `MoleculePairBatch` APIs, which wrap the same optimization routines.
-The figure below focuses on volumetric, volumetric + ESP (partial charge), and pharmacophore alignment for pair counts from 10 to 10,000 at each order of magnitude.
+- molecular preparation (building conformers, surfaces and so on),
+- building the screening index,
+- assembling the batches of pairs for pairwise alignment.
 
-We also vary the number of SE(3) initializations (`num_repeats`) at 1, 5, and 50.
-The default in `MoleculePair` and `MoleculePairBatch` is 50, which matters most for surface and surface + ESP similarity; for non-surface modes, five repeats are typically adequate.
-The five-initialization setting corresponds to one identity alignment plus four principal-component–based starts.
-The four principal-component starts match the intiialization count in RDKit/PubChem shape–color alignment.
-Tabulated results below therefore use `num_repeats = 5`.
+On GPU, the Triton kernels use fixed, pre-tuned settings.
 
-> Note:
-For the sequential alignments, `optimize_{*}_overlay{*}` functions were directly used rather than through the API call in MoleculePair.
+**Hardware.** GPU: NVIDIA L40S. CPU: a single AMD EPYC 9474F core, running Numba 0.59.1 with SVML.
 
-## Benchmark results
+![Screening throughput versus library size, and comparisons with open-source packages](throughput_timings.png)
 
-At small batch sizes, the PyTorch analytical-gradient path is generally fastest and remains the default in `MoleculePair` as it is easily parallelizable via multiprocessing across devices--unlike Jax.
-For longer runs where the number of pairs grows, padded-batch Jax (`MoleculePairBatch` which  unifies shapes under-the-hood) improves throughput once alignment count is on the order of 100 or higher, chiefly because a single JIT compilation amortizes over the batch.
-Additional speedup is possible with multi-device parallelism via `shard_map`; the gain may be hardware- and environment-dependent.
-Bucketing groups similarly sized molecules to reduce padding overhead but increases the number of distinct compiled kernels, so it trades wasted arithmetic against compilation cost; it is most valuable when molecular size varies widely across the set.
+*Left: screening throughput versus library size on one GPU (solid) and one CPU
+core (dashed). Right: CPU screening ($N=10^3$), GPU screening ($N=10^7$) and GPU
+pairwise alignment ($N=10^5$), with external tools shown as open numbered markers.*
 
+GPU screening throughput rises with library size as larger batches fill the
+GPU, levels off above $N=10^5$, and stays there through $N=10^7$.
 
-![Log-log plot of timings](benchmark_results_log.png)
+## Main modes
 
-## Tabulated throughput for different modalities at `num_repeats = 5`
+Alignments per second. $N$ is the number of conformers screened or pairs
+aligned. Pairwise results use 250 query compounds and 400 disjoint library
+compounds, one conformer each.
 
-The tables list throughputs for `num_repeats = 5` by modality.
-Configurations that exhausted memory—notably batched surface and surface+ESP runs—are omitted; batched surface alignment is not recommended in this setting.
-Sequential alignment via `MoleculePair` for Jax and PyTorch modalities were only evaluated for <100 pairs because these do not scale.
-Multiprocessed `MoleculePairBatch` was evaluated for >100 pairs.
+| Mode | CPU screen<br>$N=10^3$ | CPU pairwise<br>$N=10^3$ | GPU screen<br>$N=10^5$ | GPU screen<br>$N=10^7$ | GPU pairwise<br>$N=10^5$ |
+|---|---:|---:|---:|---:|---:|
+| `vol` | 2,470.5 | 2,020.2 | 904,715 | 1,034,608 | 118,293 |
+| `vol_esp` | 841.6 | 797.4 | 363,972 | 368,212 | 82,823 |
+| `surf` | 25.7 | 37.5 | 51,327 | 50,726 | 40,090 |
+| `surf_esp` | 28.2 | 34.7 | 32,510 | 29,838 | 25,863 |
+| `vol_and_surf_esp` | 19.0 | 19.4 | 18,049 | 17,839 | 13,401 |
+| `pharm` | 574.1 | 515.2 | 165,546 | 170,039 | 63,658 |
+| `vol_color` | 813.0 | 682.0 | 332,361 | 348,793 | 60,728 |
+| `vol_lipo` | 468.4 | 409.8 | 215,118 | 209,397 | 58,493 |
 
+At these GPU pairwise rates, one million conformer pairs take 8.5 s (`vol`) to
+75 s (`vol_and_surf_esp`).
 
-### Volumetric alignment — alignments/s
+## Additional modes evaluated in the SI
 
-| Approach | n = 10 | n = 100 | n = 1000 | n = 10000 |
+Same workloads as above. These modes were not run at $N=10^7$.
+
+| Mode | CPU screen<br>$N=10^3$ | CPU pairwise<br>$N=10^3$ | GPU screen<br>$N=10^5$ | GPU pairwise<br>$N=10^5$ |
 |---|---:|---:|---:|---:|
-| Jax Volume | 0.30 | 2.05 | - | - |
-| PyTorch (autodiff) | 0.39 | 6.35 | - | - |
-| PyTorch (analytical) | 1.00 | 12.54 | - | - |
-| Jax Batch (1 bucket) | **15.54** | **59.57** | 103.69 | 110.59 |
-| Jax Batch (4 buckets) | <u>5.63</u> | <u>42.63</u> | 101.42 | 103.18 |
-| Jax Batch (8 buckets) | 3.08 | 25.01 | 93.00 | 120.69 |
-| Jax Batch (4 cpus, 4 buckets) | - | 41.51 | **255.56** | <u>484.05</u> |
-| Jax Batch (8 cpus, 8 buckets) | - | 31.99 | <u>225.60</u> | **506.64** |
+| `vol_pharm` | 280.0 | 234.0 | 98,648 | 39,251 |
+| `vol_atomtype` | 267.7 | 258.6 | 258,022 | 57,971 |
+| `vol_mr` | 323.2 | 294.3 | 214,050 | 57,154 |
+| `surf_tversky` | 20.6 | 37.5 | 38,053 | 31,136 |
+| `surf_esp_tversky` | 19.6 | 34.7 | 32,472 | 25,846 |
+| `vol_and_surf_esp_tversky` | 19.0 | 19.5 | 18,112 | 13,071 |
+| `vol_color_tversky` | 789.8 | 678.6 | 331,031 | 61,817 |
+| `vol_lipo_tversky` | 475.3 | 406.2 | 211,608 | 51,847 |
+| `pharm_tversky` | 572.6 | 510.0 | 163,818 | 62,641 |
+| `vol_fukui` | 461.7 | 409.7 | 213,585 | 58,101 |
 
-### Volumetric + ESP alignment — alignments/s
+`vol_tversky`, `vol_esp_tversky`, `vol_avoid`, `vol_color_avoid` and `vol_color_avoid_tversky` were not timed. The `_tversky`
+names are the registry modes that `similarity="tversky"` runs on the batched backends.
 
-| Approach | n = 10 | n = 100 | n = 1000 | n = 10000 |
-|---|---:|---:|---:|---:|
-| Jax Volume+ESP | <u>6.52</u> | 1.58 | - | - |
-| PyTorch (autodiff) | 0.19 | 5.57 | - | - |
-| PyTorch (analytical) | 0.29 | 9.84 | - | - |
-| Jax Batch (1 bucket) | **14.35** | **72.49** | 81.25 | 123.70 |
-| Jax Batch (4 buckets) | 4.54 | 37.55 | 81.90 | 121.04 |
-| Jax Batch (8 buckets) | 3.02 | 23.59 | 115.76 | 143.04 |
-| Jax Batch (4 cpus, 4 buckets) | - | <u>40.92</u> | **299.10** | <u>468.43</u> |
-| Jax Batch (8 cpus, 8 buckets) | - | 26.68 | <u>212.16</u> | **506.33** |
+## Comparison with open-source tools
 
-### Pharmacophore alignment — alignments/s
+Alignments per second on the same hardware and workloads as above. Dashes
+mark configurations that were not measured or that the tool does not provide.
 
-| Approach | n = 10 | n = 100 | n = 1000 | n = 10000 |
-|---|---:|---:|---:|---:|
-| Jax Pharmacophore (base) | 2.01 | 0.91 | - | - |
-| Jax Pharmacophore (vectorized) | 3.73 | 2.00 | - | - |
-| PyTorch (autodiff) | 3.77 | 3.68 | - | - |
-| PyTorch (analytical) | <u>11.90</u> | 9.45 | - | - |
-| Jax Batch (1 bucket) | **14.15** | **47.61** | 68.13 | 67.26 |
-| Jax Batch (4 buckets) | 5.17 | <u>44.84</u> | 89.49 | 106.80 |
-| Jax Batch (8 buckets) | 4.25 | 2.29 | 95.04 | 164.53 |
-| Jax Batch (4 cpus, 4 buckets) | - | 44.08 | **294.72** | <u>492.94</u> |
-| Jax Batch (8 cpus, 8 buckets) | - | 26.46 | <u>216.67</u> | **532.53** |
+| Tool | Mode | CPU screen<br>$N=10^3$ | CPU pairwise<br>$N=10^3$ | GPU screen<br>$N=10^5$ | GPU screen<br>$N=10^7$ | GPU pairwise<br>$N=10^5$ |
+|---|---|---:|---:|---:|---:|---:|
+| `shepherd-score` | `vol` | 2,470.5 | 2,020.2 | 904,715 | 1,034,608 | 118,293 |
+| RDKit | `vol` | 726.2 | – | – | – | – |
+| PheSA | `vol` | 186.0 | – | – | – | – |
+| ShaEP | `vol` | 22.5 | – | – | – | – |
+| ROSHAMBO2 | `vol` | – | – | 887,880 | 948,736 | 7,415 |
+| `shepherd-score` | `vol_color` | 813.0 | 682.0 | 332,361 | 348,793 | 60,728 |
+| RDKit | `vol_color` | 666.5 | – | – | – | – |
+| ROSHAMBO2 | `vol_color` | – | – | 141,254 | 170,289 | 1,323 |
+| `shepherd-score` | `pharm` | 574.1 | 515.2 | 165,546 | 170,039 | 63,658 |
+| PheSA | `pharm` | 179.7 | – | – | – | – |
+| Pharao/Align-it | `pharm` | 1,533.4 | – | – | – | – |
+| `shepherd-score` | `vol_and_surf_esp` | 19.0 | 19.4 | 18,049 | 17,839 | 13,401 |
+| ShaEP | `vol_and_surf_esp` | 22.5 | – | – | – | – |
+| ESP-Sim | `vol_and_surf_esp` | 187.1 | – | – | – | – |
 
-### Surface alignment — alignments/s
+## Parallel screening
 
-| Approach | n = 10 | n = 100 | n = 1000 | n = 10000 |
-|---|---:|---:|---:|---:|
-| Jax Surface | <u>3.72</u> | <u>4.12</u> | - | - |
-| PyTorch (autodiff) | 0.88 | 1.83 | - | - |
-| PyTorch (analytical) | 1.78 | 3.70 | - | - |
-| Jax Batch (1 bucket) | **4.76** | **4.88** | **6.63** | <u>4.34</u> |
-| Jax Batch (4 cpus, 4 buckets) | - | - | - | **6.68** |
+![Speedup with CPU worker processes and GPUs for vol screening](timings_distributed.png)
 
-### Surface + ESP alignment — alignments/s
+CPU scaling uses 10,000 conformers and includes pair construction inside each
+persistent worker's timed call. 64 workers provide a 54.7x speedup using the
+in-memory `screen_parallel` function (not store-based `screen`).
 
-| Approach | n = 10 | n = 100 | n = 1000 | n = 10000 |
-|---|---:|---:|---:|---:|
-| Jax Surface+ESP | 2.65 | <u>3.80</u> | - | - |
-| PyTorch (autodiff) | 0.65 | 2.76 | - | - |
-| PyTorch (analytical) | **3.02** | **4.57** | - | - |
-| Jax Batch (1 bucket) | <u>2.85</u> | 2.30 | **2.71** | - |
+GPU scaling uses 100 million conformers with one host compute thread per GPU
+worker. One through four L40S GPUs lead to speedups of 1.99-3.94x, respectively.
 
-## Experiment results (semi-log plot)
-
-![Linear-log plot of timings](benchmark_results_linear.png)
+Many CPUs run two hardware threads per physical core (SMT, or hyper-threading),
+and the OS counts each thread as a logical CPU. In one measurement, using the
+second thread on a core made the Numba kernels only about 10% faster, whereas a
+second physical core made them about 1.8x faster. For best throughput, use one
+worker per physical core. Full description of benchmark procedures are in the
+[benchmarks repository](https://github.com/Nate-Somers/Shepherd-Score-Benchmarks).

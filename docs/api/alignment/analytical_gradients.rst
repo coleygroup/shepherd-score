@@ -1,8 +1,9 @@
 Analytical Gradients
 ====================
 
-PyTorch analytical gradient implementations for shape, ESP, and pharmacophore alignment.
-These replace autograd with hand-derived gradients for ~2–3.5x speedup.
+Hand-derived PyTorch gradients for shape, ESP, pharmacophore and shape-with-avoid
+alignment, used in place of autograd by ``MoleculePair.align(..., backend="analytical")``.
+The derivations are in :doc:`../../theory`.
 
 .. automodule:: shepherd_score.score.analytical_gradients
    :members:

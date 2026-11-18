@@ -7,6 +7,8 @@ Requires (dependent on the method chosen):
 - molscrub
 """
 
+from __future__ import annotations
+
 import subprocess
 import os
 from typing import List, Literal

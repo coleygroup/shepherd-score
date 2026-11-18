@@ -1,273 +1,110 @@
-Usage Guide
-===========
+Usage
+=====
 
-This guide covers the basic usage of shepherd-score for interaction profile extraction, 
-3D similarity scoring, alignment, and evaluation pipelines.
+Molecules and profiles
+----------------------
 
-Overview
---------
+``Molecule`` wraps an RDKit molecule with a 3D conformer and the features
+computed from it:
 
-The package has convenience wrappers and base functions. Most users should reach for the 
-convenience wrappers below; the base functions underneath are there if you need lower-level 
-control. Scoring can be done with either NumPy or Torch, but alignment requires Torch. There 
-are also JAX implementations for both scoring and alignment of gaussian overlap, ESP 
-similarity, and pharmacophore similarity.
+- ``num_surf_points`` sets the surface sample size; leave it ``None`` if no
+  surface modes are needed.
+- ``pharm_multi_vector`` turns on pharmacophore extraction. ``False`` gives one
+  vector per directional pharmacophore.
+- ``charge_model`` selects partial charges: ``"xtb_water"`` (default, xTB in
+  implicit water), ``"xtb"`` (vacuum) or ``"mmff"``. The xTB models fall back
+  to MMFF94 with a warning when xTB is unavailable. Charges can also be passed
+  in directly with ``partial_charges``.
 
-.. note::
-
-   Applicable xTB functions and evaluation pipeline evaluations are now parallelizable 
-   through the ``num_workers`` argument in the ``.evaluate`` method.
-
-Convenience Wrappers
---------------------
-
-Molecule Class
-~~~~~~~~~~~~~~
-
-:class:`shepherd_score.container.Molecule` accepts an RDKit ``Mol`` object (with an associated 
-conformer) and generates its interaction profiles, exposed via two properties:
-
-* ``.surface`` → :class:`~shepherd_score.container.profiles.Surface` (``positions``, ``esp``, ``probe_radius``)
-* ``.pharmacophore`` → :class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore` (``types``, ``positions``, ``vectors``, ``atom_ids``, ``labels``)
-
-Pass ``return_atom_ids=True`` and/or ``priority_atoms=[...]`` to :meth:`~shepherd_score.container.Molecule.get_pharmacophore` 
-to populate ``.pharmacophore.atom_ids``/``.labels``, e.g. for priority-weighted pharmacophore scoring.
-
-MoleculePair Class
-~~~~~~~~~~~~~~~~~~
-
-:class:`shepherd_score.container.MoleculePair` operates on two :class:`~shepherd_score.container.Molecule` 
-objects and prepares their ``Surface``/``Pharmacophore`` profiles for scoring and alignment.
-
-MoleculePairBatch Class
-~~~~~~~~~~~~~~~~~~~~~~~
-
-:class:`shepherd_score.container.MoleculePairBatch` operates on a list of :class:`~shepherd_score.container.MoleculePair` 
-objects and enables accelerated alignment by padding all profile arrays to a common shape so a 
-single compiled kernel is reused across every pair. Supports optional multi-CPU parallelism.
-
-Base Functions
---------------
-
-Conformer Generation
-~~~~~~~~~~~~~~~~~~~~
-
-Useful conformer generation functions are found in the :mod:`shepherd_score.conformer_generation` module.
-
-Interaction Profile Extraction
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 40 40
-
-   * - Interaction Profile
-     - Function
-     - Returns
-   * - Shape
-     - :func:`shepherd_score.extract_profiles.get_molecular_surface`
-     - ``np.ndarray`` (M,3) surface positions
-   * - Electrostatics
-     - :func:`shepherd_score.extract_profiles.get_electrostatic_potential`
-     - ``np.ndarray`` (M,) ESP per surface point
-   * - Pharmacophores
-     - :func:`shepherd_score.extract_profiles.get_pharmacophores`
-     - :class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore`
-
-:class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore` is a lightweight dataclass; it also 
-unpacks as ``types, positions, vectors = get_pharmacophores(mol)``. The surface position/ESP arrays 
-are assembled into a matching :class:`~shepherd_score.container.profiles.Surface` dataclass by 
-:class:`~shepherd_score.container.Molecule` (above). Most users won't call these extraction functions 
-or construct the containers directly.
-
-Scoring
-~~~~~~~
-
-:mod:`shepherd_score.score` contains the base scoring functions with separate modules for those 
-dependent on PyTorch (``*.py``), NumPy (``*_np.py``), and JAX (``*_jax.py``).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Similarity
-     - Function
-   * - Shape
-     - :func:`shepherd_score.score.gaussian_overlap.get_overlap`
-   * - Electrostatics
-     - :func:`shepherd_score.score.electrostatic_scoring.get_overlap_esp`
-   * - Pharmacophores
-     - :func:`shepherd_score.score.pharmacophore_scoring.get_overlap_pharm`
-
-
-Extraction Example
-------------------
-
-Extraction of interaction profiles via the :class:`~shepherd_score.container.Molecule` convenience wrapper.
+Charges are computed on first use; building a surface computes its ESP as well.
+Mesh surface sampling is random, so save and reuse surface points and ESP
+values when two runs must see identical features.
 
 .. code-block:: python
 
    from shepherd_score.conformer_generation import embed_conformer_from_smiles
-   from shepherd_score.conformer_generation import charges_from_single_point_conformer_with_xtb
-   from shepherd_score.container import Molecule
+   from shepherd_score.container import Molecule, MoleculePair, MoleculePairBatch
 
-   # Embed conformer with RDKit and partial charges from xTB
-   ref_mol = embed_conformer_from_smiles('Oc1ccc(CC=C)cc1', MMFF_optimize=True)
-   partial_charges = charges_from_single_point_conformer_with_xtb(ref_mol)
+   def prepare(smiles):
+       rd = embed_conformer_from_smiles(smiles, MMFF_optimize=True)
+       return Molecule(rd, num_surf_points=200, pharm_multi_vector=False,
+                       charge_model="mmff")
 
-   # `Molecule` extracts and owns all interaction profiles
-   ref_molec = Molecule(
-       ref_mol,
-       # optional options otherwise .surface/.pharmacophore stay empty
-       num_surf_points=200,
-       partial_charges=partial_charges,  # If None, MMFF charges
-       pharm_multi_vector=False  # recommended
-       # e.g., carbonyls get one HBA vector rather than two
-   )
+   ref, fit = prepare("CCOc1ccccc1"), prepare("CCNc1ccccc1")
+   pair = MoleculePair(ref, fit, num_surf_points=200)
 
-   # Surface point cloud + electrostatic potential
-   surf_pos = ref_molec.surface.positions  # np.array (200,3)
-   esp = ref_molec.surface.esp  # np.array (200,)
+Pass the same ``num_surf_points`` to ``MoleculePair`` when using surface modes; the
+pair checks its own value, not the molecules'.
 
-   # Pharmacophores as a `Pharmacophore` container, unpacks as (types, positions, vectors)
-   # ref_molec.pharmacophore.types: np.array (P,)
-   # ref_molec.pharmacophore.{positions/vectors}: np.array (P,3)
-   pharm = ref_molec.pharmacophore
-
-3D Similarity Scoring Example
------------------------------
-
-An example of scoring the similarity of two different molecules using 3D surface, ESP, and 
-pharmacophore similarity metrics:
-
-.. code-block:: python
-
-   from shepherd_score.score.constants import ALPHA
-   from shepherd_score.conformer_generation import embed_conformer_from_smiles
-   from shepherd_score.conformer_generation import optimize_conformer_with_xtb
-   from shepherd_score.container import Molecule, MoleculePair
-
-   # Embed a random conformer with RDKit
-   ref_mol_rdkit = embed_conformer_from_smiles('Oc1ccc(CC=C)cc1', MMFF_optimize=True)
-   fit_mol_rdkit = embed_conformer_from_smiles('O=CCc1ccccc1', MMFF_optimize=True)
-
-   # Local relaxation with xTB
-   ref_mol, _, ref_charges = optimize_conformer_with_xtb(ref_mol_rdkit)
-   fit_mol, _, fit_charges = optimize_conformer_with_xtb(fit_mol_rdkit)
-
-   # Extract interaction profiles
-   ref_molec = Molecule(ref_mol,
-                        num_surf_points=200,
-                        partial_charges=ref_charges,
-                        pharm_multi_vector=False)
-   fit_molec = Molecule(fit_mol,
-                        num_surf_points=200,
-                        partial_charges=fit_charges,
-                        pharm_multi_vector=False)
-
-   # Centers the two molecules' COM's to the origin
-   mp = MoleculePair(ref_molec, fit_molec, num_surf_points=200, do_center=True)
-
-   # Compute the similarity score for each interaction profile
-   shape_score = mp.score_with_surf(ALPHA(mp.num_surf_points))
-   esp_score = mp.score_with_esp(ALPHA(mp.num_surf_points), lam=0.3)
-   pharm_score = mp.score_with_pharm()
-
-Alignment Example
+Aligning one pair
 -----------------
 
-Next we show alignment using the same :class:`~shepherd_score.container.MoleculePair` class.
+``MoleculePair.align`` takes a mode name and that mode's parameters, runs the
+PyTorch optimizer and returns an ``AlignmentResult`` with ``score``,
+``transform`` and ``aligned``. ``MoleculePair.score`` scores the current poses
+without optimizing.
 
 .. code-block:: python
 
-   # Centers the two molecules' COM's to the origin
-   mp = MoleculePair(ref_molec, fit_molec, num_surf_points=200, do_center=True)
+   res = pair.align("surf_esp", lam=0.3)
+   res = pair.align("vol", similarity="tversky_ref", num_repeats=20)
+   pair.score("vol_color", color_weight=0.3)
 
-   # Align fit_molec to ref_molec with your preferred objective function
-   # By default we use automatic differentiation via pytorch
-   surf_points_aligned = mp.align_with_surf(ALPHA(mp.num_surf_points),
-                                            num_repeats=50)
-   surf_points_esp_aligned = mp.align_with_esp(ALPHA(mp.num_surf_points),
-                                               lam=0.3,
-                                               num_repeats=50)
-   pharm_pos_aligned, pharm_vec_aligned = mp.align_with_pharm(num_repeats=50)
+The ``align_with_<mode>`` methods do the same and also store the score and
+transform on the pair (``sim_aligned_<mode>``, ``transform_<mode>``).
 
-   # Optimal scores and SE(3) transformation matrices are stored as attributes
-   # mp.sim_aligned_surf, mp.sim_aligned_esp, mp.sim_aligned_pharm
-   # mp.transform_surf, mp.transform_esp, mp.transform_pharm
-
-   # Get a copy of the optimally aligned fit Molecule object
-   transformed_fit_molec = mp.get_transformed_molecule(
-       se3_transform=mp.transform_surf  # or mp.transform_esp, mp.transform_pharm
-   )
-
-Alignment of multiple :class:`~shepherd_score.container.MoleculePair` objects can be accelerated 
-with :class:`~shepherd_score.container.MoleculePairBatch` with JAX installed.
+Aligning many pairs
+-------------------
 
 .. code-block:: python
 
-   from shepherd_score.container import MoleculePairBatch
+   scores, aligned = MoleculePairBatch([pair]).align_with_vol(backend="numba")
 
-   batch = MoleculePairBatch(pairs)  # `pairs` is a list of MoleculePair objects
+``MoleculePairBatch`` runs the batched kernels: ``backend="numba"`` on CPU and
+``backend="triton"`` on GPU. The default picks Triton when CUDA is available.
+``backend="jax"`` and ``backend="torch"`` run the reference optimizers.
+Results are written to each pair as with ``MoleculePair.align_with_<mode>``.
+Pass ``return_aligned=True`` to also get the aligned coordinates.
 
-   # accelerated JAX-based volumetric alignment via padding
-   scores, aligned = batch.align_with_vol()
-
-   # Multi-CPU parallel via shard_map (must set XLA_FLAGS *before* importing JAX)
-   scores, aligned = batch.align_with_vol(num_workers=4, num_buckets=4, use_shmap=True)
-
-Visualization
+Scoring modes
 -------------
 
-Utilize py3dmol to visualize the molecule and its interaction profiles.
+``vol`` and ``surf`` compare heavy-atom and surface point clouds. ``vol_esp``
+and ``surf_esp`` weight overlaps by partial charge and surface potential.
+``pharm`` compares typed, directional pharmacophores. ``vol_color``,
+``vol_lipo``, ``vol_mr``, ``vol_fukui``, ``vol_atomtype`` and ``vol_pharm``
+blend shape with another atomic feature. ``vol_and_surf_esp`` combines shape
+with a masked surface-potential agreement term. ``vol_avoid`` subtracts an
+excluded-volume penalty and needs an ``avoid_points`` array.
+
+``similarity=`` sets how an overlap becomes a score: ``"tanimoto"`` (default),
+``"tversky"``, ``"tversky_ref"``, ``"tversky_fit"`` or explicit weights
+``(a, b)``. See :doc:`theory` for the formulas.
+
+Default seeds, step budgets and early-stopping patience for the batched
+kernels are in ``shepherd_score/accel/_modes.py``.
+
+Screening
+---------
 
 .. code-block:: python
 
-   from shepherd_score.visualize import draw_molecule
+   from shepherd_score.screen import ProfileStore, screen
 
-   draw_molecule(molec)
+   with ProfileStore.create("library.fss", num_surf_points=200,
+                            modes=["vol", "surf_esp"]) as store:
+       store.add(fit, id="compound-1")
+   hits = screen(ref, ProfileStore.open("library.fss"), mode="vol", top_k=1)
 
-Evaluation Pipelines
---------------------
+A store keeps only the arrays its declared modes need, and every molecule and
+query must use the same ``num_surf_points``. Returned transforms are in the
+library molecule's input frame. See :doc:`api/screening` for multi-query and
+multi-GPU screening.
 
-We implement three evaluations of generated 3D conformers. Evaluations can be done on an 
-individual basis or in a pipeline. Here we show the most basic use case in the unconditional setting.
+Evaluation
+----------
 
-* **ConfEval**: Checks validity, pre-/post-xTB relaxation, calculates 2D graph properties
-* **ConsistencyEval**: Inherits from ``ConfEval`` and evaluates the consistency of the 
-  molecule's jointly generated interaction profiles with the true interaction profiles using 
-  3D similarity scoring functions
-* **ConditionalEval**: Inherits from ``ConfEval`` and evaluates the 3D similarity between 
-  generated molecules and the target molecule
-
-.. note::
-
-   Evaluations can be run from any molecule's atomic numbers and positions with explicit 
-   hydrogens (i.e., straight from an xyz file). Pass ``timeout_minutes`` to cap per-molecule 
-   xTB wall time in ``ConfEval``, ``ConditionalEval``, and pipeline ``.evaluate()`` calls; 
-   timed-out molecules are recorded as failed. xTB optimization functions in
-   :mod:`shepherd_score.conformer_generation` also accept a ``timeout`` (seconds).
-
-Example:
-
-.. code-block:: python
-
-   from shepherd_score.evaluations.evaluate import ConfEval
-   from shepherd_score.evaluations.evaluate import UnconditionalEvalPipeline
-
-   # ConfEval evaluates the validity of a given molecule, optimizes it with xTB,
-   #   and also computes various 2D graph properties
-   # `atom_array` np.ndarray (N,) atomic numbers of the molecule (with explicit H)
-   # `position_array` np.ndarray (N,3) atom coordinates for the molecule
-   conf_eval = ConfEval(atoms=atom_array, positions=position_array)
-
-   # Alternatively, if you have a list of molecules you want to test:
-   uncond_pipe = UnconditionalEvalPipeline(
-       generated_mols=[(a, p) for a, p in zip(atom_arrays, position_arrays)]
-   )
-   uncond_pipe.evaluate(num_workers=4)
-
-   # Properties are stored as attributes and can be converted into pandas df's
-   global_series, sample_df = uncond_pipe.to_pandas()
-
-For more detailed examples, see the Jupyter notebooks in the ``examples/`` directory of the repository.
+``scripts/README.md`` lists the scripts that evaluate generated ShEPhERD
+samples. Throughput and retrieval benchmarks are in the paper repository. The
+tutorials cover profile extraction, scoring and evaluation; their xTB examples
+need the xTB executable.

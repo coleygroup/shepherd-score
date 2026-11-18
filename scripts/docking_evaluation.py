@@ -66,12 +66,13 @@ def docking_experiment_evaluation(pdb_id: str, sample_idx, file_path, save_path_
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--load-dir-path', type=str, help='Path to directory to load files.')
-    parser.add_argument('--task-id', type=int, help='Task ID.')
-    parser.add_argument('--num-tasks', type=int, help='Number of tasks.')
+    parser.add_argument('--load-dir-path', type=str, required=True, help='Path to directory to load files.')
+    parser.add_argument('--task-id', type=int, default=0, help='Task ID.')
+    parser.add_argument('--num-tasks', type=int, default=1, help='Number of tasks.')
     parser.add_argument('--sample-idx', type=int, required=True, help='Index used to load the file. [0,6]')
     args = parser.parse_args()
-    print(args)
+    if args.num_tasks < 1 or not 0 <= args.task_id < args.num_tasks:
+        parser.error("require num-tasks >= 1 and 0 <= task-id < num-tasks")
 
     load_dir = Path(args.load_dir_path)
     if not load_dir.is_dir():

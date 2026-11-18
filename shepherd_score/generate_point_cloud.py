@@ -5,19 +5,43 @@ molecular surfaces.
 Surface generation workflow adapted from Open Drug Discovery Toolkit:
     https://oddt.readthedocs.io/en/latest/_modules/oddt/surface.html
 """
-from typing import Tuple, List
+from __future__ import annotations   # annotations as strings -> o3d not needed at import
+
+from typing import Tuple, List, Union
 
 import numpy as np
-from shepherd_score.score.constants import COULOMB_SCALING
-import open3d as o3d
-
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from scipy.spatial import distance
-from typing import Union
+from scipy.special import logsumexp
+
+from shepherd_score.score.constants import COULOMB_SCALING
+
+
+# Open3D is imported lazily, on first use: its import is slow and it is fork-hostile
+# (importing it before a fork breaks CUDA in the child, which the fork-based multi-GPU
+# pool in shepherd_score.accel.multi_gpu relies on). Only surface generation needs it.
+class _LazyOpen3D:
+    def __getattr__(self, attr):
+        import open3d as _o3d
+        globals()["o3d"] = _o3d          # swap the proxy out for the real module
+        return getattr(_o3d, attr)
+
+
+o3d = _LazyOpen3D()
 
 PT = Chem.GetPeriodicTable()
+
+# Defaults for the opt-in mesh-free surfacer (get_molecular_surface_smooth_sdf); only used
+# when method='smooth_sdf' is requested.
+SMOOTH_SDF_S = 10.0       # smooth-min sharpness: smaller rounds the concave atom-border seams
+                          # more, larger approaches the sharp sphere union
+SMOOTH_SDF_NSPA = 15      # candidate samples per atom (the mesh path needs 25 to mesh)
+SMOOTH_SDF_ITERS = 6      # Newton projection steps
+SMOOTH_SDF_KNN = 8        # nearest atoms per point in the smooth-min (cost ~ O(M*knn))
+SMOOTH_SDF_JITTER = 0.0   # extra off-sphere jitter (Angstrom) to mimic mesh facet noise
+SMOOTH_SDF_EVEN = 'fps'   # 'fps' (even, blue-noise-like) or 'random' resample-to-count
 
 
 def get_atom_coords(mol: rdkit.Chem.Mol,
@@ -53,6 +77,7 @@ def get_atom_coords(mol: rdkit.Chem.Mol,
             Chem.AllChem.EmbedMolecule(mol, maxAttempts = 200)
             if MMFF_optimize:
                 Chem.AllChem.MMFFOptimizeMolecule(mol)
+                Chem.SanitizeMol(mol)
 
             mol.GetConformer() # test whether conformer generation succeeded
         except Exception as e:
@@ -375,9 +400,16 @@ def get_molecular_surface_point_cloud(centers: np.ndarray,
 def get_molecular_surface(centers:np.ndarray,
                           radii:Union[np.ndarray, List],
                           num_points:Union[int, None] = None,
-                          num_samples_per_atom:int = 25,
+                          num_samples_per_atom:Union[int, None] = None,
                           probe_radius: float = 1.2,
                           ball_radii: List[float] = [1.2],
+                          method: str = 'mesh',
+                          sdf_s: float = SMOOTH_SDF_S,
+                          sdf_iters: int = SMOOTH_SDF_ITERS,
+                          sdf_knn: int = SMOOTH_SDF_KNN,
+                          sdf_jitter: float = SMOOTH_SDF_JITTER,
+                          even: str = SMOOTH_SDF_EVEN,
+                          seed: Union[int, None] = None,
                           ) -> np.ndarray:
     """
     Gets the point cloud representation of a molecule's van der Waals surface and outputs a
@@ -397,7 +429,8 @@ def get_molecular_surface(centers:np.ndarray,
         was left after cleaning up the atom-sampled surface point cloud.
 
     num_samples_per_atom : int, optional
-        Number of points to sample from the surface of each atom. Default is 25.
+        Number of points to sample from the surface of each atom. Default is None, which
+        lets the chosen method apply its own default (25 for ``method='mesh'``).
         Note that this value is scaled by a given atom's relative vdW radius to a carbon
         and SQUARED. Typically choose a value between 15 and 35. For example, if set to
         20, a carbon atom would have 400 sampled points.
@@ -408,19 +441,199 @@ def get_molecular_surface(centers:np.ndarray,
 
     ball_radii : list, optional
         The radius of the ball(s) used in Open3D's ball pivoting algorithm to generate
-        a triangle mesh. Default is [1.2].
+        a triangle mesh. Default is [1.2]. Only used by ``method='mesh'``.
+
+    method : str, optional
+        ``'mesh'`` (default) uses Open3D ball pivoting plus Poisson-disk resampling.
+        ``'smooth_sdf'`` uses the mesh-free, Open3D-free surfacer
+        ``get_molecular_surface_smooth_sdf``, which rounds the concave atom-border seams so
+        atom centers are not trivially recoverable from the surface.
+
+    sdf_s, sdf_iters, sdf_knn, sdf_jitter, even, seed
+        Forwarded to ``get_molecular_surface_smooth_sdf`` when ``method='smooth_sdf'``;
+        ignored otherwise.
 
     Returns
     -------
     np.ndarray
         Coordinates of points representing the molecular surface.
     """
-    pcd = get_molecular_surface_point_cloud(centers=centers, radii=radii,
-                                            num_points=num_points,
-                                            num_samples_per_atom=num_samples_per_atom,
-                                            probe_radius=probe_radius,
-                                            ball_radii=ball_radii)
-    return np.asarray(pcd.points)
+    method = (method or 'mesh').lower()
+    if method == 'mesh':
+        # None -> 25, the mesh path's default density
+        nspa = 25 if num_samples_per_atom is None else num_samples_per_atom
+        pcd = get_molecular_surface_point_cloud(centers=centers, radii=radii,
+                                                num_points=num_points,
+                                                num_samples_per_atom=nspa,
+                                                probe_radius=probe_radius,
+                                                ball_radii=ball_radii)
+        return np.asarray(pcd.points)
+    if method in ('smooth_sdf', 'sdf', 'smooth', 'fast'):
+        # None -> SMOOTH_SDF_NSPA (resolved inside)
+        return get_molecular_surface_smooth_sdf(centers=centers, radii=radii,
+                                                num_points=num_points,
+                                                num_samples_per_atom=num_samples_per_atom,
+                                                probe_radius=probe_radius,
+                                                s=sdf_s, iters=sdf_iters, knn=sdf_knn,
+                                                jitter=sdf_jitter, even=even, seed=seed)
+    raise ValueError(f"Unknown surface method {method!r}; expected 'mesh' or 'smooth_sdf'.")
+
+
+# Mesh-free smooth + stochastic surfacer (opt-in; Open3D-free). Samples the envelope of the
+# union of (vdW + probe) spheres, projects the points onto a smooth-min implicit surface
+# (rounding the concave atom-border seams so atom centers cannot be read off the surface),
+# and evenly resamples to an exact count.
+def _farthest_point_sample(points: np.ndarray, num_points: Union[int, None], start: int = 0) -> np.ndarray:
+    """Even (blue-noise-like) subsample via greedy farthest-point sampling.
+
+    Returns exactly ``min(num_points, len(points))`` points (all of them if num_points is None).
+    Deterministic given ``start``. O(num_points * len(points)).
+    """
+    P = len(points)
+    n = P if num_points is None else min(int(num_points), P)
+    if n <= 0:
+        return points[:0]
+    sel = np.empty(n, dtype=np.intp)
+    min_d2 = np.full(P, np.inf)
+    last = int(start) % P
+    for i in range(n):
+        sel[i] = last
+        d2 = np.sum((points - points[last]) ** 2, axis=1)
+        min_d2 = np.minimum(min_d2, d2)
+        min_d2[last] = -1.0           # never re-pick (handles coincident points)
+        last = int(np.argmax(min_d2))
+    return points[sel]
+
+
+def _get_masked_surface_candidates(centers: np.ndarray,
+                                   radii: Union[np.ndarray, List],
+                                   num_samples_per_atom: int = 25,
+                                   probe_radius: float = 1.2,
+                                   stochastic: bool = True,
+                                   seed: Union[int, None] = None) -> np.ndarray:
+    """Sample the outer boundary of the union of (vdW + probe) spheres.
+
+    Samples each atom's sphere and keeps the points outside every other atom's sphere, the
+    same masking ``_get_molecular_surface_mesh`` uses. ``stochastic=True`` uses the random
+    sampler; ``seed`` makes it reproducible.
+    """
+    radii = np.asarray(radii)
+    if stochastic:
+        if seed is not None:
+            _state = np.random.get_state()
+            np.random.seed(int(seed))
+        try:
+            points = sample_molecular_surface_with_radius(centers, radii, probe_radius, num_samples_per_atom)
+        finally:
+            if seed is not None:
+                np.random.set_state(_state)
+    else:
+        points = sample_molecular_surface_with_radius_fibonacci(centers, radii, probe_radius, num_samples_per_atom)
+    dist_matrix = distance.cdist(points, centers)
+    mask = np.all(dist_matrix >= radii + probe_radius - 0.01, axis=1)
+    return points[mask]
+
+
+def _smoothmin_sdf_project(points: np.ndarray,
+                           centers: np.ndarray,
+                           a: np.ndarray,
+                           s: float = SMOOTH_SDF_S,
+                           iters: int = SMOOTH_SDF_ITERS,
+                           knn: int = SMOOTH_SDF_KNN) -> np.ndarray:
+    """Project points onto the smooth-min (metaball) iso-surface ``g(x)=0`` of the sphere union,
+
+        g(x) = -(1/s) * logsumexp_i( -s * (||x - c_i|| - a_i) )
+
+    via Newton steps ``x <- x - g * grad g / ||grad g||^2`` with the analytic gradient
+    ``grad g = sum_i w_i (x-c_i)/||x-c_i||`` (softmin weights ``w_i``). Smaller ``s`` rounds
+    the concave atom-border seams more; larger ``s`` approaches the sharp sphere union. Only
+    each point's ``knn`` nearest atoms contribute, chosen once up front, so cost is O(M*knn).
+    """
+    points = np.asarray(points, dtype=np.float64)
+    centers = np.asarray(centers, dtype=np.float64)
+    a = np.asarray(a, dtype=np.float64)
+    M = len(points)
+    if M == 0:
+        return points
+    k = min(int(knn), len(centers))
+    nn = np.argpartition(distance.cdist(points, centers), k - 1, axis=1)[:, :k]  # (M,k) nearest atoms
+    C = centers[nn]                          # (M,k,3)
+    A = a[nn]                                 # (M,k)
+    X = points.copy()
+    for _ in range(int(iters)):
+        diff = X[:, None, :] - C                              # (M,k,3)
+        dist = np.sqrt(np.sum(diff * diff, axis=2)) + 1e-9    # (M,k)
+        di = dist - A
+        lse = logsumexp(-s * di, axis=1)                      # (M,)
+        w = np.exp((-s * di) - lse[:, None])                 # (M,k) softmin weights
+        g = -(1.0 / s) * lse                                 # (M,)
+        grad = np.einsum('mk,mkd->md', w, diff / dist[..., None])  # (M,3)
+        gn2 = np.sum(grad * grad, axis=1) + 1e-12
+        X = X - (g / gn2)[:, None] * grad
+    return X
+
+
+def get_molecular_surface_smooth_sdf(centers: np.ndarray,
+                                     radii: Union[np.ndarray, List],
+                                     num_points: Union[int, None] = None,
+                                     num_samples_per_atom: Union[int, None] = None,
+                                     probe_radius: float = 1.2,
+                                     s: float = SMOOTH_SDF_S,
+                                     iters: int = SMOOTH_SDF_ITERS,
+                                     knn: int = SMOOTH_SDF_KNN,
+                                     jitter: float = SMOOTH_SDF_JITTER,
+                                     even: str = SMOOTH_SDF_EVEN,
+                                     seed: Union[int, None] = None) -> np.ndarray:
+    """Mesh-free, Open3D-free smooth and stochastic molecular surface.
+
+    Samples the envelope of the union of (vdW + probe) spheres, projects the points onto the
+    smooth-min implicit iso-surface (rounding the concave atom-border seams so atom centers
+    are not trivially recoverable), optionally jitters them off the surface, and resamples
+    evenly to exactly ``num_points``. Stochastic per call unless ``seed`` is given. A model
+    trained on the mesh surface sees this surface as a distribution shift.
+
+    Parameters
+    ----------
+    centers, radii, num_points, num_samples_per_atom, probe_radius
+        As in ``get_molecular_surface``.
+    s, iters, knn
+        Smooth-min sharpness, Newton steps, and nearest-atom count (see ``_smoothmin_sdf_project``).
+    jitter : float
+        Std (Angstrom) of extra outward jitter to mimic the mesh's facet noise. Default 0.
+    even : str
+        'fps' (even, blue-noise-like; default) or 'random' resample to ``num_points``.
+    seed : int or None
+        If given, the surface is reproducible; otherwise it varies run to run.
+
+    Returns
+    -------
+    np.ndarray (num_points, 3) float32
+    """
+    if num_samples_per_atom is None:
+        num_samples_per_atom = SMOOTH_SDF_NSPA
+    candidates = _get_masked_surface_candidates(centers, radii,
+                                                num_samples_per_atom=num_samples_per_atom,
+                                                probe_radius=probe_radius,
+                                                stochastic=True, seed=seed)
+    if len(candidates) == 0:
+        return candidates.astype(np.float32)
+    a = np.asarray(radii) + probe_radius
+    surf = _smoothmin_sdf_project(candidates, centers, a, s=s, iters=iters, knn=knn)
+    if jitter and jitter > 0.0:
+        rng = np.random.default_rng(seed)
+        nn = np.argmin(distance.cdist(surf, np.asarray(centers, dtype=float)), axis=1)
+        nvec = surf - np.asarray(centers, dtype=float)[nn]
+        nvec = nvec / (np.linalg.norm(nvec, axis=1, keepdims=True) + 1e-9)
+        surf = surf + nvec * rng.normal(0.0, jitter, size=(len(surf), 1))
+    if num_points is None:
+        out = surf
+    elif (even or 'fps').lower() == 'random':
+        rng = np.random.default_rng(seed)
+        m = min(int(num_points), len(surf))
+        out = surf[rng.choice(len(surf), size=m, replace=False)]
+    else:
+        out = _farthest_point_sample(surf, num_points)
+    return np.asarray(out).astype(np.float32)
 
 
 def get_molecular_surface_point_cloud_const_density(centers: np.ndarray,
@@ -559,7 +772,8 @@ def get_electrostatics(mol: Chem.Mol, points: np.ndarray) -> np.ndarray:
     except ValueError as e:
         raise ValueError("Provided rdkit.Chem.Mol object did not have conformer embedded.", e)
 
-    molec_props = Chem.AllChem.MMFFGetMoleculeProperties(mol)
+    charge_mol = Chem.Mol(mol)
+    molec_props = Chem.AllChem.MMFFGetMoleculeProperties(charge_mol)
     if molec_props:
         charges = np.array([molec_props.GetMMFFPartialCharge(i) for i, _ in enumerate(mol.GetAtoms())])
     else:

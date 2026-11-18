@@ -145,7 +145,7 @@ if __name__=='__main__':
                         help='Path to directory to save files to.')
     parser.add_argument('--training-data', type=str, required=True,
                         help="Path to GDB training data file to randomly sample and compare scoring functions")
-    parser.add_argument('--task-id', type=str, help='Task ID.')
+    parser.add_argument('--task-id', type=int, default=0, choices=(0, 1, 2), help='Task ID.')
     args = parser.parse_args()
     print(args)
 

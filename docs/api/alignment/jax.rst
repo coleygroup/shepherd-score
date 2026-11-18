@@ -1,7 +1,7 @@
 JAX Alignment
 =============
 
-Sequential JAX-based alignment functions.  For **multi-device parallel**
+Sequential JAX-based alignment functions.  For multi-device
 alignment via ``jax.shard_map`` see :doc:`jax_parallel`.
 
 .. automodule:: shepherd_score.alignment._jax

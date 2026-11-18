@@ -1,8 +1,9 @@
 Tutorials
 =========
 
-These tutorials provide step-by-step guides for using shepherd-score. They are Jupyter 
-notebooks that you can also download and run interactively.
+Jupyter notebooks covering profile extraction, scoring, evaluation and library
+screening. Notebooks 1-3 use the single-pair API; notebook 4 introduces batched
+alignment and screening (see also :doc:`../accelerated_api`).
 
 .. toctree::
    :maxdepth: 2
@@ -10,34 +11,34 @@ notebooks that you can also download and run interactively.
    01_profiles
    02_scoring
    03_evaluation
+   04_screening
 
 Tutorial Overview
 -----------------
 
-1. **Interaction Profiles** (``01_profiles.ipynb``): Learn how to extract shape, 
-   electrostatic, and pharmacophore profiles from molecules.
+1. **Interaction Profiles** (``01_profiles.ipynb``): extracting shape,
+   electrostatic and pharmacophore profiles from molecules.
 
-2. **Scoring and Alignment** (``02_scoring.ipynb``): Compute 3D similarity scores 
-   and align molecules based on their interaction profiles.
+2. **Scoring and Alignment** (``02_scoring.ipynb``): computing 3D similarity scores
+   and aligning molecules by their interaction profiles.
 
-3. **Evaluation Pipelines** (``03_evaluation.ipynb``): Use the evaluation framework 
-   to assess generated conformers.
+3. **Evaluation Pipelines** (``03_evaluation.ipynb``): evaluating generated
+   conformers.
+
+4. **Screening** (``04_screening.ipynb``): batched alignment with
+   ``MoleculePairBatch`` and screening a library stored in a ``ProfileStore``.
 
 Running the Tutorials
 ---------------------
 
-To run these tutorials interactively, clone the repository and navigate to the 
-``examples/`` directory:
+The notebooks are in ``examples/`` of the repository (the docs build copies them into
+``docs/tutorials/``). From a checkout, install the package and open them:
 
 .. code-block:: bash
 
-   git clone https://github.com/coleygroup/shepherd-score.git
-   cd shepherd-score/examples
+   python -m pip install -e .
+   python -m pip install jupyter
+   cd examples
    jupyter notebook
 
-Make sure you have the required dependencies installed:
-
-.. code-block:: bash
-
-   pip install "shepherd-score"
-   pip install jupyter
+See :doc:`../installation` for optional GPU and xTB dependencies.

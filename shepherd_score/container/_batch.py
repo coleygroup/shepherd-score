@@ -1,10 +1,14 @@
-"""MoleculePairBatch: batch of MoleculePair objects for fast sequential JAX alignment."""
+"""Batched molecular alignment with Numba, Triton, and optional JAX backends."""
+import warnings
+from contextlib import contextmanager
 from importlib.metadata import version as _pkg_version
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
 from shepherd_score.container._core import MoleculePair
+from shepherd_score.modes import ALIASES as MODE_ALIASES, get_mode
+from shepherd_score.score.similarity import Similarity, tversky_weights
 from shepherd_score.container._batch_utils import (
     _pad_arrays,
     _dispatch_parallel,
@@ -19,6 +23,33 @@ from shepherd_score.container._batch_utils import (
     _align_esp_worker,
     _align_pharm_worker,
 )
+
+# Backend names that run the batched accel engine: Triton on CUDA, numba on CPU.
+_ACCEL_BACKENDS = ("triton", "cuda", "gpu", "numba", "cpu")
+_NUMBA_BACKENDS = ("numba", "cpu")
+
+# Optimizer defaults of the JAX and per-pair paths, as in ``MoleculePair``. The accel backends
+# use the per-mode registry defaults in ``accel/_modes.py`` instead.
+_REFERENCE_DEFAULTS = {"num_repeats": 50, "lr": 0.1, "max_num_steps": 200}
+
+
+def _resolve_backend(backend):
+    """Resolve ``backend=None`` to ``screen._default_backend()`` (``triton`` when CUDA is
+    available, else ``numba``); explicit values pass through. Imported lazily to avoid a
+    circular import."""
+    if backend is not None:
+        return backend
+    from shepherd_score.screen import _default_backend
+    return _default_backend()
+
+
+def _reference_opt(num_repeats, lr, max_num_steps):
+    """``num_repeats``, ``lr`` and ``max_num_steps`` with ``None`` replaced by the reference
+    defaults (50 / 0.1 / 200)."""
+    d = _REFERENCE_DEFAULTS
+    return (d["num_repeats"] if num_repeats is None else num_repeats,
+            d["lr"] if lr is None else lr,
+            d["max_num_steps"] if max_num_steps is None else max_num_steps)
 
 
 def _compute_bucket_splits(sizes_a, sizes_b, num_buckets):
@@ -53,101 +84,449 @@ def _compute_bucket_splits(sizes_a, sizes_b, num_buckets):
     ]
 
 
+@contextmanager
+def _pinned_torch_threads(pairs):
+    """Pin torch to one intra-op thread for the duration of a CPU batch alignment.
+
+    The numba kernels own the cores on this path (``parallel=True`` over ``NUMBA_NUM_THREADS``)
+    and torch only runs the small tails around them; left unpinned the two pools oversubscribe
+    and the tails spin-wait against the kernels. Scoped rather than set once at import because
+    ``torch.set_num_threads`` is process-global and would silently reconfigure the caller's
+    torch. Restored on every exit path. A no-op on CUDA.
+    """
+    import torch
+    if not pairs or pairs[0].device.type != "cpu":
+        yield
+        return
+    prev = torch.get_num_threads()
+    if prev == 1:
+        yield                                            # already pinned; do not touch it
+        return
+    torch.set_num_threads(1)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(prev)
+
+
 class MoleculePairBatch:
-    """Batch of MoleculePair objects for fast sequential JAX alignment.
+    """Align molecular pairs in batches and store scores and transforms on each pair.
 
-    Pads all atom coordinate arrays to common max shapes so JAX's XLA compiler
-    reuses the same compiled function for every pair, avoiding recompilation.
-    This modifies each MoleculePair in-place (stores results on the pair).
+    Unlike :meth:`MoleculePair.align`, which returns an ``AlignmentResult`` and leaves the pair
+    unchanged, :meth:`align` and every ``align_with_<mode>`` method store their results on each
+    pair, in the same ``transform_<mode>`` / ``sim_aligned_<mode>`` slots as v1
+    ``MoleculePair.align_with_<mode>``. This holds on every backend (``"triton"``, ``"numba"``,
+    ``"jax"`` and ``"torch"``). They also return the scores (and optionally the aligned
+    coordinates), and they share the keywords listed under Other Parameters. Each method returns
+    ``(scores, aligned)``, or ``(scores, anchors, vectors)`` for ``pharm``.
 
-    This is currently optimized for CPU. A GPU-optimized version would
-    benefit from optimizing batches of pairs and using a GPU-optimized alignment.
+    Parameters
+    ----------
+    pairs : list of MoleculePair
+        The pairs to align. Each is modified in place by the alignment methods.
+    cpu_threads : int, optional
+        Cap the CPU threads every ``align_with_*`` call uses (the numba kernels, and torch on the
+        ``"torch"`` backend), then restore the previous counts. ``None`` (default) leaves them
+        alone, which on ``numba`` means one thread per CPU the process may use. It cannot exceed
+        numba's thread pool, which is sized at import from ``NUMBA_NUM_THREADS`` or the CPU
+        affinity (``taskset``, SLURM). Not combinable with ``num_workers > 1``, whose workers
+        are single-threaded. JAX/XLA threads are not affected.
+
+    Other Parameters
+    ----------------
+    backend : str, optional
+        ``None`` (default) resolves to ``"triton"`` on CUDA, else ``"numba"``.
+        ``"triton"`` (aliases ``"cuda"``/``"gpu"``) and ``"numba"`` (alias ``"cpu"``) run the
+        batched accel engine (heavy atoms only). ``"jax"`` runs the padded JAX path for ``vol``,
+        ``vol_esp``, ``surf``, ``surf_esp`` and ``pharm``, and each pair's ``MoleculePair.align``
+        for the other modes (with a warning when the mode has no JAX optimizer). ``"torch"``
+        runs each pair's ``MoleculePair.align`` with PyTorch.
+    num_repeats, lr, max_num_steps : optional
+        SE(3) seeds, Adam learning rate and maximum steps. ``None`` (default) takes the per-mode
+        registry defaults in ``accel/_modes.py`` on the accel backends (``lr`` from the mode's
+        ``screen_lr``, as ``screen`` does), and 50 / 0.1 / 200 on ``"jax"`` and ``"torch"``.
+    trans_init : bool
+        Also seed by translating the fit to each reference atom (or pharmacophore).
+    num_workers : int
+        On the numba backend, shard the pairs across this many single-threaded worker
+        processes (``accel.cpu_pool``). Sharding changes early stopping (a shard runs until all
+        of its pairs converge), so results may differ slightly from a single process.
+    similarity : str or (float, float)
+        ``'tanimoto'`` (default), ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'`` or explicit
+        Tversky weights ``(a, b)``. A Tversky similarity runs the registry's
+        ``<mode>_tversky`` mode and stores results in the ``<mode>_tversky`` slots; its scores
+        are not clipped to [0, 1].
+    return_aligned : bool
+        Also return the aligned fit coordinates (default False); ``None`` entries when False.
+    verbose : bool
+        Print per-pair progress on the JAX and per-pair paths; ignored by triton/numba.
     """
 
-    def __init__(self, pairs: List[MoleculePair]):
+    def __init__(self, pairs: List[MoleculePair], cpu_threads: Optional[int] = None):
+        from shepherd_score.accel._threads import check_cpu_threads
         self.pairs = pairs
+        self.cpu_threads = check_cpu_threads(cpu_threads)
 
-    def _pad_and_mask_vol(self, no_H: bool = True, include_charges: bool = False):
-        """Extract, pad, and create masks for volumetric (and optionally ESP) alignment.
+    def align(self, mode: str, similarity: Similarity = 'tanimoto', **kwargs):
+        """Align all pairs under the named ``mode``, as ``MoleculePair.align`` names them.
 
-        Does NOT modify the pair objects. Returns padded arrays and masks.
+        Calls ``align_with_<mode>``, so ``kwargs`` are that method's keywords::
+
+            batch.align('vol', similarity='tversky', backend='triton')
+
+        A registry ``<base>_tversky`` name (e.g. ``'vol_tversky'``, ``'pharm_tversky'``) runs
+        that registry mode directly and takes ``tversky_alpha`` / ``tversky_beta`` in place of
+        ``similarity``::
+
+            batch.align('vol_tversky', tversky_alpha=0.7, tversky_beta=0.3)
+
+        Unlike :meth:`MoleculePair.align`, this stores the results on each pair (it does not
+        leave the pairs unchanged): ``transform_<mode>`` / ``sim_aligned_<mode>`` for the
+        Tanimoto modes (``transform_vol_noH`` / ``sim_aligned_vol_noH`` for ``vol`` with
+        ``no_H=True``), and ``transform_<mode>_tversky`` / ``sim_aligned_<mode>_tversky`` for a
+        Tversky similarity. All backends store.
 
         Parameters
         ----------
-        no_H : bool
-            If True, use heavy-atom positions (atom_pos). If False, use all atoms.
-        include_charges : bool
-            If True, also extract and pad partial charge arrays. The returned tuple
-            per entry gains two extra elements: ``(ref_pos_pad, fit_pos_pad,
-            ref_ch_pad, fit_ch_pad, mask_ref, mask_fit, orig_ref, orig_fit)``.
-            If False, each entry is ``(ref_padded, fit_padded, mask_ref, mask_fit,
-            orig_ref, orig_fit)``.
+        mode : str
+            Mode name, including the aliases ``MoleculePair.align`` accepts, or a registry
+            ``<base>_tversky`` name.
+        similarity : str or (float, float)
+            ``'tanimoto'`` (default), ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'`` or
+            explicit Tversky weights ``(a, b)``. Cannot be combined with a ``*_tversky`` mode
+            name (``ValueError``); pass ``similarity=`` with the base mode instead.
+        **kwargs
+            The mode's own parameters (e.g. ``alpha``, ``lam``, ``avoid_points``) and the
+            shared keywords documented on the class: ``backend``, ``num_repeats``, ``lr``,
+            ``max_num_steps``, ``trans_init``, ``num_workers``, ``return_aligned`` and
+            ``verbose``.
 
         Returns
         -------
-        entries : list of tuples
-        max_ref_len : int
-        max_fit_len : int
+        scores : np.ndarray
+            Score of each pair. Shape: (N,).
+        aligned : list of np.ndarray
+            Aligned fit coordinates of each pair, or ``None`` entries unless
+            ``return_aligned=True``. For ``pharm`` modes this is replaced by
+            ``anchors, vectors`` (the aligned fit pharmacophore anchors and vectors, likewise
+            ``None`` entries unless ``return_aligned=True``), so ``(scores, anchors, vectors)``
+            is returned.
+
+        Raises
+        ------
+        ValueError
+            If ``mode`` has no batched implementation, ``similarity`` is combined with a
+            ``*_tversky`` mode name, or a Tversky ``similarity`` is requested for a mode without
+            a Tversky variant.
         """
-        if no_H:
-            ref_pos_arrays = [p.ref_molec.atom_pos for p in self.pairs]
-            fit_pos_arrays = [p.fit_molec.atom_pos for p in self.pairs]
-            if include_charges:
-                ref_ch_arrays = [p.ref_molec.partial_charges[p.ref_molec._nonH_atoms_idx]
-                                 for p in self.pairs]
-                fit_ch_arrays = [p.fit_molec.partial_charges[p.fit_molec._nonH_atoms_idx]
-                                 for p in self.pairs]
+        name = MODE_ALIASES.get(mode, mode)
+
+        # Registry Tversky names bypass align_with_* and go straight to the registry _align_mode
+        if name.endswith('_tversky'):
+            if similarity != 'tanimoto':
+                raise ValueError(f'{mode!r} is already a Tversky mode; pass similarity= to '
+                                 f"align({name[:-len('_tversky')]!r}) instead.")
+            return self._align_mode(name, **kwargs)
+
+        method = getattr(self, f'align_with_{name}', None)
+        if method is None:
+            raise ValueError(f'No batched implementation of {mode!r}.')
+
+        if tversky_weights(similarity) is not None:
+            import inspect
+            if 'similarity' not in inspect.signature(method).parameters:
+                from shepherd_score.accel._modes import SPECS
+                raise ValueError(
+                    f'{mode!r} has no Tversky variant; modes with one: '
+                    f"{sorted(m[:-len('_tversky')] for m in SPECS if m.endswith('_tversky'))}")
+        if similarity != 'tanimoto':
+            kwargs['similarity'] = similarity
+        return method(**kwargs)
+
+    def _align_mode(self, mode: str, *, backend: Optional[str] = None,
+                    num_repeats: Optional[int] = None, lr: Optional[float] = None,
+                    max_num_steps: Optional[int] = None, trans_init: bool = False,
+                    num_workers: int = 1, verbose: bool = False, return_aligned: bool = False,
+                    **params):
+        """Align all pairs under the accel registry mode ``mode`` (an ``accel/_modes.py`` name,
+        e.g. ``'vol'`` or ``'vol_tversky'``) and store the results in its slots.
+
+        ``params`` are the registry mode's parameters (e.g. ``alpha``, ``lam``,
+        ``tversky_alpha``), plus ``no_H`` and, for the avoid modes, ``avoid_points``. The other
+        keywords are as in the class docstring. ``backend="jax"`` here always runs each pair's
+        ``MoleculePair.align``; the padded JAX paths live in the ``align_with_*`` methods.
+        """
+        from shepherd_score.accel._modes import SPECS, canonical
+        from shepherd_score.accel._threads import check_cpu_threads, cpu_threads
+
+        name = canonical(mode)
+        if name not in SPECS:
+            raise ValueError(f'No batched implementation of {mode!r}.')
+        spec = SPECS[name]
+        backend = _resolve_backend(backend)
+        threads = check_cpu_threads(getattr(self, 'cpu_threads', None))
+        if threads is not None and num_workers > 1:
+            raise ValueError("cpu_threads and num_workers > 1 cannot be combined: each worker is "
+                             "single-threaded, so num_workers already sets the CPU count")
+        with cpu_threads(threads):
+            return self._align_mode_body(name, spec, backend, num_repeats=num_repeats, lr=lr,
+                                         max_num_steps=max_num_steps, trans_init=trans_init,
+                                         num_workers=num_workers, verbose=verbose,
+                                         return_aligned=return_aligned, **params)
+
+    def _align_mode_body(self, name, spec, backend, *, num_repeats, lr, max_num_steps,
+                         trans_init, num_workers, verbose, return_aligned, **params):
+        """:meth:`_align_mode` after name/backend resolution, inside the thread cap."""
+        from shepherd_score.accel._modes import uses_avoid
+
+        if uses_avoid(name):
+            self._attach_avoid_points(params.pop('avoid_points', None), name)
+
+        # Batched Triton / numba alignment
+        if backend in _ACCEL_BACKENDS:
+            if not params.pop('no_H', True):
+                raise NotImplementedError(
+                    f"the Triton/numba {name} backend aligns heavy atoms only (no_H=True)")
+            if backend in _NUMBA_BACKENDS:
+                self._prepare_numba()
+
+            # None: the registry seeds and steps, and the mode's screen_lr (the lr main used)
+            kw = dict(params, trans_init=trans_init, lr=spec.screen_lr if lr is None else lr)
+            for key, value in (('num_repeats', num_repeats), ('steps_fine', max_num_steps)):
+                if value is not None:
+                    kw[key] = value
+
+            self._run_accel(name, kw, num_workers)
+            aligned = self._aligned_fits(spec) if return_aligned else None
+
+        # Per-pair MoleculePair.align otherwise
+        elif backend in ('jax', 'torch'):
+            num_repeats, lr, max_num_steps = _reference_opt(num_repeats, lr, max_num_steps)
+            aligned = self._align_per_pair(
+                spec, backend, num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps,
+                trans_init=trans_init, verbose=verbose, **params)
+            if not return_aligned:
+                aligned = None
+
         else:
-            ref_pos_arrays = [p.ref_molec.mol.GetConformer().GetPositions().astype(np.float32)
-                              for p in self.pairs]
-            fit_pos_arrays = [p.fit_molec.mol.GetConformer().GetPositions().astype(np.float32)
-                              for p in self.pairs]
-            if include_charges:
-                ref_ch_arrays = [p.ref_molec.partial_charges for p in self.pairs]
-                fit_ch_arrays = [p.fit_molec.partial_charges for p in self.pairs]
+            raise ValueError(
+                f"unknown backend {backend!r}; use 'triton', 'numba', 'jax' or 'torch'")
 
-        ref_padded, masks_ref, orig_refs, max_ref_len = _pad_arrays(ref_pos_arrays)
-        fit_padded, masks_fit, orig_fits, max_fit_len = _pad_arrays(fit_pos_arrays)
+        # Scores from MoleculePair attributes
+        score_attr = spec.score_attr
+        scores = np.array([float(getattr(p, score_attr)) for p in self.pairs])
+        n = len(self.pairs)
 
-        if include_charges:
-            ref_ch_padded, _, _, _ = _pad_arrays(ref_ch_arrays)
-            fit_ch_padded, _, _, _ = _pad_arrays(fit_ch_arrays)
-            entries = [
-                (rp, fp, rc, fc, mr, mf, ori_r, ori_f)
-                for rp, fp, rc, fc, mr, mf, ori_r, ori_f in zip(
-                    ref_padded, fit_padded, ref_ch_padded, fit_ch_padded,
-                    masks_ref, masks_fit, orig_refs, orig_fits
-                )
-            ]
+        if spec.pharm_style:
+            anchors, vectors = aligned if aligned is not None else ([None] * n, [None] * n)
+            return scores, anchors, vectors
+        return scores, aligned[0] if aligned is not None else [None] * n
+
+    def _align_with(self, mode: str, similarity: Similarity, **kwargs):
+        """Run ``mode``, or its registry ``<mode>_tversky`` mode for a Tversky ``similarity``."""
+        weights = tversky_weights(similarity)
+
+        if weights is not None:
+            mode = f'{mode}_tversky'
+            kwargs.update(tversky_alpha=weights[0], tversky_beta=weights[1])
+
+        return self._align_mode(mode, **kwargs)
+
+    def _prepare_numba(self):
+        """Move every pair onto CPU for a ``backend="numba"`` call. Kernel selection is
+        device-driven (:mod:`shepherd_score.accel.kernels.dispatch`), so CPU tensors run the
+        numba kernels even in a process that has the Triton kernels loaded.
+        """
+        import torch
+        try:
+            import numba  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "backend='numba' needs the 'numba' package, a core dependency "
+                "of shepherd-score; reinstall it (pip install numba).") from exc
+        cpu = torch.device("cpu")
+        for p in self.pairs:
+            p.device = cpu
+
+    def _attach_avoid_points(self, avoid_points, name: str = 'vol_avoid'):
+        """Attach an avoid mode's avoid cloud to every pair as ``p.avoid_points``: one ``(K,3)``
+        array for all pairs, or a list of per-pair ``(K_i,3)`` arrays."""
+        if avoid_points is None:
+            raise TypeError(f"{name} requires avoid_points")
+
+        # One point cloud per pair, or one shared point cloud broadcast to every pair
+        if isinstance(avoid_points, (list, tuple)):
+            if len(avoid_points) != len(self.pairs):
+                raise ValueError(f"avoid_points list length {len(avoid_points)} != "
+                                 f"number of pairs {len(self.pairs)}")
+            clouds = [np.ascontiguousarray(np.asarray(a, dtype=np.float32)) for a in avoid_points]
         else:
-            entries = [
-                (rp, fp, mr, mf, ori_r, ori_f)
-                for rp, fp, mr, mf, ori_r, ori_f in zip(
-                    ref_padded, fit_padded, masks_ref, masks_fit, orig_refs, orig_fits
-                )
-            ]
+            cloud = np.ascontiguousarray(np.asarray(avoid_points, dtype=np.float32))
+            clouds = [cloud] * len(self.pairs)
 
-        return entries, max_ref_len, max_fit_len
+        # Drop any cached upload of a previous cloud: the batch path uploads a pair channel
+        # only when its tensor slot is empty, so a stale one would be scored in place of ``c``.
+        from shepherd_score.accel.channels import CHANNELS
+        cached = CHANNELS['avoid'].ref_attr
+        for p, c in zip(self.pairs, clouds):
+            p.avoid_points = c
+            if getattr(p, cached, None) is not None:
+                setattr(p, cached, None)
+
+    def _run_accel(self, name: str, kw: dict, num_workers: int):
+        """Run the batched accel aligner for ``name``, which stores results on each pair.
+        ``num_workers > 1`` on CPU shards the pairs across ``accel.cpu_pool``."""
+        from shepherd_score.accel.batch import aligners
+
+        pairs = self.pairs
+        if num_workers > 1 and pairs and pairs[0].device.type == "cpu":
+            from shepherd_score.accel import cpu_pool
+            if name in cpu_pool.POOL_MODES:
+                cpu_pool.align_pairs(name, pairs, num_workers, kw)
+                return
+
+        # Single process: the accelerated aligner bound in accel.batch.aligners
+        with _pinned_torch_threads(pairs):
+            getattr(aligners, f"_align_batch_{name}")(pairs, **kw)
+
+    def _aligned_fits(self, spec):
+        """Each pair's cached fit tensors moved by its stored transform, as lists of arrays:
+        ``[points]``, or ``[anchors, vectors]`` for the pharmacophore modes (vectors are rotated
+        only). Batched per device, so multi-GPU shards are handled."""
+        import torch
+        from shepherd_score.accel.channels import CHANNELS
+
+        # The fit point cloud(s) that are rotated/translated
+        if spec.pharm_style:
+            channels = ('pharm_ancs', 'pharm_vecs')
+        else:
+            channels = ('surf',) if 'surf' in spec.channels else ('atoms',)
+        attrs = [CHANNELS[c].fit_attr for c in channels]
+
+        pairs = self.pairs
+        out = [[None] * len(pairs) for _ in attrs]
+
+        # Group by device to do one batched matmul
+        by_dev: dict = {}
+        for i, p in enumerate(pairs):
+            by_dev.setdefault(getattr(p, attrs[0]).device, []).append(i)
+
+        for dev, idxs in by_dev.items():
+            Ss = torch.stack([torch.as_tensor(getattr(pairs[i], spec.transform_attr),
+                                              dtype=torch.float32) for i in idxs]).to(dev)
+            Rt = Ss[:, :3, :3].transpose(1, 2)
+
+            for k, attr in enumerate(attrs):
+                fits = [getattr(pairs[i], attr) for i in idxs]
+                fit_pad = torch.nn.utils.rnn.pad_sequence(fits, batch_first=True)
+
+                # row-vector SE(3) convention: points -> x @ R.T + t; vectors -> v @ R.T
+                moved = (torch.baddbmm(Ss[:, :3, 3][:, None, :], fit_pad, Rt) if k == 0
+                         else torch.bmm(fit_pad, Rt)).cpu().numpy()
+
+                # Unpad
+                for j, i in enumerate(idxs):
+                    out[k][i] = moved[j, :fits[j].shape[0]]
+
+        return out
+
+    def _align_per_pair(self, spec, backend: str, **kwargs):
+        """Run each pair's ``MoleculePair.align`` for the registry mode ``spec`` and store the
+        results in its attributes. Returns the aligned fit inputs in ``_aligned_fits`` form."""
+        from shepherd_score.accel._modes import uses_avoid
+
+        name = spec.name
+        params = dict(kwargs)
+
+        # <base>_tversky -> MoleculePair.align(<base>, similarity=...)
+        if name.endswith('_tversky'):
+            name = name[:-len('_tversky')]
+            if name == 'pharm':
+                params.setdefault('similarity', 'tversky')
+            else:
+                params['similarity'] = (params.pop('tversky_alpha', 0.95),
+                                        params.pop('tversky_beta', 0.05))
+
+        # Result attributes
+        tf_attr, sc_attr = spec.attrs
+        if name in ('vol', 'vol_esp') and params.get('no_H') is False and name == spec.name:
+            tf_attr, sc_attr = f'transform_{name}', f'sim_aligned_{name}'   # with-H attributes
+
+        opt = {k: params.pop(k) for k in ('num_repeats', 'lr', 'max_num_steps', 'trans_init',
+                                          'verbose')}
+
+        # 'auto' is MoleculePair's PyTorch path; jax falls back to it without a JAX optimizer
+        if backend == 'jax':
+            mode = get_mode(name, **({'avoid_points': self.pairs[0].avoid_points}
+                                     if uses_avoid(spec.name) and self.pairs else {}), **params)
+            if 'jax' not in mode.backends():
+                warnings.warn(f"{spec.name} has no JAX implementation; backend='jax' falls back "
+                              "to per-pair PyTorch.", RuntimeWarning, stacklevel=4)
+                backend = 'auto'
+        else:
+            backend = 'auto'
+
+        # Align each pair and write its attributes
+        out = [[None] * len(self.pairs) for _ in range(2 if spec.pharm_style else 1)]
+        for i, pair in enumerate(self.pairs):
+            if uses_avoid(spec.name):
+                params['avoid_points'] = pair.avoid_points
+            res = pair.align(name, backend=backend, **opt, **params)
+            setattr(pair, tf_attr, res.transform)
+            setattr(pair, sc_attr, res.score)
+
+            # Combined modes return a tuple of per-term inputs
+            aligned = res.aligned[0] if isinstance(res.aligned, tuple) else res.aligned
+            if spec.pharm_style:
+                out[0][i], out[1][i] = aligned['anchors'], aligned['vectors']
+            else:
+                out[0][i] = aligned['points']
+
+        return out
+
+    def _delegate_alignment(self, method_name: str, score_attr: str, **kwargs):
+        """Delegate alignment to each MoleculePair's method and collect results.
+
+        Parameters
+        ----------
+        method_name : str
+            Name of the MoleculePair method to call (e.g. 'align_with_surf').
+        score_attr : str
+            Name of the attribute on MoleculePair where the score is stored after alignment.
+        **kwargs
+            Forwarded to each pair's method.
+
+        Returns
+        -------
+        scores : np.ndarray
+            Shape: (N,).
+        aligned_list : list of np.ndarray
+            Aligned fit coordinates for each pair.
+        """
+        aligned_list = []
+        scores = np.zeros(len(self.pairs))
+        for i, pair in enumerate(self.pairs):
+            aligned_pts = getattr(pair, method_name)(**kwargs)
+            scores[i] = float(getattr(pair, score_attr))
+            aligned_list.append(aligned_pts)
+        return scores, aligned_list
 
     def align_with_vol(self,
                        no_H: bool = True,
-                       num_repeats: int = 50,
+                       num_repeats: int = None,
                        trans_init: bool = False,
-                       lr: float = 0.1,
-                       max_num_steps: int = 200,
+                       lr: Optional[float] = None,
+                       max_num_steps: int = None,
                        num_workers: int = 1,
                        use_shmap: bool = True,
                        num_buckets: int = 1,
                        verbose: bool = False,
+                       backend: Optional[str] = None,
+                       alpha: float = 0.81,
+                       return_aligned: bool = False,
+                       similarity: Similarity = 'tanimoto',
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Align all pairs using padded masked volumetric similarity via JAX.
-
-        Because all padded arrays have the same shape, JAX's XLA compiler
-        reuses one compiled kernel for every pair — no recompilation overhead.
-
-        When ``num_workers > 1`` the pairs are split into size-sorted chunks
-        and processed in parallel. It is recommended to use ``use_shmap=True``
-        instead of ``multiprocessing`` for this setting.
+        """Align all pairs by volumetric similarity.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_vol_noH`` / ``pair.sim_aligned_vol_noH`` (when ``no_H=True``)
@@ -156,37 +535,22 @@ class MoleculePairBatch:
         Parameters
         ----------
         no_H : bool
-            Whether to exclude hydrogens. Default is True.
-        num_repeats : int
-            Number of SE(3) initializations per pair. Default is 50.
-        trans_init : bool
-            If True, initialize translations to each ref atom position. Default is False.
-        lr : float
-            Optimizer learning rate. Default is 0.1.
-        max_num_steps : int
-            Maximum optimization steps. Default is 200.
+            Whether to exclude hydrogens. Default is True; triton/numba support only True.
+        alpha : float
+            Gaussian width. Default is 0.81.
         num_workers : int
-            Number of parallel workers.  ``1`` (default) runs sequentially
-            in-process. When ``use_shmap=True`` (the default), this value is informational;
-            actual parallelism equals ``len(jax.devices())``, which is set by
-            ``XLA_FLAGS`` **before** JAX is first imported. When ``use_shmap=False``
-            use ``multiprocessing`` with a ``'spawn'`` start method.
+            On ``"jax"``, ``> 1`` runs the pairs in parallel: with ``use_shmap=True`` (default)
+            through ``jax.shard_map`` over ``len(jax.devices())`` virtual CPU devices (set
+            ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` before JAX is first imported;
+            fixed steps, no early stopping), otherwise with ``multiprocessing`` spawn workers.
+            On ``"numba"``, see the class docstring.
         use_shmap : bool
-            If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
-            to parallelise across virtual CPU devices in a single process.
-            Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
-            to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
-            no early stopping) instead of the ``while_loop``-based sequential
-            path.  Required on Linux HPC if num_workers > 1 where ``multiprocessing``
-            spawn can be unreliable with JAX.  Default is ``True``.
+            See ``num_workers``. Default is True.
         num_buckets : int
-            ``1`` (default) pads all pairs to the global atom-count maximum —
-            lowest overhead for typical use.  Values > 1 sort pairs by
-            ``(max(ref,fit), min(ref,fit))`` and process each bucket
-            separately with reduced per-bucket padding, which can be
-            beneficial for large heterogeneous molecule sets.
-        verbose : bool
-            Print scores per pair. Default is False.
+            JAX only. ``1`` (default) pads all pairs to the global atom-count maximum. Values
+            > 1 sort pairs by ``(max(ref,fit), min(ref,fit))`` and pad each bucket separately.
+        num_repeats, trans_init, lr, max_num_steps, verbose, backend, return_aligned, similarity
+            See the class docstring.
 
         Returns
         -------
@@ -195,6 +559,14 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit atom coordinates (unpadded) for each pair.
         """
+        backend = _resolve_backend(backend)
+        if backend != 'jax' or tversky_weights(similarity) is not None:
+            return self._align_with(
+                'vol', similarity, alpha=alpha, no_H=no_H, num_repeats=num_repeats, lr=lr,
+                max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+                verbose=verbose, backend=backend, return_aligned=return_aligned)
+        num_repeats, lr, max_num_steps = _reference_opt(num_repeats, lr, max_num_steps)
+
         # build raw (unpadded) position arrays for every pair
         raw_refs, raw_fits, trans_centers_list = [], [], []
         for pair in self.pairs:
@@ -228,7 +600,7 @@ class MoleculePairBatch:
             pair_data = list(zip(raw_refs, raw_fits, trans_centers_list))
             results = _align_vol_shmap(
                 pair_data, num_workers, num_repeats, lr, max_num_steps, verbose,
-                num_buckets=num_buckets,
+                num_buckets=num_buckets, alpha=alpha,
             )
             for i, (score, se3_transform, aligned_pts) in enumerate(results):
                 scores[i] = score
@@ -250,7 +622,7 @@ class MoleculePairBatch:
                                    np.maximum(ref_sizes, fit_sizes)])
             index_splits, chunk_results = _dispatch_parallel(
                 pair_data, sort_keys, _align_vol_worker, num_workers,
-                (num_repeats, lr, max_num_steps, verbose),
+                (num_repeats, lr, max_num_steps, verbose, alpha),
             )
 
             for idx_list, chunk_result in zip(index_splits, chunk_results):
@@ -293,7 +665,7 @@ class MoleculePairBatch:
                         fit_points=jnp.array(fit_padded_b[local_j]),
                         mask_ref=jnp.array(masks_ref_b[local_j]),
                         mask_fit=jnp.array(masks_fit_b[local_j]),
-                        alpha=0.81,
+                        alpha=alpha,
                         num_repeats=num_repeats,
                         trans_centers=trans_centers_list[global_i],
                         lr=lr,
@@ -318,25 +690,22 @@ class MoleculePairBatch:
         return scores, aligned_list
 
     def align_with_vol_esp(self,
-                           lam: float,
+                           lam: float = 0.1,
                            no_H: bool = True,
-                           num_repeats: int = 50,
+                           num_repeats: int = None,
                            trans_init: bool = False,
-                           lr: float = 0.1,
-                           max_num_steps: int = 200,
+                           lr: Optional[float] = None,
+                           max_num_steps: int = None,
                            num_workers: int = 1,
                            use_shmap: bool = True,
                            num_buckets: int = 1,
                            verbose: bool = False,
+                           backend: Optional[str] = None,
+                           alpha: float = 0.81,
+                           return_aligned: bool = False,
+                           similarity: Similarity = 'tanimoto',
                            ) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Align all pairs using padded masked volumetric ESP similarity via JAX.
-
-        Because all padded arrays have the same shape, JAX's XLA compiler
-        reuses one compiled kernel for every pair — no recompilation overhead.
-
-        When ``num_workers > 1`` the pairs are split into size-sorted chunks
-        and processed in parallel. It is recommended to use ``use_shmap=True``
-        instead of ``multiprocessing`` for this setting.
+        """Align all pairs by volumetric ESP similarity.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_vol_esp_noH`` / ``pair.sim_aligned_vol_esp_noH`` (when ``no_H=True``)
@@ -345,37 +714,13 @@ class MoleculePairBatch:
         Parameters
         ----------
         lam : float
-            Partial charge weighting parameter. Typically 0.1 for volumetric.
-        no_H : bool
-            Whether to exclude hydrogens. Default is True.
-        num_repeats : int
-            Number of SE(3) initializations per pair. Default is 50.
-        trans_init : bool
-            If True, initialize translations to each ref atom position. Default is False.
-        lr : float
-            Optimizer learning rate. Default is 0.1.
-        max_num_steps : int
-            Maximum optimization steps. Default is 200.
-        num_workers : int
-            Number of parallel worker processes. ``1`` (default) runs
-            sequentially in-process. Values greater than ``len(self.pairs)``
-            are clamped to ``len(self.pairs)``.
-        use_shmap : bool
-            If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
-            to parallelise across virtual CPU devices in a single process.
-            Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
-            to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
-            no early stopping) instead of the ``while_loop``-based sequential
-            path.  Required on Linux HPC if num_workers > 1 where ``multiprocessing``
-            spawn can be unreliable with JAX.  Default is ``True``.
-        num_buckets : int
-            ``1`` (default) pads all pairs to the global atom-count maximum —
-            lowest overhead for typical use.  Values > 1 sort pairs by
-            ``(max(ref,fit), min(ref,fit))`` and process each bucket
-            separately with reduced per-bucket padding, which can be
-            beneficial for large heterogeneous molecule sets.
-        verbose : bool
-            Print scores per pair. Default is False.
+            Partial charge weighting parameter, used raw. Default is 0.1.
+        alpha : float
+            Gaussian width. Default is 0.81.
+        no_H, num_workers, use_shmap, num_buckets
+            As in :meth:`align_with_vol`.
+        num_repeats, trans_init, lr, max_num_steps, verbose, backend, return_aligned, similarity
+            See the class docstring.
 
         Returns
         -------
@@ -384,7 +729,15 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit atom coordinates (unpadded) for each pair.
         """
-        # Build raw (unpadded) per-pair data tuples (plain numpy — picklable).
+        backend = _resolve_backend(backend)
+        if backend != 'jax' or tversky_weights(similarity) is not None:
+            return self._align_with(
+                'vol_esp', similarity, alpha=alpha, lam=lam, no_H=no_H, num_repeats=num_repeats,
+                lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+                num_workers=num_workers, verbose=verbose, backend=backend,
+                return_aligned=return_aligned)
+        num_repeats, lr, max_num_steps = _reference_opt(num_repeats, lr, max_num_steps)
+
         raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list = [], [], [], [], []
         for pair in self.pairs:
             if no_H:
@@ -420,7 +773,7 @@ class MoleculePairBatch:
             pair_data = list(zip(raw_refs, raw_fits, raw_ref_ch, raw_fit_ch, trans_centers_list))
             results = _align_vol_esp_shmap(
                 pair_data, num_workers, lam, num_repeats, lr, max_num_steps, verbose,
-                num_buckets=num_buckets,
+                num_buckets=num_buckets, alpha=alpha,
             )
             for i, (score, se3_transform, aligned_pts) in enumerate(results):
                 scores[i] = score
@@ -441,7 +794,7 @@ class MoleculePairBatch:
                                    np.maximum(ref_sizes, fit_sizes)])
             index_splits, chunk_results = _dispatch_parallel(
                 pair_data, sort_keys, _align_vol_esp_worker, num_workers,
-                (lam, num_repeats, lr, max_num_steps, verbose),
+                (lam, num_repeats, lr, max_num_steps, verbose, alpha),
             )
 
             for idx_list, chunk_result in zip(index_splits, chunk_results):
@@ -490,7 +843,7 @@ class MoleculePairBatch:
                         fit_charges=jnp.array(fit_ch_padded_b[local_j]),
                         mask_ref=jnp.array(masks_ref_b[local_j]),
                         mask_fit=jnp.array(masks_fit_b[local_j]),
-                        alpha=0.81,
+                        alpha=alpha,
                         lam=lam,
                         num_repeats=num_repeats,
                         trans_centers=trans_centers_list[global_i],
@@ -515,50 +868,22 @@ class MoleculePairBatch:
 
         return scores, aligned_list
 
-    def _delegate_alignment(self, method_name: str, score_attr: str, **kwargs):
-        """Delegate alignment to each MoleculePair's method and collect results.
-
-        Parameters
-        ----------
-        method_name : str
-            Name of the MoleculePair method to call (e.g. 'align_with_surf').
-        score_attr : str
-            Name of the attribute on MoleculePair where the score is stored after alignment.
-        **kwargs
-            Forwarded to each pair's method.
-
-        Returns
-        -------
-        scores : np.ndarray
-            Shape: (N,).
-        aligned_list : list of np.ndarray
-            Aligned fit coordinates for each pair.
-        """
-        aligned_list = []
-        scores = np.zeros(len(self.pairs))
-        for i, pair in enumerate(self.pairs):
-            aligned_pts = getattr(pair, method_name)(**kwargs)
-            scores[i] = float(getattr(pair, score_attr))
-            aligned_list.append(aligned_pts)
-        return scores, aligned_list
-
     def align_with_surf(self,
                         alpha: float,
-                        num_repeats: int = 50,
+                        num_repeats: int = None,
                         trans_init: bool = False,
-                        lr: float = 0.1,
-                        max_num_steps: int = 200,
+                        lr: Optional[float] = None,
+                        max_num_steps: int = None,
                         use_jax: bool = True,
                         use_analytical: bool = True,
                         num_workers: int = 1,
                         use_shmap: bool = False,
                         verbose: bool = False,
+                        backend: Optional[str] = None,
+                        return_aligned: bool = False,
+                        similarity: Similarity = 'tanimoto',
                         ) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Align all pairs using surface similarity.
-
-        Surface arrays are the same size across all pairs so no padding or
-        size-sorting is needed.  It is not recommended to use multiprocessing
-        due to this reason.
+        """Align all pairs by surface similarity.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_surf`` and ``pair.sim_aligned_surf``
@@ -567,27 +892,17 @@ class MoleculePairBatch:
         ----------
         alpha : float
             Gaussian width parameter for overlap.
-        num_repeats : int
-            Number of SE(3) initializations per pair. Default is 50.
-        trans_init : bool
-            Apply translation initialization for alignment. Default is False.
-        lr : float
-            Optimizer learning rate. Default is 0.1.
-        max_num_steps : int
-            Maximum optimization steps. Default is 200.
-        use_jax : bool
-            Whether to use JAX backend. Default is True.
-        use_analytical : bool
-            Whether to use analytical gradients (PyTorch only). Default is True.
+        use_jax, use_analytical : bool
+            ``backend="jax"`` only: the per-pair optimizer used when ``num_workers == 1``
+            (JAX by default; ``use_jax=False`` runs PyTorch, analytical gradients unless
+            ``use_analytical=False``).
         num_workers : int
-            Number of parallel worker processes. ``1`` (default) runs
-            sequentially in-process. Values greater than ``len(self.pairs)``
-            are clamped to ``len(self.pairs)``.
-        use_shmap : bool
-            Whether to use JAX shard_map for parallel alignment. Default is False.
-            Performance is better when use_shmap is False on cpu.
-        verbose : bool
-            Print scores per pair. Default is False.
+            On ``"jax"``, ``> 1`` runs the pairs in parallel, with ``jax.shard_map`` when
+            ``use_shmap=True`` (default False, faster on CPU) or ``multiprocessing``. Surface
+            arrays are the same size for every pair, so no padding is needed. On ``"numba"``,
+            see the class docstring.
+        num_repeats, trans_init, lr, max_num_steps, verbose, backend, return_aligned, similarity
+            See the class docstring.
 
         Returns
         -------
@@ -596,6 +911,14 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
+        backend = _resolve_backend(backend)
+        if backend != 'jax' or tversky_weights(similarity) is not None:
+            return self._align_with(
+                'surf', similarity, alpha=alpha, num_repeats=num_repeats, lr=lr,
+                max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+                verbose=verbose, backend=backend, return_aligned=return_aligned)
+        num_repeats, lr, max_num_steps = _reference_opt(num_repeats, lr, max_num_steps)
+
         n_pairs = len(self.pairs)
         pair_data = [
             (pair.ref_molec.surf_pos,
@@ -656,55 +979,38 @@ class MoleculePairBatch:
             verbose=verbose,
         )
 
-    def align_with_esp(self,
+    def align_with_surf_esp(self,
                        alpha: float,
                        lam: float = 0.3,
-                       num_repeats: int = 50,
+                       num_repeats: int = None,
                        trans_init: bool = False,
-                       lr: float = 0.1,
-                       max_num_steps: int = 200,
+                       lr: Optional[float] = None,
+                       max_num_steps: int = None,
                        use_jax: bool = True,
                        use_analytical: bool = True,
                        num_workers: int = 1,
                        use_shmap: bool = False,
                        verbose: bool = False,
+                       backend: Optional[str] = None,
+                       return_aligned: bool = False,
+                       similarity: Similarity = 'tanimoto',
                        ) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Align all pairs using ESP+surface similarity.
-
-        Surface arrays are the same size across all pairs so no padding or
-        size-sorting is needed.  It is not recommended to use multiprocessing
-        due to this reason.
+        """Align all pairs by ESP+surface similarity (formerly ``align_with_esp``, which is kept
+        as an alias).
 
         Results are stored in-place on each MoleculePair:
-        - ``pair.transform_esp`` and ``pair.sim_aligned_esp``
+        - ``pair.transform_surf_esp`` and ``pair.sim_aligned_surf_esp``
 
         Parameters
         ----------
         alpha : float
             Gaussian width parameter for overlap.
         lam : float
-            Weighting factor for ESP scoring. Scaled internally. Default is 0.3.
-        num_repeats : int
-            Number of SE(3) initializations per pair. Default is 50.
-        trans_init : bool
-            Apply translation initialization for alignment. Default is False.
-        lr : float
-            Optimizer learning rate. Default is 0.1.
-        max_num_steps : int
-            Maximum optimization steps. Default is 200.
-        use_jax : bool
-            Whether to use JAX backend. Default is True.
-        use_analytical : bool
-            Whether to use analytical gradients (PyTorch only). Default is True.
-        num_workers : int
-            Number of parallel worker processes. ``1`` (default) runs
-            sequentially in-process. Values greater than ``len(self.pairs)``
-            are clamped to ``len(self.pairs)``.
-        use_shmap : bool
-            Whether to use JAX shard_map for parallel alignment. Default is False.
-            Performance is better when use_shmap is False on cpu.
-        verbose : bool
-            Print scores per pair. Default is False.
+            Weighting factor for ESP scoring, scaled internally by ``LAM_SCALING``. Default 0.3.
+        use_jax, use_analytical, num_workers, use_shmap
+            As in :meth:`align_with_surf`.
+        num_repeats, trans_init, lr, max_num_steps, verbose, backend, return_aligned, similarity
+            See the class docstring.
 
         Returns
         -------
@@ -713,6 +1019,14 @@ class MoleculePairBatch:
         aligned_list : list of np.ndarray
             Aligned fit surface coordinates for each pair.
         """
+        backend = _resolve_backend(backend)
+        if backend != 'jax' or tversky_weights(similarity) is not None:
+            return self._align_with(
+                'surf_esp', similarity, alpha=alpha, lam=lam, num_repeats=num_repeats, lr=lr,
+                max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+                verbose=verbose, backend=backend, return_aligned=return_aligned)
+        num_repeats, lr, max_num_steps = _reference_opt(num_repeats, lr, max_num_steps)
+
         from shepherd_score.score.constants import LAM_SCALING
         lam_scaled = float(LAM_SCALING * lam)
 
@@ -744,8 +1058,8 @@ class MoleculePairBatch:
                 scores[i] = score
                 aligned_list[i] = aligned_pts
                 pair = self.pairs[i]
-                pair.transform_esp = se3_transform
-                pair.sim_aligned_esp = score
+                pair.transform_surf_esp = se3_transform
+                pair.sim_aligned_surf_esp = score
             return scores, aligned_list
 
         elif num_workers > 1: # parallel
@@ -762,13 +1076,13 @@ class MoleculePairBatch:
                     scores[global_i] = score
                     aligned_list[global_i] = aligned_pts
                     pair = self.pairs[global_i]
-                    pair.transform_esp = se3_transform
-                    pair.sim_aligned_esp = score
+                    pair.transform_surf_esp = se3_transform
+                    pair.sim_aligned_surf_esp = score
             return scores, aligned_list
 
         # sequential
         return self._delegate_alignment(
-            'align_with_esp', 'sim_aligned_esp',
+            'align_with_surf_esp', 'sim_aligned_surf_esp',
             alpha=alpha,
             lam=lam,
             num_repeats=num_repeats,
@@ -780,90 +1094,22 @@ class MoleculePairBatch:
             verbose=verbose,
         )
 
-    def _pad_and_mask_pharm(self):
-        """Extract, pad, and create masks for pharmacophore alignment.
-
-        Validates that all pairs have pharmacophore data. Does NOT modify the
-        pair objects. Returns padded arrays and masks.
-
-        Returns
-        -------
-        entries : list of tuples
-            Each tuple is (ref_ptypes, fit_ptypes,
-                           ref_ancs_pad, fit_ancs_pad,
-                           ref_vecs_pad, fit_vecs_pad,
-                           mask_ref, mask_fit,
-                           orig_ref_len, orig_fit_len).
-        max_ref_len : int
-        max_fit_len : int
-        """
-        for i, pair in enumerate(self.pairs):
-            if (pair.ref_molec.pharm_types is None or
-                    pair.fit_molec.pharm_types is None):
-                raise ValueError(
-                    f'Pair {i} is missing pharmacophore data. '
-                    'Create Molecule objects with pharm_multi_vector set to True or False.'
-                )
-
-        DUMMY_TYPE = 8  # index of 'Dummy' in P_TYPES
-
-        ref_types_list = [p.ref_molec.pharm_types for p in self.pairs]
-        fit_types_list = [p.fit_molec.pharm_types for p in self.pairs]
-
-        max_ref_len = max(t.shape[0] for t in ref_types_list)
-        max_fit_len = max(t.shape[0] for t in fit_types_list)
-
-        ref_ancs_padded, masks_ref, orig_refs, _ = _pad_arrays([p.ref_molec.pharm_ancs for p in self.pairs])
-        fit_ancs_padded, masks_fit, orig_fits, _ = _pad_arrays([p.fit_molec.pharm_ancs for p in self.pairs])
-        ref_vecs_padded, _, _, _ = _pad_arrays([p.ref_molec.pharm_vecs for p in self.pairs])
-        fit_vecs_padded, _, _, _ = _pad_arrays([p.fit_molec.pharm_vecs for p in self.pairs])
-
-        entries = []
-        for (ref_types, fit_types,
-             ref_ancs_pad, fit_ancs_pad,
-             ref_vecs_pad, fit_vecs_pad,
-             mask_ref, mask_fit,
-             orig_ref, orig_fit) in zip(
-                ref_types_list, fit_types_list,
-                ref_ancs_padded, fit_ancs_padded,
-                ref_vecs_padded, fit_vecs_padded,
-                masks_ref, masks_fit,
-                orig_refs, orig_fits
-        ):
-            ref_types_pad = np.full(max_ref_len, DUMMY_TYPE, dtype=np.int32)
-            ref_types_pad[:orig_ref] = ref_types
-            fit_types_pad = np.full(max_fit_len, DUMMY_TYPE, dtype=np.int32)
-            fit_types_pad[:orig_fit] = fit_types
-
-            entries.append((ref_types_pad, fit_types_pad,
-                            ref_ancs_pad, fit_ancs_pad,
-                            ref_vecs_pad, fit_vecs_pad,
-                            mask_ref, mask_fit,
-                            orig_ref, orig_fit))
-
-        return entries, max_ref_len, max_fit_len
-
     def align_with_pharm(self,
                          similarity: str = 'tanimoto',
                          extended_points: bool = False,
                          only_extended: bool = False,
-                         num_repeats: int = 50,
+                         num_repeats: int = None,
                          trans_init: bool = False,
-                         lr: float = 0.1,
-                         max_num_steps: int = 200,
+                         lr: Optional[float] = None,
+                         max_num_steps: int = None,
                          num_workers: int = 1,
                          use_shmap: bool = True,
                          num_buckets: int = 1,
                          verbose: bool = False,
+                         backend: Optional[str] = None,
+                         return_aligned: bool = False,
                          ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
-        """Align all pairs using padded masked pharmacophore similarity via JAX.
-
-        Because all padded arrays have the same shape, JAX's XLA compiler
-        reuses one compiled kernel for every pair — no recompilation overhead.
-
-        When ``num_workers > 1`` the pairs are split into size-sorted chunks and
-        processed in parallel. It is recommended to use ``use_shmap=True``
-        instead of ``multiprocessing`` for this setting.
+        """Align all pairs by pharmacophore similarity.
 
         Results are stored in-place on each MoleculePair:
         - ``pair.transform_pharm`` and ``pair.sim_aligned_pharm``
@@ -871,39 +1117,16 @@ class MoleculePairBatch:
         Parameters
         ----------
         similarity : str
-            One of ``'tanimoto'``, ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'``.
+            One of ``'tanimoto'``, ``'tversky'``, ``'tversky_ref'``, ``'tversky_fit'``. Unlike
+            the other modes, Tversky results stay in the ``pharm`` slots.
         extended_points : bool
             Score HBA/HBD with extended-point Gaussians.
         only_extended : bool
             When ``extended_points`` is True, ignore anchor overlaps.
-        num_repeats : int
-            Number of SE(3) initializations per pair.
-        trans_init : bool
-            If True, initialize translations to each ref pharmacophore anchor.
-        lr : float
-            Optimizer learning rate.
-        max_num_steps : int
-            Maximum optimization steps.
-        num_workers : int
-            Number of parallel worker processes. ``1`` (default) runs
-            sequentially in-process. Values greater than ``len(self.pairs)``
-            are clamped to ``len(self.pairs)``.
-        use_shmap : bool
-            If ``True`` and ``num_workers > 1``, use ``jax.shard_map`` + ``vmap``
-            to parallelise across virtual CPU devices in a single process.
-            Requires ``XLA_FLAGS=--xla_force_host_platform_device_count=N``
-            to be set before any JAX import.  Uses ``lax.scan`` (fixed steps,
-            no early stopping) instead of the ``while_loop``-based sequential
-            path.  Required on Linux HPC if num_workers > 1 where ``multiprocessing``
-            spawn can be unreliable with JAX.  Default is ``True``.
-        num_buckets : int
-            ``1`` (default) pads all pairs to the global pharmacophore-count
-            maximum — lowest overhead for typical use.  Values > 1 sort pairs
-            by ``(max(ref,fit), min(ref,fit))`` and process each bucket
-            separately with reduced per-bucket padding, which can be
-            beneficial for large heterogeneous molecule sets.
-        verbose : bool
-            Print scores per pair.
+        num_workers, use_shmap, num_buckets
+            As in :meth:`align_with_vol`, over pharmacophore counts.
+        num_repeats, trans_init, lr, max_num_steps, verbose, backend, return_aligned
+            See the class docstring.
 
         Returns
         -------
@@ -914,6 +1137,15 @@ class MoleculePairBatch:
         aligned_vectors_list : list of np.ndarray
             Aligned fit pharmacophore vectors (unpadded) for each pair.
         """
+        backend = _resolve_backend(backend)
+        if backend != 'jax':
+            return self._align_mode(
+                'pharm', similarity=similarity, extended_points=extended_points,
+                only_extended=only_extended, num_repeats=num_repeats, lr=lr,
+                max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+                verbose=verbose, backend=backend, return_aligned=return_aligned)
+        num_repeats, lr, max_num_steps = _reference_opt(num_repeats, lr, max_num_steps)
+
         # Validate pharmacophore data and collect raw arrays for all pairs.
         for idx, pair in enumerate(self.pairs):
             if (pair.ref_molec.pharm_types is None or
@@ -1068,3 +1300,171 @@ class MoleculePairBatch:
                     aligned_vectors_list[global_i] = aligned_vecs
 
         return scores, aligned_anchors_list, aligned_vectors_list
+
+    def align_with_vol_and_surf_esp(self,
+                                    alpha: float = 0.81,
+                                    lam: float = 0.001,
+                                    probe_radius: float = 1.0,
+                                    esp_weight: float = 0.5,
+                                    num_repeats: int = None,
+                                    trans_init: bool = False,
+                                    lr: Optional[float] = None,
+                                    max_num_steps: int = None,
+                                    verbose: bool = False,
+                                    backend: Optional[str] = None,
+                                    return_aligned: bool = False,
+                                    similarity: Similarity = 'tanimoto',
+                                    num_workers: int = 1,
+                                    ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs by ShaEP-style volume + surface-ESP similarity (formerly
+        ``align_with_esp_combo``, which is kept as an alias). ``alpha``, ``lam``,
+        ``probe_radius`` and ``esp_weight`` are as in ``MoleculePair.align_with_vol_and_surf_esp``;
+        a Tversky ``similarity`` applies to the shape channel only. Writes
+        ``transform_vol_and_surf_esp`` / ``sim_aligned_vol_and_surf_esp`` and returns the aligned
+        fit surface points. Other keywords: see the class docstring."""
+        return self._align_with(
+            'vol_and_surf_esp', similarity, alpha=alpha, lam=lam, probe_radius=probe_radius,
+            esp_weight=esp_weight, num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps,
+            trans_init=trans_init, num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
+
+    # legacy method aliases (esp -> surf_esp, esp_combo -> vol_and_surf_esp)
+    align_with_esp = align_with_surf_esp
+    align_with_esp_combo = align_with_vol_and_surf_esp
+
+    def align_with_vol_color(self,
+                             color_weight: float = 0.5,
+                             alpha: float = 0.81,
+                             num_repeats: int = None,
+                             trans_init: bool = False,
+                             lr: Optional[float] = None,
+                             max_num_steps: int = None,
+                             verbose: bool = False,
+                             backend: Optional[str] = None,
+                             return_aligned: bool = False,
+                             similarity: Similarity = 'tanimoto',
+                             num_workers: int = 1,
+                             ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs by ROCS-style shape + directionless pharmacophore color,
+        ``(1 - color_weight) * shape + color_weight * color``; a Tversky ``similarity`` applies to
+        both channels. Writes ``transform_vol_color`` / ``sim_aligned_vol_color`` and returns the
+        aligned fit atoms. Other keywords: see the class docstring."""
+        return self._align_with(
+            'vol_color', similarity, color_weight=color_weight, alpha=alpha,
+            num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+            num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
+
+    def align_with_vol_lipo(self,
+                            lipo_weight: float = 0.5,
+                            alpha: float = 0.81,
+                            lam: float = 0.1,
+                            num_repeats: int = None,
+                            lr: Optional[float] = None,
+                            max_num_steps: int = None,
+                            verbose: bool = False,
+                            backend: Optional[str] = None,
+                            return_aligned: bool = False,
+                            similarity: Similarity = 'tanimoto',
+                            trans_init: bool = False,
+                            num_workers: int = 1,
+                            ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Align all pairs by shape + Crippen logP field,
+        ``(1 - lipo_weight) * shape + lipo_weight * lipo``, with ``lam`` the raw width of the
+        value-matching kernel; a Tversky ``similarity`` applies to both channels. Writes
+        ``transform_vol_lipo`` / ``sim_aligned_vol_lipo`` and returns the aligned fit atoms.
+        Other keywords: see the class docstring."""
+        return self._align_with(
+            'vol_lipo', similarity, lipo_weight=lipo_weight, alpha=alpha, lam=lam,
+            num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+            num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
+
+    def align_with_vol_mr(self, mr_weight: float = 0.5, alpha: float = 0.81, lam: float = 0.1,
+                          num_repeats: int = None, lr: Optional[float] = None,
+                          max_num_steps: int = None, verbose: bool = False,
+                          backend: Optional[str] = None, return_aligned: bool = False,
+                          trans_init: bool = False, num_workers: int = 1):
+        """Shape + Crippen molar-refractivity field (``vol_mr`` slots)."""
+        return self._align_mode(
+            'vol_mr', mr_weight=mr_weight, alpha=alpha, lam=lam, num_repeats=num_repeats, lr=lr,
+            max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+            verbose=verbose, backend=backend, return_aligned=return_aligned)
+
+    def align_with_vol_fukui(self, fukui_weight: float = 0.5, alpha: float = 0.81,
+                             lam: float = 0.1, num_repeats: int = None, lr: Optional[float] = None,
+                             max_num_steps: int = None, verbose: bool = False,
+                             backend: Optional[str] = None, return_aligned: bool = False,
+                             trans_init: bool = False, num_workers: int = 1):
+        """Shape + condensed-Fukui dual-descriptor field (``vol_fukui`` slots)."""
+        return self._align_mode(
+            'vol_fukui', fukui_weight=fukui_weight, alpha=alpha, lam=lam,
+            num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+            num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
+
+    def align_with_vol_avoid(self, avoid_points, avoid_weight: float = 1.0,
+                             avoid_min_dist: float = 2.0, alpha: float = 0.81,
+                             num_repeats: int = None, lr: Optional[float] = None,
+                             max_num_steps: int = None, verbose: bool = False,
+                             backend: Optional[str] = None, return_aligned: bool = False,
+                             trans_init: bool = False, num_workers: int = 1):
+        """Shape Tanimoto minus a linear hard-sphere excluded-volume penalty (``vol_avoid``
+        slots).
+
+        ``avoid_points`` is the fixed cloud to keep the fit out of, used as-is in the frame
+        each pair is scored in (centered under ``do_center``; see ``MoleculePair.ref_shift``): a single
+        ``(K,3)`` array applied to every pair, or a list of per-pair ``(K_i,3)`` arrays. It is
+        attached to each pair as ``p.avoid_points``; the penalty is evaluated on the fit shape
+        atoms."""
+        return self._align_mode(
+            'vol_avoid', avoid_points=avoid_points, avoid_weight=avoid_weight,
+            avoid_min_dist=avoid_min_dist, alpha=alpha, num_repeats=num_repeats, lr=lr,
+            max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+            verbose=verbose, backend=backend, return_aligned=return_aligned)
+
+    def align_with_vol_color_avoid(self, avoid_points, color_weight: float = 0.5,
+                                   avoid_weight: float = 1.0, avoid_min_dist: float = 2.0,
+                                   alpha: float = 0.81, num_repeats: int = None,
+                                   lr: Optional[float] = None, max_num_steps: int = None,
+                                   verbose: bool = False, backend: Optional[str] = None,
+                                   return_aligned: bool = False, trans_init: bool = False,
+                                   num_workers: int = 1, similarity: Similarity = 'tanimoto'):
+        """Shape + directionless color minus the ``vol_avoid`` excluded-volume penalty
+        (``vol_color_avoid`` slots):
+        ``(1 - color_weight) * shape + color_weight * color - avoid_weight * penalty``.
+
+        ``avoid_points`` is as in :meth:`align_with_vol_avoid`: one ``(K,3)`` reference-frame
+        cloud for every pair, or a list of per-pair clouds. A Tversky ``similarity`` applies to
+        shape and color (not the penalty) and stores results in the
+        ``vol_color_avoid_tversky`` slots."""
+        return self._align_with(
+            'vol_color_avoid', similarity, avoid_points=avoid_points, color_weight=color_weight,
+            avoid_weight=avoid_weight, avoid_min_dist=avoid_min_dist, alpha=alpha,
+            num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+            num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
+
+    def align_with_vol_atomtype(self, atomtype_weight: float = 0.5, alpha: float = 0.81,
+                                num_repeats: int = None, lr: Optional[float] = None,
+                                max_num_steps: int = None, verbose: bool = False,
+                                backend: Optional[str] = None, return_aligned: bool = False,
+                                trans_init: bool = False, num_workers: int = 1):
+        """Shape + element-identity overlap (``vol_atomtype`` slots)."""
+        return self._align_mode(
+            'vol_atomtype', atomtype_weight=atomtype_weight, alpha=alpha,
+            num_repeats=num_repeats, lr=lr, max_num_steps=max_num_steps, trans_init=trans_init,
+            num_workers=num_workers, verbose=verbose, backend=backend,
+            return_aligned=return_aligned)
+
+    def align_with_vol_pharm(self, color_weight: float = 0.5, alpha: float = 0.81,
+                             num_repeats: int = None, lr: Optional[float] = None,
+                             max_num_steps: int = None, verbose: bool = False,
+                             backend: Optional[str] = None, return_aligned: bool = False,
+                             trans_init: bool = False, num_workers: int = 1):
+        """Shape + directional pharmacophore, i.e. ``vol_color`` with vector weighting
+        (``vol_pharm`` slots)."""
+        return self._align_mode(
+            'vol_pharm', color_weight=color_weight, alpha=alpha, num_repeats=num_repeats, lr=lr,
+            max_num_steps=max_num_steps, trans_init=trans_init, num_workers=num_workers,
+            verbose=verbose, backend=backend, return_aligned=return_aligned)

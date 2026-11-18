@@ -284,7 +284,8 @@ class Interactions:
 
         References
         ----------
-        .. [1] Errington D. et al.J Cheminform. 2025. 17(1):76. doi: 10.1186/s13321-025-01011-6
+        Errington D. et al., J Cheminform. 2025, 17(1):76.
+        DOI: 10.1186/s13321-025-01011-6.
         """
         if self.ref_ligand_fp is None and ref_ligand is None:
             raise ValueError(

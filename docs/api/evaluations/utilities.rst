@@ -10,6 +10,12 @@ Data Conversion
    :members:
    :undoc-members:
    :show-inheritance:
+   :exclude-members: ChargeSpec, DEFAULT_CHARGE_ORDER
+
+.. autodata:: shepherd_score.evaluations.utils.convert_data.ChargeSpec
+   :no-value:
+
+.. autodata:: shepherd_score.evaluations.utils.convert_data.DEFAULT_CHARGE_ORDER
 
 Protein & Ligand Preparation
 -----------------------------

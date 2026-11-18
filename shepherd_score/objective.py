@@ -272,11 +272,11 @@ class GeneralObjective:
                 molec_pair.align_with_vol_esp(lam=self.lam, no_H=True, trans_init=trans_init, use_jax=use_jax)
                 score = molec_pair.sim_aligned_vol_esp_noH
             else:
-                molec_pair.align_with_esp(self.alpha,
+                molec_pair.align_with_surf_esp(self.alpha,
                                         lam=self.lam,
                                         trans_init=trans_init,
                                         use_jax=use_jax)
-                score = molec_pair.sim_aligned_esp
+                score = molec_pair.sim_aligned_surf_esp
 
         elif self.representation == 'pharm':
             molec_pair.align_with_pharm(similarity='tanimoto',
@@ -526,12 +526,12 @@ class Objective:
 
         molec_pair = MoleculePair(self.ref_molec, fit_molec, num_surf_points=self.num_points)
 
-        molec_pair.align_with_esp(self.alpha,
+        molec_pair.align_with_surf_esp(self.alpha,
                                   lam=self.lam,
                                   trans_init=trans_init,
                                   use_jax=use_jax)
-        esp_score = molec_pair.sim_aligned_esp
-        se3_transform_esp = molec_pair.transform_esp
+        esp_score = molec_pair.sim_aligned_surf_esp
+        se3_transform_esp = molec_pair.transform_surf_esp
 
         transformed_pharm_ancs = apply_SE3_transform_np(fit_molec.pharm_ancs, se3_transform_esp)
         transformed_pharm_vecs = apply_SO3_transform_np(fit_molec.pharm_vecs, se3_transform_esp)

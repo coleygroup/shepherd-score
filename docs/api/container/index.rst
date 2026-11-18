@@ -1,10 +1,8 @@
 Container Module
 ================
 
-The container module provides the main high-level classes for working with
-molecules and their interaction profiles.  Each class wraps an RDKit molecule
-together with its extracted surface, ESP, and pharmacophore data, and exposes
-convenient methods for scoring and alignment.
+High-level classes for molecules, their interaction profiles, and pairs of
+molecules to score or align.
 
 .. toctree::
    :maxdepth: 2

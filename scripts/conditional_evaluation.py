@@ -257,17 +257,20 @@ def run_conditional_eval_frag(job_id,
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--load-file-path', type=str, help='Path file with generated samples OR if GDB conditional samples the path to the directory.')
-    parser.add_argument('--task-id', type=int, help='Task ID.')
-    parser.add_argument('--num-tasks', type=int, help='Number of tasks.')
+    parser.add_argument('--load-file-path', type=str, required=True, help='Path file with generated samples OR if GDB conditional samples the path to the directory.')
+    parser.add_argument('--task-id', type=int, default=0, help='Task ID.')
+    parser.add_argument('--num-tasks', type=int, default=1, help='Number of tasks.')
     parser.add_argument('--sample-id', type=int, required=True, help='Index used to load the file. [0,4]')
-    parser.add_argument('--task', type=str, required=True, help='Choose from "NP", "frag", or "GDB"')
+    parser.add_argument('--task', choices=('NP', 'frag', 'GDB'), required=True, help='Choose from "NP", "frag", or "GDB"')
     args = parser.parse_args()
-    print(args)
+    if args.num_tasks < 1 or not 0 <= args.task_id < args.num_tasks:
+        parser.error("require num-tasks >= 1 and 0 <= task-id < num-tasks")
 
     file_path = Path(args.load_file_path)
-    if not file_path.is_file():
-        raise ValueError('Provided --load-file-path is not a directory.')
+    if args.task == 'GDB' and not file_path.is_dir():
+        parser.error('--load-file-path must be a directory for GDB')
+    if args.task != 'GDB' and not file_path.is_file():
+        parser.error('--load-file-path must be a file for NP or frag')
     my_task_id = int(args.task_id)
     num_tasks = int(args.num_tasks)
     sample_id = int(args.sample_id)

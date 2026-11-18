@@ -1,86 +1,76 @@
 Installation
 ============
 
-Via PyPI
---------
-
-The simplest way to install shepherd-score is via pip:
-
-.. code-block:: bash
+ShEPhERD-score requires Python 3.10 or later::
 
    pip install shepherd-score
 
-Install xTB
-~~~~~~~~~~~
+To install from source, run this from the repository root::
 
-xTB will need to be installed manually since there are no PyPI bindings. This can be done in a conda 
-environment, but since this approach has been reported to lead to conflicts, we suggest installing 
-from `source <https://xtb-docs.readthedocs.io/en/latest/setup.html>`_ and adding it to ``PATH``.
+   pip install -e .
 
-Optional Dependencies
----------------------
+Numba CPU kernels are included but run slower without Intel SVML; see
+`Intel SVML`_ below to install it. Optional extras (versions are in
+``pyproject.toml``):
 
-JAX Support
-~~~~~~~~~~~
+- ``cpu``: SVML-vectorized CPU kernels (``numba<0.62`` and ``icc_rt``; see below)
+- ``gpu``: Triton GPU kernels (``triton>=3.6``). This needs a CUDA build of
+  PyTorch >= 2.6, which you must install for your system
+- ``jax``: the JAX alignment backend
+- ``docking``: Vina docking and interaction analysis
+- ``dev``: pytest, ruff and mypy
+- ``docs``: Sphinx and the documentation theme
+- ``all``: all of the above
 
-For faster scoring and alignment using JAX:
+For example, ``pip install "shepherd-score[cpu,gpu]"``.
 
-.. code-block:: bash
+``environment.yml`` defines a conda environment that includes SVML, xTB and Vina.
 
-   pip install "shepherd-score[jax]"
+External executables
+--------------------
 
-Docking Evaluation Tools
-~~~~~~~~~~~~~~~~~~~~~~~~
+- **xTB** must be on ``PATH`` for xTB charges, xTB relaxation and Fukui
+  descriptors. ``Molecule`` uses xTB in implicit water for charges by default
+  (``charge_model="xtb_water"``) and falls back to MMFF94, with a warning, when
+  xTB is missing. Pass ``charge_model="mmff"`` to use MMFF94 directly.
+- **Vina**: docking uses the Vina Python API from the ``docking`` extra.
+- **ChemAxon**: the ChemAxon protonation path needs a licensed ``cxcalc``.
+  The MolScrub path needs no extra install.
 
-Include docking evaluation tools:
+Intel SVML
+----------
 
-.. code-block:: bash
+The CPU kernels run fastest with Intel SVML. Check whether Numba loaded it::
 
-   pip install "shepherd-score[docking]"
+   python -c "import shepherd_score.accel.kernels.cpu, numba; print(numba.config.USING_SVML)"
 
-.. note::
+Without SVML the kernels still run, but more slowly (``vol`` about 1.3-1.6x,
+surface modes about 5x; ``pharm`` is unaffected), and results can differ within
+floating-point tolerance. To get SVML, install the ``cpu`` extra
+(``pip install "shepherd-score[cpu]"``; x86-64 Linux only), which pins
+``numba<0.62`` because llvmlite dropped SVML at 0.62. ShEPhERD-score loads SVML
+from ``icc_rt`` itself, so no ``LD_LIBRARY_PATH`` change is needed. Set
+``NUMBA_DISABLE_INTEL_SVML=1`` to opt out.
 
-   Installing ``shepherd-score[docking]`` will automatically install the Python bindings for 
-   Autodock Vina. However, a manual installation of the executable of Autodock Vina v1.2.5 
-   is required and can be found at: https://vina.scripps.edu/downloads/
+Headless Linux
+--------------
 
-All Dependencies
-~~~~~~~~~~~~~~~~
+Surface generation (``num_surf_points``) uses Open3D, whose Linux wheels link
+``libEGL.so.1`` and ``libGL.so.1``. Desktop machines and most cluster nodes
+have them; minimal servers and containers may not, and fail with
+``ImportError: libEGL.so.1``. Without root, install them into the conda env::
 
-Install everything:
+   conda install -c conda-forge libegl libgl
 
-.. code-block:: bash
+Otherwise install ``libegl1 libgl1`` (Debian/Ubuntu) or
+``mesa-libEGL mesa-libGL`` (RHEL/Rocky). Modes without a surface do not import
+Open3D.
 
-   pip install "shepherd-score[all]"
+Documentation and tests
+-----------------------
 
-Local Development
------------------
+From the repository root::
 
-For local development:
-
-.. code-block:: bash
-
-   git clone https://github.com/coleygroup/shepherd-score.git
-   cd shepherd-score
-   pip install -e ".[all]"
-
-Requirements
-------------
-
-This package works where PyTorch, Open3D, RDKit, and xTB can be installed for Python >=3.9. 
-If you are coming from the *ShEPhERD* repository, you can use the same environment.
-
-Core dependencies (installed automatically):
-
-* ``python>=3.9``
-* ``numpy``
-* ``torch>=1.12``
-* ``open3d>=0.18``
-* ``rdkit>=2023.03``
-* ``pandas>=2.0``
-* ``scipy>=1.10``
-
-.. note::
-
-   If using ``torch<=2.4``, ensure that ``mkl==2024.0`` with conda since there is a known 
-   `issue <https://github.com/pytorch/pytorch/issues/123097>`_ that prevents importing torch.
+   python -m pip install -e ".[dev,docs]"
+   python -m pytest tests/ -m "not jax"
+   python -m sphinx -b html docs docs/_build/html

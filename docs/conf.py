@@ -1,28 +1,18 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# For the full list of built-in configuration values, see the documentation:
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 import os
 import sys
 from datetime import datetime
 
-# Add the project root to the path so autodoc can find the package
 sys.path.insert(0, os.path.abspath('..'))
 
-# -- Project information -----------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'shepherd-score'
 copyright = f'2024-{datetime.now().year}, Kento Abeywardane'
 author = 'Kento Abeywardane'
 
-# The version info
 from shepherd_score import __version__  # noqa: E402
 release = __version__
 
-# -- General configuration ---------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
     'sphinx.ext.autodoc',
@@ -35,19 +25,15 @@ extensions = [
     'myst_nb',
 ]
 
-templates_path = ['_templates']
+templates_path = []
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '**.ipynb_checkpoints']
 
-# The master toctree document
 master_doc = 'index'
 
-# -- Options for HTML output -------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'sphinx_book_theme'
 pygments_style = 'sphinx'
 
-# Set HTML title without version number
 html_title = 'shepherd-score'
 html_logo = '_static/logo.svg'
 
@@ -82,12 +68,9 @@ html_theme_options = {
 html_static_path = ['_static']
 html_css_files = ['custom.css']
 
-# copybutton settings
 copybutton_exclude = '.linenos, .gp'
 
-# -- Extension configuration -------------------------------------------------
 
-# Napoleon settings for NumPy-style docstrings
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = True
@@ -103,7 +86,6 @@ napoleon_preprocess_types = False
 napoleon_type_aliases = None
 napoleon_attr_annotations = False
 
-# Autodoc settings
 autodoc_default_options = {
     'members': True,
     'undoc-members': True,
@@ -113,23 +95,24 @@ autodoc_default_options = {
 autodoc_typehints = 'description'
 autodoc_mock_imports = [
     'torch',
+    'numba',
+    'triton',
     'jax',
     'jaxlib',
     'optax',
     'open3d',
-    'rdkit',
     'meeko',
     'vina',
     'openbabel',
     'prolif',
     'biopython',
     'Bio',
+    'MDAnalysis',
     'molscrub',
     'py3Dmol',
     'sklearn',
 ]
 
-# Intersphinx mapping
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
@@ -138,8 +121,20 @@ intersphinx_mapping = {
     'rdkit': ('https://www.rdkit.org/docs/', None),
 }
 
-# myst-nb settings
 nb_execution_mode = 'off'  # Don't execute notebooks during build
 
-# MyST extensions: enable dollar-sign math ($...$ and $$...$$) in .md files
 myst_enable_extensions = ["dollarmath", "amsmath"]
+
+def copy_tutorials(app):
+    from pathlib import Path
+    import shutil
+    docs = Path(app.srcdir)
+    for source in (docs.parent / "examples").glob("*.ipynb"):
+        target = docs / "tutorials" / source.name
+        if target.is_symlink():
+            continue
+        shutil.copyfile(source, target)
+
+
+def setup(app):
+    app.connect("builder-inited", copy_tutorials)

@@ -18,6 +18,7 @@ from shepherd_score.alignment._torch import (
     _get_45_fibo,
     _quats_from_fibo,
 )
+from shepherd_score.alignment._optimize import optimize_se3
 from shepherd_score.alignment._torch_analytical import (
     optimize_ROCS_overlay_analytical,
     optimize_ROCS_esp_overlay_analytical,
@@ -32,6 +33,7 @@ __all__ = [
     "objective_esp_combo_score_overlay",
     "objective_pharm_overlay",
     "crippen_align",
+    "optimize_se3",
     "optimize_ROCS_overlay",
     "optimize_ROCS_overlay_analytical",
     "optimize_ROCS_esp_overlay",

@@ -158,12 +158,12 @@ def _compute_consistency_lower_bounds(
                               use_jax=False)
             sim_surf_lower_bound = mp.sim_aligned_surf
         if consis_eval.molec_regen.surf_esp is not None:
-            mp.align_with_esp(alpha=ALPHA(mp.num_surf_points),
+            mp.align_with_surf_esp(alpha=ALPHA(mp.num_surf_points),
                              lam=consis_eval.lam_scaled,
                              num_repeats=50,
                              trans_init=False,
                              use_jax=False)
-            sim_esp_lower_bound = mp.sim_aligned_esp
+            sim_esp_lower_bound = mp.sim_aligned_surf_esp
         if consis_eval.molec_regen.pharm_ancs is not None:
             mp.align_with_pharm(num_repeats=50,
                                trans_init=False,

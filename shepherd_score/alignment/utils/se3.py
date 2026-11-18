@@ -13,6 +13,22 @@ import torch
 import torch.nn.functional as F
 
 
+def quaternions_to_SE3_batch(q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    """Build a (K, 4, 4) batch of SE(3) matrices from normalised quaternions q (K, 4) in
+    (r, i, j, k) order and translations t (K, 3)."""
+    r, i, j, k = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    two = 2.0
+    R = torch.stack((
+        1 - two * (j * j + k * k), two * (i * j - k * r),     two * (i * k + j * r),
+        two * (i * j + k * r),     1 - two * (i * i + k * k), two * (j * k - i * r),
+        two * (i * k - j * r),     two * (j * k + i * r),     1 - two * (i * i + j * j),
+    ), dim=1).view(-1, 3, 3)
+    K = q.shape[0]
+    SE3 = torch.eye(4, dtype=q.dtype, device=q.device).repeat(K, 1, 1)
+    SE3[:, :3, :3] = R
+    SE3[:, :3, 3] = t
+    return SE3
+
 def quaternions_to_rotation_matrix(quaternions: torch.Tensor) -> torch.Tensor:
     """
     Converts quaternion to a rotation matrix. Supports batched and non-batched inputs.
@@ -159,15 +175,15 @@ def apply_SE3_transform(points: torch.Tensor,
     if len(SE3_transform.shape) != len(points.shape):
         raise ValueError(f'Shapes of points and SE3_transform should be the same length. Instead {len(SE3_transform.shape)} and {len(points.shape)} were given.')
 
-    # Single instance
+    # Single instance; addmm/baddbmm fuse the rotation and translation (same orientation as R @ x.T)
     if len(SE3_transform.shape) == 2:
-        transformed_points = (SE3_transform[:3,:3] @ points.T).T + SE3_transform[:3,3]
+        transformed_points = torch.addmm(SE3_transform[:3,3,None], SE3_transform[:3,:3], points.T).T
         return transformed_points
 
     # Batched
     elif len(SE3_transform.shape):
-        rotated_points = torch.bmm(SE3_transform[:, :3,:3], points.permute(0,2,1)).permute(0,2,1)
-        transformed_points = rotated_points + SE3_transform[:, None, :3, 3]
+        transformed_points = torch.baddbmm(SE3_transform[:, :3, 3, None], SE3_transform[:, :3,:3],
+                                           points.transpose(1, 2)).transpose(1, 2)
         return transformed_points
 
     else:

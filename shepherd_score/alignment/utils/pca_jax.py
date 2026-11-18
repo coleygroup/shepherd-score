@@ -62,7 +62,15 @@ def rotation_axis_jax(v1: Array, v2: Array) -> Array:
         if jnp.allclose(v1, v2):
             return jnp.array([1., 0., 0.])
         v3 = jnp.cross(v1, v2)
-        v3 = v3 / jnp.linalg.norm(v3)
+        norm = jnp.linalg.norm(v3)
+        if norm < 1e-12:
+            # v1 and v2 are (anti)parallel, so the axis is undefined; any unit vector
+            # perpendicular to v1 works. Dividing by the zero norm would give a NaN axis that
+            # later crashes eigh (same guard as rotation_axis_np).
+            ref = jnp.array([1., 0., 0.]) if abs(float(v1[0])) < 0.9 else jnp.array([0., 1., 0.])
+            v3 = jnp.cross(v1, ref)
+            norm = jnp.linalg.norm(v3)
+        v3 = v3 / norm
     return v3
 
 def quaternion_from_axis_angle_jax(axis: Array, angle: Array) -> Array:

@@ -7,7 +7,7 @@ name = "shepherd-score"
 dynamic = ["version"]
 description = "3D scoring functions used for evaluation of ShEPhERD"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Abeywardane", email = "kento@mit.edu"}
@@ -26,16 +26,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
-    "rdkit>=2023.03,<2025.09.3; python_version == '3.9'",
-    "rdkit>=2023.03; python_version >= '3.10'",
+    "rdkit>=2023.03",
     "torch>=1.12",
     "open3d>=0.18",
     "py3Dmol",
@@ -44,13 +43,15 @@ dependencies = [
     "scipy>=1.10",
     "molscrub",
     "tqdm",
+    "numba",            # default CPU backend for the batched aligners; see [cpu] for the SVML build
+    "threadpoolctl",    # caps BLAS/OpenMP threads in the multi-GPU worker processes
 ]
 
 [project.urls]
-Homepage = "https://github.com/kentoabeywardane/shepherd-score"
-Repository = "https://github.com/kentoabeywardane/shepherd-score"
+Homepage = "https://github.com/coleygroup/shepherd-score"
+Repository = "https://github.com/coleygroup/shepherd-score"
 Documentation = "https://shepherd-score.readthedocs.io"
-"Bug Tracker" = "https://github.com/kentoabeywardane/shepherd-score/issues"
+"Bug Tracker" = "https://github.com/coleygroup/shepherd-score/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -65,6 +66,18 @@ docs = [
     "sphinx-copybutton>=0.5",
     "myst-nb>=1.0",
 ]
+# SVML-vectorized CPU kernels: llvmlite stopped building in SVML at numba 0.62. icc_rt is
+# Intel's runtime; shepherd_score/accel/kernels/_svml.py loads it from the pip install (Linux).
+cpu = [
+    "numba>=0.59,<0.62",
+    "icc_rt; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+# GPU kernels need a CUDA build of torch (>= 2.6, for torch.cuda.graph(capture_error_mode=...))
+# and Triton >= 3.6 (for @triton.autotune(cache_results=...)).
+gpu = [
+    "triton>=3.6",
+    "torch>=2.6",
+]
 jax = [
     "jax>=0.4.20; python_version <'3.11'",
     "jaxlib>=0.4.20; python_version <'3.11'",
@@ -76,14 +89,14 @@ jax = [
 ]
 docking = [
     "meeko",
+    "gemmi",            # imported by meeko, which declares no dependencies on PyPI
     "vina>=1.2.5",
     "openbabel",
     "prolif>=2.0.3",
-    "biopython>=1.84,<1.86; python_version == '3.9'",
-    "biopython>=1.84; python_version >= '3.10'",
+    "biopython>=1.84",
 ]
 all = [
-    "shepherd-score[dev,docs,jax,docking]",
+    "shepherd-score[dev,docs,cpu,gpu,jax,docking]",
 ]
 
 [tool.setuptools.packages.find]
@@ -94,9 +107,24 @@ exclude = ["tests*", "examples*", "scripts*", "docs*", ".github*"]
 [tool.setuptools.package-data]
 "shepherd_score" = ["*.yml", "*.yaml", "*.json", "*.txt", "*.fdef", "*.pdbqt"]
 
+[tool.setuptools.data-files]
+"share/shepherd-score/skills/design-scoring-mode" = [
+    ".claude/skills/design-scoring-mode/pitfalls.md",
+    ".claude/skills/design-scoring-mode/seams.md",
+    ".claude/skills/design-scoring-mode/SKILL.md",
+    ".claude/skills/design-scoring-mode/template_test.py",
+]
+"share/shepherd-score/skills/accelerate-scoring-mode" = [
+    ".claude/skills/accelerate-scoring-mode/kernel_anatomy.md",
+    ".claude/skills/accelerate-scoring-mode/parity_gates.md",
+    ".claude/skills/accelerate-scoring-mode/screen_wiring.md",
+    ".claude/skills/accelerate-scoring-mode/seams.md",
+    ".claude/skills/accelerate-scoring-mode/SKILL.md",
+]
+
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 exclude = [
     ".git",
     ".mypy_cache",
@@ -123,6 +151,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports in __init__
+# Numerical-kernel idioms: one matrix row per line (E702), single-letter math names (E741),
+# lambda buffer factories (E731); tests add imports behind pytest.importorskip (E401/E402).
+"shepherd_score/accel/**" = ["E702", "E741", "E731"]
+"tests/**" = ["E401", "E402", "E702", "E741", "E731"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["shepherd_score"]
@@ -135,9 +167,16 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=shepherd_score",
-    "--cov-report=term-missing",
-] 
+# Coverage is opt-in (pytest --cov=shepherd_score) so plain runs do not need pytest-cov.
+addopts = ["--strict-markers", "--strict-config", "--tb=short"]
+markers = [
+    "slow: marks tests as slow to run",
+    "torch: marks tests that require PyTorch (will be auto-skipped if not available)",
+    "jax: marks tests that require JAX (will be auto-skipped if not available)",
+    "cuda: marks tests that require a CUDA GPU (will be auto-skipped if not available)",
+]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]

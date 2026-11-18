@@ -48,7 +48,16 @@ def rotation_axis_np(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
     if np.allclose(v1, v2):
         return np.array([1, 0, 0])
     v3 = np.cross(v1, v2)
-    return v3 / np.linalg.norm(v3)
+    norm = np.linalg.norm(v3)
+    if norm < 1e-12:
+        # v1 and v2 are (anti)parallel, so the cross product is zero and the axis is undefined;
+        # dividing by it would give a NaN axis that later crashes np.linalg.eigh. Any unit vector
+        # perpendicular to v1 works (the choice is immaterial for a 180 degree flip, and the angle
+        # is ~0 in the parallel case). Reached whenever the principal axes are degenerate.
+        ref = np.array([1.0, 0.0, 0.0]) if abs(v1[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        v3 = np.cross(v1, ref)
+        norm = np.linalg.norm(v3)
+    return v3 / norm
 
 
 def quaternion_from_axis_angle_np(axis: np.ndarray, angle: np.ndarray) -> np.ndarray:

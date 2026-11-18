@@ -25,9 +25,7 @@ from shepherd_score.alignment._jax import (
     _per_pair_optimize_pharm_mask_scan_factory,
 )
 
-# ---------------------------------------------------------------------------
 # Volumetric alignment
-# ---------------------------------------------------------------------------
 
 # Cache: (max_num_steps, n_devices) -> jit-compiled shard_map function
 _shmap_vol_cache: dict = {}
@@ -113,10 +111,7 @@ def optimize_ROCS_overlay_jax_vol_shmap(
         se3_init_batch, alpha, VAA_batch, VBB_batch, lr,
     )
 
-
-# ---------------------------------------------------------------------------
 # Masked volumetric ESP alignment
-# ---------------------------------------------------------------------------
 
 _shmap_vol_esp_cache: dict = {}
 
@@ -193,10 +188,7 @@ def optimize_ROCS_esp_overlay_jax_vol_esp_shmap(
         se3_init_batch, alpha, lam, VAA_batch, VBB_batch, lr,
     )
 
-
-# ---------------------------------------------------------------------------
 # Non-masked surface alignment
-# ---------------------------------------------------------------------------
 
 _shmap_surf_cache: dict = {}
 
@@ -258,10 +250,7 @@ def optimize_ROCS_overlay_jax_surf_shmap(
     fn = _shmap_surf_cache[cache_key]
     return fn(ref_batch, fit_batch, se3_init_batch, alpha, VAA_batch, VBB_batch, lr)
 
-
-# ---------------------------------------------------------------------------
 # Non-masked surface ESP alignment
-# ---------------------------------------------------------------------------
 
 _shmap_surf_esp_cache: dict = {}
 
@@ -330,10 +319,7 @@ def optimize_ROCS_esp_overlay_jax_surf_esp_shmap(
         se3_init_batch, alpha, lam, VAA_batch, VBB_batch, lr,
     )
 
-
-# ---------------------------------------------------------------------------
 # Masked pharmacophore alignment
-# ---------------------------------------------------------------------------
 
 _shmap_pharm_cache: dict = {}
 

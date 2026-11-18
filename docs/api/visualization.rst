@@ -7,7 +7,7 @@ Tools for visualizing molecules and their interaction profiles.
 :func:`~shepherd_score.visualize.draw_surface`, and :func:`~shepherd_score.visualize.draw_molecule`
 accept :class:`~shepherd_score.container.profiles.Surface` and
 :class:`~shepherd_score.pharm_utils.pharmacophore.Pharmacophore` containers directly;
-flat ``pharm_*`` / ``surf_*`` arrays remain supported.
+as well as flat ``pharm_*`` / ``surf_*`` arrays.
 
 .. automodule:: shepherd_score.visualize
    :members:

@@ -12,12 +12,13 @@ from shepherd_score.evaluations.docking import docking_target_info, DockingEvalP
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--save-dir-path', type=str, help='Path to directory to save files to.')
-    parser.add_argument('--load-file', type=str, help='Path to file containing 10k SMILES to screen.')
-    parser.add_argument('--task-id', type=int, help='Task ID.')
-    parser.add_argument('--num-tasks', type=int, help='Number of tasks.')
+    parser.add_argument('--save-dir-path', type=str, required=True, help='Path to directory to save files to.')
+    parser.add_argument('--load-file', type=str, required=True, help='Path to file containing 10k SMILES to screen.')
+    parser.add_argument('--task-id', type=int, default=0, help='Task ID.')
+    parser.add_argument('--num-tasks', type=int, default=1, help='Number of tasks.')
     args = parser.parse_args()
-    print(args)
+    if args.num_tasks < 1 or not 0 <= args.task_id < args.num_tasks:
+        parser.error("require num-tasks >= 1 and 0 <= task-id < num-tasks")
 
     save_dir = Path(args.save_dir_path)
     if not save_dir.is_dir():

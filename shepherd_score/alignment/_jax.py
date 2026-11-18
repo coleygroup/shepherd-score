@@ -449,7 +449,7 @@ def _initialize_se3_params_jax(ref_points: Array,
 #     sampling.
 
 #     Parameters
-#     ----------
+
 #     num_samples : int
 #         Number of rotations to generate.
 
@@ -1255,6 +1255,23 @@ def _per_pair_optimize_surf_esp_scan(
     return aligned_pts_all[best_idx], SE3_transforms[best_idx], scores[best_idx]
 
 
+_TVERSKY_SIGMA = {'tversky': 0.95, 'tversky_ref': 1.0, 'tversky_fit': 0.05}
+
+
+def _pharm_similarity_from_overlaps_jax(vab: Array, vaa: Array, vbb: Array,
+                                        similarity: str, eps: float = 1e-6) -> Array:
+    """
+    Reduce pharmacophore overlaps to ``similarity``, matching ``get_overlap_pharm_jax``:
+    Tanimoto, or Tversky ``VAB / (sigma*VAA + (1-sigma)*VBB)`` clamped at 1.
+    """
+    if similarity == 'tanimoto':
+        return vab / (vaa + vbb - vab + eps)
+    if similarity not in _TVERSKY_SIGMA:
+        raise ValueError(f'Unknown pharmacophore similarity {similarity!r}.')
+    sigma = _TVERSKY_SIGMA[similarity]
+    return jnp.clip(vab / (sigma * vaa + (1 - sigma) * vbb + eps), max=1.0)
+
+
 @lru_cache(maxsize=8)
 def _per_pair_optimize_pharm_mask_scan_factory(similarity: str,
                                                extended_points: bool,
@@ -1333,14 +1350,8 @@ def _per_pair_optimize_pharm_mask_scan_factory(similarity: str,
         )(ref_pharms, fit_pharms, ref_anchors, aligned_ancs_all,
           ref_vectors, aligned_vecs_all, mask_ref, mask_fit)
 
-        if similarity == 'tanimoto':
-            final_scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + _eps)
-        elif similarity == 'tversky_ref':
-            final_scores = vab_scores / (ref_self_score + _eps)
-        elif similarity == 'tversky_fit':
-            final_scores = vab_scores / (fit_self_score + _eps)
-        else:
-            final_scores = vab_scores
+        final_scores = _pharm_similarity_from_overlaps_jax(
+            vab_scores, ref_self_score, fit_self_score, similarity, _eps)
 
         best_idx = jnp.argmax(final_scores)
         return (aligned_ancs_all[best_idx], aligned_vecs_all[best_idx],
@@ -2000,14 +2011,8 @@ def _loss_fn_pharm_vectorized(
       ref_vectors, fit_vectors_transformed)
 
     eps = 1e-6
-    if similarity == 'tanimoto':
-        scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + eps)
-    elif similarity == 'tversky_ref':
-        scores = vab_scores / (ref_self_score + eps)
-    elif similarity == 'tversky_fit':
-        scores = vab_scores / (fit_self_score + eps)
-    else:
-        scores = vab_scores
+    scores = _pharm_similarity_from_overlaps_jax(
+        vab_scores, ref_self_score, fit_self_score, similarity, eps)
 
     return 1.0 - jnp.mean(scores)
 
@@ -2132,14 +2137,8 @@ def optimize_pharm_overlay_jax_vectorized(
       ref_vectors, aligned_vectors)
 
     eps = 1e-6
-    if similarity == 'tanimoto':
-        final_scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + eps)
-    elif similarity == 'tversky_ref':
-        final_scores = vab_scores / (ref_self_score + eps)
-    elif similarity == 'tversky_fit':
-        final_scores = vab_scores / (fit_self_score + eps)
-    else:
-        final_scores = vab_scores
+    final_scores = _pharm_similarity_from_overlaps_jax(
+        vab_scores, ref_self_score, fit_self_score, similarity, eps)
 
     best_idx = jnp.argmax(final_scores)
 
@@ -2194,14 +2193,8 @@ def _loss_fn_pharm_vectorized_mask(
       ref_vectors, fit_vectors_transformed, mask_ref, mask_fit)
 
     eps = 1e-6
-    if similarity == 'tanimoto':
-        scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + eps)
-    elif similarity == 'tversky_ref':
-        scores = vab_scores / (ref_self_score + eps)
-    elif similarity == 'tversky_fit':
-        scores = vab_scores / (fit_self_score + eps)
-    else:
-        scores = vab_scores
+    scores = _pharm_similarity_from_overlaps_jax(
+        vab_scores, ref_self_score, fit_self_score, similarity, eps)
 
     return 1.0 - jnp.mean(scores)
 
@@ -2328,14 +2321,8 @@ def optimize_pharm_overlay_jax_vectorized_mask(
       ref_vectors, aligned_vectors, mask_ref, mask_fit)
 
     eps = 1e-6
-    if similarity == 'tanimoto':
-        final_scores = vab_scores / (ref_self_score + fit_self_score - vab_scores + eps)
-    elif similarity == 'tversky_ref':
-        final_scores = vab_scores / (ref_self_score + eps)
-    elif similarity == 'tversky_fit':
-        final_scores = vab_scores / (fit_self_score + eps)
-    else:
-        final_scores = vab_scores
+    final_scores = _pharm_similarity_from_overlaps_jax(
+        vab_scores, ref_self_score, fit_self_score, similarity, eps)
 
     best_idx = jnp.argmax(final_scores)
 

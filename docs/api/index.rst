@@ -1,18 +1,43 @@
 API Reference
 =============
 
-This section contains the complete API documentation for shepherd-score, automatically
-generated from the source code docstrings.
+API documentation generated from the source docstrings. The main v2 entry points are
+:meth:`MoleculePair.align <shepherd_score.container.MoleculePair.align>`,
+:meth:`MoleculePairBatch.align <shepherd_score.container.MoleculePairBatch.align>` and
+:func:`~shepherd_score.screen.screen`.
 
-Core Modules
-------------
+Core
+----
 
 .. toctree::
    :maxdepth: 3
 
    container/index
-   conformer
+
+Modes and similarity
+--------------------
+
+.. toctree::
+   :maxdepth: 3
+
+   modes
+
+Screening
+---------
+
+.. toctree::
+   :maxdepth: 2
+
+   screening
+
+Extraction and conformers
+-------------------------
+
+.. toctree::
+   :maxdepth: 3
+
    extraction
+   conformer
 
 Scoring
 -------
@@ -22,8 +47,8 @@ Scoring
 
    scoring/index
 
-Alignment
----------
+Alignment (lower-level, legacy functional API)
+----------------------------------------------
 
 .. toctree::
    :maxdepth: 3
