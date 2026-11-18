@@ -5,7 +5,6 @@
 [![PyPI version](https://img.shields.io/pypi/v/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
 [![Python versions](https://img.shields.io/pypi/pyversions/shepherd-score.svg)](https://pypi.org/project/shepherd-score/)
 [![Documentation Status](https://readthedocs.org/projects/shepherd-score/badge/?version=latest)](https://shepherd-score.readthedocs.io/en/latest/?badge=latest)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/coleygroup/shepherd-score)
 
 
 📄 **[Paper](https://openreview.net/forum?id=KSLkFYHlYg)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/en/latest/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
@@ -14,7 +13,12 @@
 
 ShEPhERD-score is a Python package for **3D molecular similarity**. It **extracts interaction profiles** (shape, surface electrostatics and pharmacophores), **aligns and scores** molecules with differentiable 3D similarity functions, **screens** compound libraries at high throughput, and **evaluates** 3D molecules sampled from generative models such as *ShEPhERD* and *ShEPhERD–2*.
 
-**Version 2.0** (Nov. 2026) makes scoring functions modular: each scoring mode is a small registered definition, so new similarity functions can be added and run on every backend. Accelerated CPU (Numba) and GPU (Triton) kernels run batched alignment and library screening, including across multiple GPUs. Together this makes ShEPhERD-score a modular and expressive platform that enables high-throughput 3D similarity search relative to open-source alternatives (see [timings](https://shepherd-score.readthedocs.io/en/latest/performance/timings.html)). v2.0 requires Python ≥3.10; see the [migration notes](https://shepherd-score.readthedocs.io/en/latest/migration.html) for changes from v1.
+> [!IMPORTANT]
+> **New in v2.0 (Nov. 2026)**
+>
+> Register a scoring mode once and use it across backends. Numba (CPU) and Triton (GPU) accelerate batched alignment and library screening, with multi-GPU support for large screens. [See benchmark timings](https://shepherd-score.readthedocs.io/en/latest/performance/timings.html).
+>
+> **Upgrading from v1?** v2.0 requires Python ≥3.10 and changes the default partial charges used for electrostatic scoring. [Read the migration notes](https://shepherd-score.readthedocs.io/en/latest/migration.html).
 
 The interaction profile representation and scoring functions were introduced with the *ShEPhERD* diffusion model ([ICLR 2025](https://openreview.net/forum?id=KSLkFYHlYg)). The generative models live in separate repositories: [ShEPhERD](https://github.com/coleygroup/shepherd) and [ShEPhERD–2](https://github.com/coleygroup/shepherd2).
 
