@@ -1,8 +1,8 @@
 """The fused numba CPU fine loop and the eager torch fine loop must agree for every mode.
 
 ``drivers/engine.align`` silently falls back from the fused loop to the eager one, so the two
-must score alike. Bounds cover both the SVML (fp32 SoA) and non-SVML (fp64 AoS) kernels;
-``surf_esp``, the most shape-degenerate mode, gets its own.
+must score alike. The fused loop runs the fp32 SoA kernels of ``cpu_soa.py`` (the same code
+with or without SVML); ``surf_esp``, the most shape-degenerate mode, gets its own bound.
 """
 from pathlib import Path
 
@@ -18,7 +18,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not TORCH, reason="PyTorch required")
 
 # (max |delta|, max relative %) per mode: roughly an order of magnitude above the fp32 drift
-# seen in either kernel environment, so a failure means the loops genuinely diverged.
+# of the fused kernels, so a failure means the loops genuinely diverged.
 TOL_DEFAULT = (1.0e-5, 0.01)
 TOL = {"surf_esp": (1.0e-3, 0.2)}
 
@@ -27,7 +27,7 @@ SMILES = ["CC(C)Cc1ccc(cc1)C(C)C(=O)O", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
 N_SURF = 60
 
 # Conformers are frozen on disk: re-embedding with ETKDG gives new geometries on every RDKit
-# release, and on some of those the SVML kernels' fp32 drift exceeds the bounds above.
+# release, and on some of those the fused kernels' fp32 drift exceeds the bounds above.
 _SDF = Path(__file__).parents[1] / "data" / "cpu_fine_loops_mols.sdf"
 
 
@@ -109,7 +109,7 @@ def test_fused_and_eager_cpu_loops_agree(mode, mols):
     assert d <= max_abs and rel <= max_rel, (
         f"{mode}: fused vs eager max|d| {d:.3e} ({rel:.4f}% relative) exceeds "
         f"{max_abs:.1e} / {max_rel}%.\n  fused {fused}\n  eager {eager}\n"
-        "  (SVML widens this gap; see the module docstring for both measurements)")
+        "  (the fused loop is fp32 throughout; see the module docstring)")
 
     if not spec_of(mode).cpu_fused:
         assert fused == eager, \

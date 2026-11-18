@@ -175,7 +175,7 @@ VARIANTS = (
 
 
 def main() -> None:
-    warnings.filterwarnings("ignore")           # the one-shot SVML notice is env, not signal
+    warnings.filterwarnings("ignore")
     import numba.core.config as nbcfg
 
     print("=" * 78)

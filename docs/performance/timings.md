@@ -8,7 +8,7 @@
 
 On GPU, the Triton kernels use fixed, pre-tuned settings.
 
-**Hardware.** GPU: NVIDIA L40S. CPU: a single AMD EPYC 9474F core, running Numba 0.59.1 with SVML.
+**Hardware.** GPU: NVIDIA L40S. CPU: a single AMD EPYC 9474F core, running Numba 0.59.1 with SVML. These CPU numbers predate the polynomial-`exp` fused kernels introduced in v2.0.1. Those kernels make the fused CPU loop for `vol`, `vol_esp` and `vol_color` 1.2–1.4× faster with SVML, and equally fast without it.
 
 ![Screening throughput versus library size, and comparisons with open-source packages](throughput_timings.png)
 

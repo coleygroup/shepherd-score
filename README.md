@@ -42,11 +42,10 @@ xTB is required for ShEPhERD–2 workflows (xTB partial charges and ESP). xTB ca
 
 ### Accelerators
 
-> [!IMPORTANT]
-> Our reported Numba CPU timings use Intel SVML-vectorized kernels, which Numba dropped in 0.62. Without SVML, volume alignment is ~1.3-1.6x slower and surface alignment ~5x slower; pharmacophore alignment is unaffected. The `cpu` extra pins `numba<0.62` and installs Intel's SVML runtime. SVML is only available on x86-64 Linux, so macOS and ARM users can skip it.
+The Numba CPU backend is included in the base install and needs no extra. The optional `cpu` extra adds Intel SVML, which speeds up a few less common CPU paths; see [Intel SVML](https://shepherd-score.readthedocs.io/en/latest/installation.html#intel-svml) for whether you need it.
 
 ```bash
-uv pip install "shepherd-score[cpu]"
+uv pip install "shepherd-score[cpu]"   # optional, x86-64 Linux only
 ```
 
 Alternatively, `conda env create -f environment.yml` builds a CPU environment with SVML, xTB and Vina.

@@ -31,7 +31,7 @@ Quick Install
 Install from PyPI (Python ≥3.10)::
 
    pip install shepherd-score            # core
-   pip install "shepherd-score[cpu]"     # + SVML-accelerated Numba kernels
+   pip install "shepherd-score[cpu]"     # + Intel SVML for the fp64 Numba kernels
    pip install "shepherd-score[gpu]"     # + Triton GPU kernels
 
 See :doc:`installation` for optional backends and external executables.

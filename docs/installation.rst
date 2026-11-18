@@ -9,11 +9,11 @@ To install from source, run this from the repository root::
 
    pip install -e .
 
-Numba CPU kernels are included but run slower without Intel SVML; see
-`Intel SVML`_ below to install it. Optional extras (versions are in
-``pyproject.toml``):
+Numba CPU kernels are included and need no extra. Optional extras (versions
+are in ``pyproject.toml``):
 
-- ``cpu``: SVML-vectorized CPU kernels (``numba<0.62`` and ``icc_rt``; see below)
+- ``cpu``: Intel SVML for the fp64 Numba kernels (``numba<0.62`` and
+  ``icc_rt``; see `Intel SVML`_ below)
 - ``gpu``: Triton GPU kernels (``triton>=3.6``). This needs a CUDA build of
   PyTorch >= 2.6, which you must install for your system
 - ``jax``: the JAX alignment backend
@@ -40,17 +40,43 @@ External executables
 Intel SVML
 ----------
 
-The CPU kernels run fastest with Intel SVML. Check whether Numba loaded it::
+SVML is optional, and most users do not need it.
+
+On CPU, ``MoleculePairBatch.align*`` and ``screen`` run a fused Numba loop
+with float32 kernels. These kernels compute ``exp`` as a polynomial instead of
+calling the math library, so they vectorize on any Numba version, including
+0.62 and later, which dropped SVML. They run equally fast and give the same
+scores with or without SVML.
+
+SVML only speeds up the float64 kernels in ``accel/kernels/cpu.py``. You hit
+those in these cases:
+
+- ``vol_esp`` **on large molecules.** The fused loop is used only while every
+  padded width is at most 100 heavy atoms. A bucket wider than that runs the
+  eager float64 loop.
+- ``vol_and_surf_esp`` **and its Tversky variant.** These modes use the fused
+  loop, but its ESP-agreement term calls a float64 kernel on every step, so
+  SVML speeds up that term.
+- **Calling the drivers directly with float64 tensors.** The fused loop runs
+  only on float32, so a float64 run takes the eager loop. The batch and
+  screening APIs pad to float32 and never take this path.
+- **A fused-loop failure.** If the fused loop raises, the engine falls back
+  to the eager loop.
+
+``pharm`` and ``pharm_tversky`` also run the eager loop, but their speed does
+not depend on SVML.
+
+If you mainly screen or align large molecules with ``vol_esp``, or use
+``vol_and_surf_esp`` heavily on CPU, install the extra. Otherwise you can skip
+it. Check whether Numba loaded SVML::
 
    python -c "import shepherd_score.accel.kernels.cpu, numba; print(numba.config.USING_SVML)"
 
-Without SVML the kernels still run, but more slowly (``vol`` about 1.3-1.6x,
-surface modes about 5x; ``pharm`` is unaffected), and results can differ within
-floating-point tolerance. To get SVML, install the ``cpu`` extra
-(``pip install "shepherd-score[cpu]"``; x86-64 Linux only), which pins
-``numba<0.62`` because llvmlite dropped SVML at 0.62. ShEPhERD-score loads SVML
-from ``icc_rt`` itself, so no ``LD_LIBRARY_PATH`` change is needed. Set
-``NUMBA_DISABLE_INTEL_SVML=1`` to opt out.
+To get SVML, install the ``cpu`` extra (``pip install "shepherd-score[cpu]"``;
+x86-64 Linux only), which pins ``numba<0.62`` because llvmlite dropped SVML at
+0.62. ShEPhERD-score loads SVML from ``icc_rt`` itself, so no
+``LD_LIBRARY_PATH`` change is needed. Set ``NUMBA_DISABLE_INTEL_SVML=1`` to opt
+out.
 
 Headless Linux
 --------------
