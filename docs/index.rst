@@ -69,10 +69,21 @@ See :doc:`installation` for optional backends and external executables.
 Citation
 --------
 
-An article describing ShEPhERD-score v2.0 is forthcoming. If you use or adapt ShEPhERD-score in
-your work, please cite it once available.
+If you use or adapt ShEPhERD-score in your work, please cite
+`ShEPhERD-score: Fast, adaptable three-dimensional alignment of molecular features
+<https://arxiv.org/abs/2611.25076>`_:
 
-.. TODO: add the ShEPhERD-score v2.0 article BibTeX here
+.. code-block:: bibtex
+
+   @misc{somers2026shepherdscore,
+     title={ShEPhERD-score: Fast, adaptable three-dimensional alignment of molecular features},
+     author={Nate Somers and Kento A. Abeywardane and Connor W. Coley and Masha Elkin},
+     year={2026},
+     eprint={2611.25076},
+     archivePrefix={arXiv},
+     primaryClass={q-bio.BM},
+     url={https://arxiv.org/abs/2611.25076}
+   }
 
 The interaction profile representation and scoring functions were introduced with
 `ShEPhERD <https://github.com/coleygroup/shepherd>`_. If you use them or the ShEPhERD models,
