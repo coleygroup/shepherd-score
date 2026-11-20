@@ -200,8 +200,7 @@ everywhere, so the gradient leaves it out. A Tversky `similarity` applies to the
 
 If you use or adapt this work, please cite:
 
-An article describing ShEPhERD-score v2.0 is forthcoming.
-<!-- TODO: add the ShEPhERD-score v2.0 citation here once available. -->
+Somers, N., Abeywardane, K. A., Coley, C. W., & Elkin, M. (2026). ShEPhERD-score: Fast, adaptable three-dimensional alignment of molecular features. *arXiv preprint* arXiv:2611.25076. https://arxiv.org/abs/2611.25076
 
 Adams, K., Abeywardane, K., Fromer, J., & Coley, C. W. (2025). ShEPhERD: Diffusing shape, electrostatics, and pharmacophores for bioisosteric drug design. In *The Thirteenth International Conference on Learning Representations*. https://openreview.net/forum?id=KSLkFYHlYg
 

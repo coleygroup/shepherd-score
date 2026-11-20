@@ -7,7 +7,7 @@
 [![Documentation Status](https://readthedocs.org/projects/shepherd-score/badge/?version=latest)](https://shepherd-score.readthedocs.io/en/latest/?badge=latest)
 
 
-📄 **[Paper](https://openreview.net/forum?id=KSLkFYHlYg)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/en/latest/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
+📄 **[Paper](https://arxiv.org/abs/2611.25076)** | 📚 **[Documentation](https://shepherd-score.readthedocs.io/en/latest/)** | 📦 **[PyPI](https://pypi.org/project/shepherd-score/)**
 
 </div>
 
@@ -19,6 +19,8 @@ ShEPhERD-score is a Python package for **3D molecular similarity**. It **extract
 > Register a scoring mode once and use it across backends. Numba (CPU) and Triton (GPU) accelerate batched alignment and library screening, with multi-GPU support for large screens. [See benchmark timings](https://shepherd-score.readthedocs.io/en/latest/performance/timings.html).
 >
 > **Upgrading from v1?** v2.0 requires Python ≥3.10 and changes the default partial charges used for electrostatic scoring. [Read the migration notes](https://shepherd-score.readthedocs.io/en/latest/migration.html).
+
+We describe the package's modularity and scalability for implementing new 3D similarity scoring functions in our preprint: [ShEPhERD–score: Fast, adaptable three-dimensional alignment of molecular features](https://arxiv.org/abs/2611.25076).
 
 The interaction profile representation and scoring functions were introduced with the *ShEPhERD* diffusion model ([ICLR 2025](https://openreview.net/forum?id=KSLkFYHlYg)). The generative models live in separate repositories: [ShEPhERD](https://github.com/coleygroup/shepherd) and [ShEPhERD–2](https://github.com/coleygroup/shepherd2).
 
@@ -187,10 +189,18 @@ This project is licensed under the MIT License -- see [LICENSE](./LICENSE) file 
 
 ## Citation
 
-An article describing ShEPhERD-score v2.0 is forthcoming. If you use or adapt ShEPhERD-score in your work, please cite it once available:
+If you use or adapt ShEPhERD-score in your work, please cite *[ShEPhERD-score: Fast, adaptable three-dimensional alignment of molecular features](https://arxiv.org/abs/2611.25076)*:
 
 ```bibtex
-Citation forthcoming.
+@misc{somers2026shepherdscore,
+  title={ShEPhERD-score: Fast, adaptable three-dimensional alignment of molecular features},
+  author={Nate Somers and Kento A. Abeywardane and Connor W. Coley and Masha Elkin},
+  year={2026},
+  eprint={2611.25076},
+  archivePrefix={arXiv},
+  primaryClass={q-bio.BM},
+  url={https://arxiv.org/abs/2611.25076}
+}
 ```
 
 The interaction profile representation and scoring functions were introduced with *[ShEPhERD](https://github.com/coleygroup/shepherd)*. If you use them or the ShEPhERD models, please also cite:
